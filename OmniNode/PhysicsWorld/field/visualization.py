@@ -475,10 +475,9 @@ def field_overlay_update(_owner=None, context=None) -> None:
     _sync_draw_handler()
     scene = getattr(context, "scene", None) if context is not None else None
     if scene is not None:
-        try:
-            depsgraph = context.evaluated_depsgraph_get()
-        except Exception:
-            depsgraph = None
+        from ..utils.blender_scene import evaluated_depsgraph_if_safe
+
+        depsgraph = evaluated_depsgraph_if_safe(context)
         refresh_field_visualization(scene, depsgraph)
 
 

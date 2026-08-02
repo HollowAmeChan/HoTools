@@ -75,7 +75,7 @@ def _remove_draw_handler() -> None:
 
 
 def clear_field_runtime_debug_draw_store(*, world_id: str | None = None) -> None:
-    """清理指定 World 或全部冻结批次；store 为空时同步释放 handler。"""
+    """清理指定 World 或全部冻结批次；绘制句柄由组件生命周期统一释放。"""
     changed = False
     if world_id is not None:
         changed = _FIELD_RUNTIME_DRAW_STORE.pop(str(world_id), None) is not None
@@ -83,8 +83,6 @@ def clear_field_runtime_debug_draw_store(*, world_id: str | None = None) -> None
         _FIELD_RUNTIME_DRAW_STORE.clear()
         changed = True
 
-    if not _FIELD_RUNTIME_DRAW_STORE:
-        _remove_draw_handler()
     if changed:
         _tag_view3d_redraw()
 
@@ -284,7 +282,7 @@ def update_field_runtime_debug_draw_store(
     world_key = str(id(world))
     if not bool(show_bounds) and not bool(show_air_velocity):
         clear_field_runtime_debug_draw_store(world_id=world_key)
-        return "场运行态调试未选择视图；不会读取缓存、采样或安装绘制处理器。"
+        return "场运行态调试未选择视图；不会读取缓存、采样或发布绘制批次。"
 
     try:
         density_value = max(2, min(int(density), 7))

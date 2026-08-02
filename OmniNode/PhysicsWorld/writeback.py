@@ -34,6 +34,7 @@ from .simple_cloth.output import (
 from .simple_cloth.results import iter_gn_offset_writebacks
 from .names import GN_OFFSET_ATTRIBUTE_NAME, GN_OFFSET_MODIFIER_NAME
 from .utils.values import matrix_from_16
+from .utils.blender_scene import update_view_layer_if_safe
 from .writeback_commands import iter_bone_transform_writebacks
 
 
@@ -143,11 +144,7 @@ def _reset_pose_bones(touched) -> None:
         except Exception:
             pass
     if updated_armatures:
-        try:
-            import bpy
-            bpy.context.view_layer.update()
-        except Exception:
-            pass
+        update_view_layer_if_safe()
     try:
         touched.clear()
     except Exception:

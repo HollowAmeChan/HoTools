@@ -214,6 +214,8 @@ def test_runtime_debug_uses_native_cache_and_world_time() -> None:
         assert "WORLD_FRAME_START" in status, status
         stored = field_debug_draw.field_runtime_debug_draw_store_snapshot(world_id)
         assert stored is not None
+        draw_handle = field_debug_draw._FIELD_RUNTIME_DRAW_HANDLE
+        assert draw_handle is not None
         assert stored["time_source"] == "WORLD_FRAME_START"
         assert stored["sample_time_seconds"] == 0.5
         assert stored["native_inspect"]["cache_owner"] == "NativeFieldRuntimeV1"
@@ -239,17 +241,21 @@ def test_runtime_debug_uses_native_cache_and_world_time() -> None:
 
         field_debug_draw.begin_field_runtime_debug_evaluation(world, None)
         assert field_debug_draw.field_runtime_debug_draw_store_snapshot(world_id) is None
+        assert field_debug_draw._FIELD_RUNTIME_DRAW_HANDLE is draw_handle
         field_debug_draw.update_field_runtime_debug_draw_store(
             world,
             show_bounds=True,
         )
         assert field_debug_draw.field_runtime_debug_draw_store_snapshot(world_id) is not None
+        assert field_debug_draw._FIELD_RUNTIME_DRAW_HANDLE is draw_handle
         world.omni_cache_dispose("test")
         assert field_debug_draw.field_runtime_debug_draw_store_snapshot(world_id) is None
+        assert field_debug_draw._FIELD_RUNTIME_DRAW_HANDLE is draw_handle
         assert runtime.live is False
     finally:
         field_visualization.sample_air_velocity_v0 = original_python_sampler
         field_debug_draw.shutdown_field_runtime_debug_draw()
+        assert field_debug_draw._FIELD_RUNTIME_DRAW_HANDLE is None
         runtime.dispose("test_cleanup")
 
 

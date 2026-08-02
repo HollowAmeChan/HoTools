@@ -11,6 +11,7 @@ from ...domain_ir import MC2MeshPartitionStaticSnapshotV1
 from ...domain_output import MC2MeshWritebackBatchV1
 from ...names import MC2_SETUP_MESH_CLOTH
 from ....simple_cloth.topology_identity import mesh_topology_signature_from_arrays
+from ....utils.blender_scene import evaluated_depsgraph_if_safe
 from ...partition_specs import MC2PartitionCollectorPlan
 from ...source_identity import mc2_source_token
 from .source_capture import (
@@ -501,9 +502,9 @@ def capture_mc2_mesh_product_frame(
     from .frame_input import read_base_pose_frame_snapshot
 
     if depsgraph is None:
-        import bpy
-
-        depsgraph = bpy.context.evaluated_depsgraph_get()
+        depsgraph = evaluated_depsgraph_if_safe()
+    if depsgraph is None:
+        raise RuntimeError("MC2 Mesh frame 缺少可安全读取的已求值 depsgraph")
 
     frame_context = getattr(world, "frame_context", None)
     frame = int(getattr(frame_context, "frame", 0) or 0)

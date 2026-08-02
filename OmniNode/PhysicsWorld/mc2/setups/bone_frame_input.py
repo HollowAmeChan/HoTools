@@ -9,6 +9,7 @@ import mathutils
 import numpy as np
 
 from ...utils.math3d import decompose_signed_orthogonal_linear_f64
+from ...utils.blender_scene import evaluated_depsgraph_if_safe
 from ..center_state import MC2CenterFramePoseSpec
 from ..frame_state import MC2FrameInputSpec, make_mc2_frame_input
 from ..anchor import attach_mc2_task_anchor
@@ -467,11 +468,7 @@ def _build_mc2_bone_frame_input(
     if len(positions) != topology.particle_count:
         raise ValueError("bone frame particle count mismatch")
     if component_pose is not None:
-        depsgraph = None
-        try:
-            depsgraph = bpy.context.evaluated_depsgraph_get()
-        except (AttributeError, RuntimeError):
-            pass
+        depsgraph = evaluated_depsgraph_if_safe()
         component_pose = attach_mc2_task_anchor(
             component_pose,
             intent.anchor_owner,

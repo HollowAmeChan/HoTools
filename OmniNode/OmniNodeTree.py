@@ -26,8 +26,19 @@ TREE_ID_NAME = "OmniNodeTree"
 # tree key -> CompiledGraph. Keeps compile artifacts for multiple OmniNodeTree datablocks.
 _COMPILED_TREE_CACHE = {}
 _FRAME_HANDLER_RUNNING = False
+_FRAME_HANDLER_DEPSGRAPH = None
 # 渲染期间为 True；frame_change_post 触发时据此决定是否强制刷新 bpy 引用
 _IS_RENDERING = False
+
+
+def is_frame_handler_running() -> bool:
+    """供 Blender 资源层判断当前是否禁止重入宿主 depsgraph。"""
+    return bool(_FRAME_HANDLER_RUNNING)
+
+
+def current_frame_depsgraph():
+    """返回 Blender 传给当前 frame_change_post 的已求值 depsgraph。"""
+    return _FRAME_HANDLER_DEPSGRAPH if _FRAME_HANDLER_RUNNING else None
 
 
 def _tree_cache_key(tree):
@@ -109,11 +120,12 @@ def _show_compile_flow_update(tree, context):
 
 @persistent
 def _omni_frame_change_post(scene, depsgraph=None):
-    global _FRAME_HANDLER_RUNNING
+    global _FRAME_HANDLER_DEPSGRAPH, _FRAME_HANDLER_RUNNING
     if _FRAME_HANDLER_RUNNING:
         return
 
     _FRAME_HANDLER_RUNNING = True
+    _FRAME_HANDLER_DEPSGRAPH = depsgraph
     try:
         for tree in list(bpy.data.node_groups):
             if not _is_omni_node_tree(tree):
@@ -136,6 +148,7 @@ def _omni_frame_change_post(scene, depsgraph=None):
                 print(f"[OmniNode Frame Run] disabled '{getattr(tree, 'name', '<tree>')}': {exc}")
     finally:
         _flush_runtime_timing()
+        _FRAME_HANDLER_DEPSGRAPH = None
         _FRAME_HANDLER_RUNNING = False
 
 

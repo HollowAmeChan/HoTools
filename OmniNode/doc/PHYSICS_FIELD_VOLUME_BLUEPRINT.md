@@ -557,11 +557,12 @@ HoTools 物理
 
 运行态由物理世界调试分类下的“场-运行可视化调试”节点负责：
 
-- 节点请求未打开 `Volume边界` 或 `空气速度` 时，不读 world cache、不采样、不安装 draw handler；
+- 节点请求未打开 `Volume边界` 或 `空气速度` 时，不读 world cache、不采样、不发布绘制批次；draw handler 首次收到有效请求时懒注册，此后保持稳定并允许空 store 休眠，禁止在 World Begin 或逐帧 store 清空/重发之间反复注销和注册；
 - 打开后严格核对 `PhysicsWorldCache.generation`、`PhysicsFrameContext`、`FieldSnapshotV0` 签名和 native inspect；边界只借用与 runtime 同签名的 Snapshot，运行身份与数值真值来自 live `NativeFieldRuntimeV1`；
 - 空气速度调用 native evaluator，时间固定取本次 World FrameContext 的帧起始 `sample_time_seconds`，并按独立 participation 过滤箭头；不重新扫描 Scene、不读取 RNA 推算运行值；
 - 当前简洁节点不提供 Object/Collection/碰撞组 consumer context。存在这些高级 scope 的 Field 时只画边界并明确拒绝风箭头，不能伪造“全局 MC2 partition”；
-- World Begin 使旧批次失效；world dispose、cache clear、load 和插件注销必须移除对应 draw store/handler。
+- World Begin、world dispose 和 cache clear 只使对应冻结批次失效，不触碰可能正在由 View3D 执行的全局 handler；load 和插件注销进入组件停机边界后，才统一清空 store 并注销 handler。
+- Field collector 运行在 OmniNode 的 `frame_change_post` 宿主求值回调内，只能复用 Blender 作为 handler 参数传入的已求值 depsgraph；禁止从 collector、solver 或运行态调试再次调用 `ViewLayer.update()`、`Context.evaluated_depsgraph_get()` 或其它强制 depsgraph 求值入口。对象删除正在重建 ViewLayer base 数组时重入求值会直接破坏 Blender 的并行 depsgraph 生命周期。
 
 运行态调试的验收原则是：同一 runtime、位置、consumer context 和 sample time 下，调试 native sample 与 solver 调用的 evaluator 完全相同。显示层可为可读性裁剪箭头长度，但不能改变方向、相对幅值或 turbulence 相位。
 
@@ -856,10 +857,10 @@ MC2 Domain，先提交一帧 Domain-owned positions，之后热循环只调用
 可视化与调试：
 
 - 作者预览跨帧始终报告 `AUTHOR_STATIC/t=0`，没有 `frame_change` handler；
-- 运行调试关闭时 cache read、native sample 和 draw handler 均为零；
+- 运行调试关闭时 cache read、native sample 和绘制批次均为零；曾经启用过调试时允许保留一个不读取物理状态的休眠 draw handler，直到 load/unregister 的组件停机边界统一注销；
 - 开启后核对 native inspect、World FrameContext 与同签名边界快照；stale runtime 必须清空旧批次并报错；
 - 高级作用域没有 consumer context 时拒绝空气速度箭头；
-- World Begin、dispose、cache clear、load/unregister 清理对应 draw store。
+- World Begin、dispose、cache clear 清理对应 draw store；load/unregister 额外统一注销稳定 draw handler。
 
 ## 14. 实现参考
 

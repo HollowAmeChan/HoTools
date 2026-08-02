@@ -78,7 +78,7 @@ Field/MC2 静态事务已经补强：consumer contexts 随 staged Domain 一起�
 
 MC2 仍有独立于 Field 的低层事务缺口：live Domain 进入 mutating pass 后没有完整子步数值 rollback，后续 pass 异常时 scheduler 未提交不等于 native state 可原地重试。公开产品入口已经摘除并 dispose 本批 attempted slots、恢复 Bone feedback，后续调用冷建 owner；但低层 `step_mc2_product_substep()` 仍缺少失败状态与原地重试门禁，只有明确在 mutation 前失败才可安全重试。
 
-运行态调试合同：只有明确请求的专用调试节点才可读取 live native 状态；当前“场-运行可视化调试”核对 World FrameContext、runtime inspect 与同签名 snapshot，关闭时不读 cache/不采样/不装 handler，高级 scope 缺少消费上下文时只画边界。碰撞、接触和其它裸读能力未来必须各自提供同类专用节点，不能由作者预览、Blender RNA 或通用快照猜测。
+运行态调试合同：只有明确请求的专用调试节点才可读取 live native 状态；当前“场-运行可视化调试”核对 World FrameContext、runtime inspect 与同签名 snapshot，关闭时不读 cache、不采样也不发布绘制批次，高级 scope 缺少消费上下文时只画边界。全局 draw handler 首次请求时懒注册，在 World Begin、store 替换和 world dispose 之间保持稳定并允许空 store 休眠，只在 load/unregister 的组件停机边界注销，避免可见 View3D 正在回调时移除句柄。Physics World 已增加统一宿主求值门禁：Field/MC2 adapter 在 `frame_change_post` 内复用 handler 传入的短生命周期 depsgraph，Simple Cloth/BasePose 校验及 Bone/Jolt restart 清理只读当前状态或打更新标签，不再重入 `rna_ViewLayer_update_tagged` 或 `Context.evaluated_depsgraph_get()`；4.5.8 下“播放中复制场、编译、删除复制对象”的 CDB 精确复现已通过。碰撞、接触和其它裸读能力未来必须各自提供同类专用节点，不能由作者预览、Blender RNA 或通用快照猜测。
 
 ## 当前优先级
 

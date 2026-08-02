@@ -8,6 +8,44 @@ import bpy
 _COLLECTION_ROLE_KEY = "hotools_physics_world_collection_role"
 
 
+def evaluated_depsgraph_if_safe(context=None):
+    """帧内复用宿主 depsgraph；帧外才允许请求 Blender 主动求值。"""
+    try:
+        from ...OmniNodeTree import (
+            current_frame_depsgraph,
+            is_frame_handler_running,
+        )
+
+        if is_frame_handler_running():
+            return current_frame_depsgraph()
+    except (AttributeError, ImportError):
+        pass
+    target = context or bpy.context
+    try:
+        return target.evaluated_depsgraph_get()
+    except (AttributeError, ReferenceError, RuntimeError):
+        return None
+
+
+def update_view_layer_if_safe(view_layer=None) -> bool:
+    """仅在 OmniNode 帧回调之外同步 ViewLayer，避免重入 depsgraph。"""
+    try:
+        from ...OmniNodeTree import is_frame_handler_running
+
+        if is_frame_handler_running():
+            return False
+    except (AttributeError, ImportError):
+        pass
+    target = view_layer or getattr(bpy.context, "view_layer", None)
+    if target is None:
+        return False
+    try:
+        target.update()
+        return True
+    except (AttributeError, ReferenceError, RuntimeError):
+        return False
+
+
 def is_live_blender_id(value) -> bool:
     if value is None:
         return False
@@ -89,7 +127,7 @@ def _collection_owner_scenes(collection) -> tuple[bpy.types.Scene, ...]:
 
 def _layer_collection_path(view_layer, collection):
     try:
-        view_layer.update()
+        update_view_layer_if_safe(view_layer)
         pending = [
             (child, (child,))
             for child in view_layer.layer_collection.children
@@ -148,7 +186,7 @@ def view_layer_contains_object(view_layer, obj) -> bool:
     if view_layer is None or not is_live_blender_id(obj):
         return False
     try:
-        view_layer.update()
+        update_view_layer_if_safe(view_layer)
         return view_layer.objects.get(obj.name_full) == obj
     except (AttributeError, ReferenceError):
         return False
@@ -193,12 +231,14 @@ def link_object_to_scene_collection(
 
 
 __all__ = [
+    "evaluated_depsgraph_if_safe",
     "ensure_scene_collection",
     "is_live_blender_id",
     "link_object_to_scene_collection",
     "resolve_object_scene",
     "scene_contains_collection",
     "scene_contains_object",
+    "update_view_layer_if_safe",
     "view_layer_contains_collection",
     "view_layer_contains_object",
 ]

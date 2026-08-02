@@ -23,6 +23,7 @@ from .properties import (
     resolve_field_spec_v0,
 )
 from .specs import FieldSpecV0, build_field_snapshot_v0
+from ..utils.blender_scene import evaluated_depsgraph_if_safe
 
 
 FIELD_IMPLICIT_SCHEMA_V1 = 1
@@ -375,15 +376,10 @@ def collect_scope_field_specs(world, scope) -> FieldManifestReportV0:
         else ()
     )
     identity_diagnostics = repair_duplicate_field_ids_v0(objects)
-    try:
-        import bpy
-
-        # RNA 参数可能刚由面板或动画系统改写；先提交 View Layer，再读取
-        # evaluated Object，避免用上一轮的 enabled/transform 继续注册旧场。
-        bpy.context.view_layer.update()
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-    except (AttributeError, RuntimeError):
-        depsgraph = None
+    # 本 collector 运行在 frame_change_post 的宿主求值回调内，只复用 handler
+    # 收到的 depsgraph。主动 get/update 都会重入 Blender 的并行求值；对象删除时
+    # 可能让 Base flags 任务读取已经失效的 ViewLayer base 数组并直接闪退。
+    depsgraph = evaluated_depsgraph_if_safe()
 
     staged_sources = stage_field_sources_v0(objects, depsgraph=depsgraph)
     stage = FieldSourceStageV0(

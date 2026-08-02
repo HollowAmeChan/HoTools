@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import os
 import sys
 
@@ -25,6 +26,7 @@ product_slot = field_soak.product_slot
 physics_blender = field_soak.physics_blender
 world_types = field_soak.world_types
 physics_nodes = importlib.import_module("HoTools.OmniNode.PhysicsWorld.nodes")
+omni_tree = importlib.import_module("HoTools.OmniNode.OmniNodeTree")
 field_debug_draw = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.field.debug_draw"
 )
@@ -34,12 +36,74 @@ field_visualization = importlib.import_module(
 field_names = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.field.names"
 )
+field_implicit = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.field.implicit_objects"
+)
+blender_scene = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.utils.blender_scene"
+)
 
 
 def test_blender_object_sources_refresh_every_evaluation() -> None:
     """Blender 数据源必须主动感知场景对象的新增和删除。"""
     assert physics_nodes.physicsObjectsFromCollection.__meta["always_run"] is True
     assert physics_nodes.physicsObjectsFromScene.__meta["always_run"] is True
+
+
+def test_field_collector_never_forces_depsgraph_update() -> None:
+    """帧回调只能消费宿主传入的 depsgraph，禁止主动推进 Blender 求值。"""
+    source = inspect.getsource(field_implicit.collect_scope_field_specs)
+    assert "evaluated_depsgraph_if_safe" in source
+    assert "evaluated_depsgraph_get" not in source
+    assert "view_layer.update" not in source
+
+
+def test_frame_callback_blocks_nested_view_layer_update() -> None:
+    """Physics World 帧运行期间所有公共资源层都必须服从同一重入门禁。"""
+    calls = []
+
+    class _ViewLayer:
+        def update(self):
+            calls.append("update")
+
+    previous = omni_tree._FRAME_HANDLER_RUNNING
+    try:
+        omni_tree._FRAME_HANDLER_RUNNING = True
+        assert blender_scene.update_view_layer_if_safe(_ViewLayer()) is False
+        assert calls == []
+        omni_tree._FRAME_HANDLER_RUNNING = False
+        assert blender_scene.update_view_layer_if_safe(_ViewLayer()) is True
+        assert calls == ["update"]
+    finally:
+        omni_tree._FRAME_HANDLER_RUNNING = previous
+
+
+def test_frame_callback_reuses_host_depsgraph() -> None:
+    """帧内取图必须返回 handler 参数，不能调用 Context 的主动求值入口。"""
+    calls = []
+    host_depsgraph = object()
+    outside_depsgraph = object()
+
+    class _Context:
+        def evaluated_depsgraph_get(self):
+            calls.append("get")
+            return outside_depsgraph
+
+    previous_running = omni_tree._FRAME_HANDLER_RUNNING
+    previous_depsgraph = omni_tree._FRAME_HANDLER_DEPSGRAPH
+    try:
+        omni_tree._FRAME_HANDLER_RUNNING = True
+        omni_tree._FRAME_HANDLER_DEPSGRAPH = host_depsgraph
+        assert blender_scene.evaluated_depsgraph_if_safe(_Context()) is host_depsgraph
+        assert calls == []
+
+        omni_tree._FRAME_HANDLER_RUNNING = False
+        omni_tree._FRAME_HANDLER_DEPSGRAPH = None
+        assert blender_scene.evaluated_depsgraph_if_safe(_Context()) is outside_depsgraph
+        assert calls == ["get"]
+    finally:
+        omni_tree._FRAME_HANDLER_DEPSGRAPH = previous_depsgraph
+        omni_tree._FRAME_HANDLER_RUNNING = previous_running
 
 
 def _mesh_request(mesh):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import bpy
 
 from ..types import PhysicsObjectScope, PhysicsWorldCache
+from ..utils.blender_scene import update_view_layer_if_safe
 from .declaration import RIGID_SOLVER_DECLARATION
 from .implicit_objects import active_generated_constraint_slot_ids
 from .names import (
@@ -67,10 +68,7 @@ def clear_scope_dynamic_rigid_deltas(world: PhysicsWorldCache, scope: PhysicsObj
         except Exception:
             pass
     if updated:
-        try:
-            bpy.context.view_layer.update()
-        except Exception:
-            pass
+        update_view_layer_if_safe()
 
 
 def _round_float(value, digits: int = 8) -> float:
