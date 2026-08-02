@@ -50,8 +50,10 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 - `Function/` 中只保留适合由 `@omni(...)` 暴露的轻量节点函数；需要物理实现时直接导入 `PhysicsWorld` 的公开模块。
 - 运行时、测试和工具统一使用 `HoTools.OmniNode.PhysicsWorld`，不保留 `Function.physicsWorld` 转发包或导入别名。
 - 新增物理解算域时继续收敛到 `PhysicsWorld/` 内部，不把后端、注册表或生命周期实现重新塞回 `Function/`。
-- `PhysicsWorld/field/` 是共享 component，不是 solver。它拥有 Field/Volume 规格、WindV0、公共 sampler、Empty 创作边界、隐式对象 manifest、诊断和可视化；solver 只能声明消费公共 capability，不能扫描 Blender Field 对象或复制 sampler。
-- `PhysicsWorld/world_time.py` 是 Blender 输出时间的唯一换算入口。`render.fps / render.fps_base` 产生 `raw_dt`；Field 预览和 Physics World Begin 不得各自维护另一套 fps fallback。
+- `PhysicsWorld/field/` 是共享 component，不是 solver。它拥有 Field/Volume/WindV0 规格、`FieldSnapshotV0`、公共点/批量 sampler、Empty 创作边界、隐式对象 manifest、诊断和显式可视化；solver 只能声明消费公共 capability，不能扫描 Blender Field 对象或复制 sampler。
+- consumer 适配留在各 solver 内。MC2 由 `PhysicsWorld/mc2/field_bridge.py` 把公共 `air_velocity` 采样结果冻结为 `MC2FieldSamplePacketV0`，Field 包不导入 MC2，也不拥有布料响应公式。MC2 authoring 只保留“响应场风”开关和响应强度；旧七个 wind 参数已经删除，profile、runtime、preset 和节点都没有兼容读取路径。
+- `PhysicsWorld/world_time.py` 是 Blender 输出时间的唯一换算入口。`render.fps / render.fps_base` 产生 `raw_dt`；Physics World 正式采样使用累计 `sample_time_seconds` 与 `frame_step_dt`，MC2 第 `i` 个 fixed 子步固定采样 `sample_time_seconds + frame_step_dt * i / update_count`。Field 预览和 Physics World Begin 不得各自维护另一套 fps fallback。
+- WindV0 当前由 Volume 权重直接缩放最终 `air_velocity`：球形从中心到边界线性衰减，方形内部不衰减。该规则仍是有版本的 V0 策略，不代表 attenuation 永久归 Volume 所有；packet V0 也尚无独立参与权重，精确零向量同时表示未参与和多场精确抵消，consumer 不得把这两个状态伪装成已经可区分。
 
 ### 1. 函数生成是默认节点模型
 

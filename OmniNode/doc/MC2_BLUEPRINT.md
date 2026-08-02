@@ -41,7 +41,7 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 - 每个显式domain使用由setup与domain signature确定的动态slot；DomainV1一次处理域内全部partition、自碰撞和输出。
 - Mesh GN object-local offset与Bone PoseBone批量写回。
 - Point/Edge外部碰撞、单物体和跨物体self collision。
-- Center/Inertia、Tether、Distance、Angle、Triangle Bending、Motion/Backstop和post。
+- Center/Inertia、公共 Field 风响应、Tether、Distance、Angle、Triangle Bending、Motion/Backstop和post。
 - 全隐式debug请求与native真实中间态快照。
 - 官方MC2粒子预设到三个setup-specific profile节点真实输入的裁剪转换。
 
@@ -49,7 +49,7 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 
 能力覆盖以 `mc2/test/capability_matrix.py` 为代码级清单。`verified` 必须由实际字段变化和数值不变量支持；finite、非空 debug 或 data-path 记录不能冒充响应等价。
 
-当前公开范围是restricted realtime。Bake/export、通用力场、Bone imported triangle和MC2 reduction/render mapping不属于已支持能力。
+当前公开范围是restricted realtime。公共 Field 的 WindV0 `air_velocity` 已由 CPU 产品链消费；其它 Field 类型/通道、Bake/export、Bone imported triangle和MC2 reduction/render mapping不属于已支持能力。
 
 ## 统一粒子域产品基线
 
@@ -70,9 +70,11 @@ CPU DomainV1 是完整产品 backend 和长期数值 reference。E6 只能新增
 
 ```text
 Physics World Begin
+  -> 公共 Field component 发布当前帧 FieldSnapshotV0
   -> 三种 setup collector 生成显式 product requests
   -> request 预检、source capture、partition static fragment
   -> compiled domain/program/parameter/frame packet
+  -> 每个 fixed 子步从当前 logical positions 采样 MC2FieldSamplePacketV0
   -> DomainV1 按固定 mixed pass 求解
   -> logical outputs 与请求驱动 debug snapshot
   -> 一次多目标结果事务
@@ -86,6 +88,7 @@ product request
   -> setup/domain identity 与动态产品 slot
   -> capture plan + compiled DomainV1 program
   -> one native DomainV1 owner
+  -> current positions + FieldSnapshotV0 -> per-substep air velocity packet
   -> logical output map
   -> GN offset / Bone transform / product debug envelope
   -> physicsWorld.writeback transaction
@@ -101,11 +104,11 @@ product request
 
 | 节点 | 显示字段 | 隐藏/固定字段 | 统一输出 |
 |---|---|---|---|
-| `MC2 MeshCloth粒子配置` | cloth重力、粒子速度/阻尼/半径、结构/Motion约束、普通碰撞、自碰开关、跨物体自碰与自碰交互质量 | Task修正字段、Spring/wind与BoneSpring soft-collision limit隐藏 | `MC2ParticleProfileSpec` |
-| `MC2 BoneCloth粒子配置` | 与 cloth runtime 一致的粒子材料、结构/Motion约束、普通碰撞、域内 self 与自碰交互质量 | Task 修正字段、Mesh 专用跨 Object authoring、Spring/wind 与 BoneSpring soft-collision limit 隐藏 | `MC2ParticleProfileSpec` |
-| `MC2 BoneSpring粒子配置` | 半径/阻尼/粒子限速、角度约束、soft-collision limit | Task修正字段、gravity、tether/distance、Motion、普通碰撞模式/摩擦、自碰撞及未被native消费的Spring/wind字段隐藏 | `MC2ParticleProfileSpec` |
+| `MC2 MeshCloth粒子配置` | cloth重力、粒子速度/阻尼/半径、结构/Motion约束、普通碰撞、自碰开关、跨物体自碰与自碰交互质量、响应场风开关与强度 | Task修正字段、Spring与BoneSpring soft-collision limit隐藏 | `MC2ParticleProfileSpec` |
+| `MC2 BoneCloth粒子配置` | 与 cloth runtime 一致的粒子材料、结构/Motion约束、普通碰撞、域内 self 与自碰交互质量、响应场风开关与强度 | Task 修正字段、Mesh 专用跨 Object authoring、Spring 与 BoneSpring soft-collision limit 隐藏 | `MC2ParticleProfileSpec` |
+| `MC2 BoneSpring粒子配置` | 半径/阻尼/粒子限速、角度约束、soft-collision limit、响应场风开关与强度 | Task修正字段、gravity、tether/distance、Motion、普通碰撞模式/摩擦、自碰撞及未被native消费的Spring字段隐藏 | `MC2ParticleProfileSpec` |
 
-三个节点只是同一immutable profile构造器的产品视图，不创建三套solver DTO、runtime ABI或native参数结构。自碰交互质量是粒子接触权重，由`MC2ParticleProfileSpec.cloth_mass`持有；Teleport、组件惯性与Normal Axis由独立immutable `MC2TaskParametersSpec`持有。Task按`setup_type`通过唯一`make_mc2_runtime_parameters(profile, setup_options, task_parameters)`入口完成float32采样和源码固定值归一化。三个Profile节点和task空配置默认都显式写入`spring_enabled=False`；当前native未读取`spring_power/spring_limit_distance/spring_normal_limit_ratio/spring_noise`，这些内部兼容字段在真实kernel落地前不得作为产品旋钮公开。
+三个节点只是同一immutable profile构造器的产品视图，不创建三套solver DTO、runtime ABI或native参数结构。自碰交互质量是粒子接触权重，由`MC2ParticleProfileSpec.cloth_mass`持有；Teleport、组件惯性与Normal Axis由独立immutable `MC2TaskParametersSpec`持有。Task按`setup_type`通过唯一`make_mc2_runtime_parameters(profile, setup_options, task_parameters)`入口完成float32采样和源码固定值归一化。三个Profile节点和task空配置默认都显式写入`spring_enabled=False`；当前native未读取`spring_power/spring_limit_distance/spring_normal_limit_ratio/spring_noise`，这些内部兼容字段在真实kernel落地前不得作为产品旋钮公开。Field 风只通过`field_wind_enabled`与`field_wind_strength`进入统一 profile/runtime 参数；方向、速度、Volume、衰减、紊流和多场合成都不属于 MC2 profile。
 
 公开cloth Profile节点把自碰撞表达为bool，内部稳定转换成MC2 `self_collision_mode=0/2`，不允许int滑块产生无效模式1。官方JSON预设按owner拆成同名Profile部分与Task部分，并在各节点按真实输入裁剪；应用两个节点上的同名preset恢复完整源预设，不能向用户报告一批本setup不存在的“缺失项”。
 
@@ -141,8 +144,51 @@ product request
 | `阻尼`、`阻尼曲线` | 按深度消减粒子已有速度 | prediction阶段以采样值和simulation power计算阻尼因子；三个setup有效。 |
 | `粒子限速` | 限制约束和碰撞完成后的最终粒子速度，负值关闭 | post阶段由当前位置与velocity reference重建速度后限制；三个setup有效。它不限制组件Center速度。 |
 | `动画姿态比例` | 控制结构rest pose在静态初始姿态和当帧动画姿态之间的比例 | native逐step重建StepBasic，并用于distance rest length和bone输出；三个setup有效。它不是最终输出混合权重。 |
+| `响应场风`、`风响应强度` | 决定布料是否消费物理世界的公共风场，以及向空气速度收敛的速率 | 三个setup使用同一产品路径；强度范围`0..20 1/s`、默认`1.0 1/s`，关闭或强度为0时不执行风响应。MC2不再公开第二套方向、紊流或Volume参数。 |
 
 `重力衰减`的现有节点tooltip“沿粒子深度衰减重力”与生产实现不一致；它不是生产行为，真实语义以上表和`center_gravity_dot`计算为准。
+
+#### 公共 Field 风响应
+
+Field 源不归 MC2 所有。`PhysicsWorld/field/` 负责 Empty 创作、Field/Volume/WindV0、`FieldSnapshotV0`、公共 sampler、作用域、诊断和可视化；`mc2/field_bridge.py` 只把已经求值的公共 `air_velocity` 转成 MC2 子步输入：
+
+```text
+MC2FieldSamplePacketV0
+  abi_version = 0
+  field_snapshot_signature
+  sample_time_seconds
+  particle_count
+  air_velocity_world_f32[N, 3]   # world-space, m/s, C contiguous, read-only
+  diagnostics / request_signatures
+```
+
+每个 fixed 子步在任何 native mutation 前读取当前 logical particle positions，并按完整且互不重叠的 partition 索引采样。作用域上下文来自 Mesh Object 名或 Bone Armature 名、对象所属 Collection 名，以及映射到公共`1..16`的单个碰撞组；packet 数量和顺序必须与 compiled domain 完全一致。快照 generation、frame、帧起始时间、数组形状、dtype、连续性和有限性错误都必须在 scheduler 提交及 native mutation 前失败，不能降级成无风。
+
+正式采样时间只来自 Physics World。`world_time.py` 以 Blender 输出设置计算`scene_fps = render.fps / render.fps_base`和`raw_dt = 1 / scene_fps`，World 再维护连续模拟的`sample_time_seconds`与`frame_step_dt`。本帧实际计划`update_count`个 fixed 子步时，第`i`个子步固定使用：
+
+```text
+field_time(i) = sample_time_seconds + frame_step_dt * i / update_count
+```
+
+不得改用 MC2 固定频率累加器、帧号、时间轴预览时间或墙钟。采样位置是上一成功子步已经提交的当前位置；当前 V0 不在同一次事务内先推进 Center 再回调 Python sampler。
+
+native Wind Response V0 把空气速度当成目标速度而不是加速度：
+
+```text
+relative = air_velocity - cloth_velocity
+coupled  = normal(relative) + 0.15 * tangent(relative)
+alpha    = 1 - exp(-response_strength_per_second * dt)
+cloth_velocity += alpha * coupled
+```
+
+固定粒子跳过响应；法线退化时使用各向同性 relative velocity。该 pass 修改持久速度，顺序固定在 Center inertia 后、Integration 前。公共 Field 已拥有方向、风速、Volume、衰减、紊流与多场合成，因此 MC2 只能乘开关和逐粒子响应强度，不能再次生成或改写风。
+
+V0 仍有两个必须显式保留的边界问题：
+
+- Sphere 当前把中心到边界的线性 Volume 权重乘到基础风与紊流合成后的最终`air_velocity`，Box 内部权重恒为1。attenuation 最终应归 Volume、generator 还是 channel mapping，以及应在 blend 前还是后执行，尚未冻结；MC2 不得私自增加第二层衰减。
+- packet V0 没有独立 participation/weight 通道。host 当前把精确零空气速度对应的响应强度置0，以免 Volume 外部产生“静止空气阻尼”；因此“未参与”和“多个 Field 精确抵消为零”目前不可区分，真正的静止空气阻力也无法表达。未来若拆分参与权重，必须升级公共 Field/packet 合同，不能再往 MC2 节点堆二重参数。
+
+旧`wind_influence`、`wind_frequency`、`wind_turbulence`、`wind_blend`、`wind_synchronization`、`wind_depth_weight`和`moving_wind`已经从 profile、runtime、preset 和节点删除。它们没有隐藏兼容数据、迁移映射、fallback 或与公共 Field 双算的路径；任何重新引入都必须作为新产品设计审查，不能借“MC2 对齐”恢复。
 
 #### Center、惯性与Teleport
 
@@ -238,16 +284,19 @@ Profile/Task authoring
   -> setup 归一化与 parameter SoA
   -> request collect / source capture / domain compile
   -> task reference + Center/Anchor/Teleport frame transaction
-  -> StepBasic
   -> 每 substep:
-       Center evaluator -> prediction
+       当前 logical positions + FieldSnapshotV0
+       -> MC2FieldSamplePacketV0
+       -> StepBasic
+       -> Center evaluator -> Center inertia
+       -> Field wind response -> Integration / prediction
        -> Tether -> Distance A -> Angle -> Bending
        -> Point/Edge external -> Distance B -> Motion
        -> whole-domain self -> post/history
   -> logical output -> 多目标结果事务
 ```
 
-Frame shift 每个 frame 只消费一次，其余 pass 按真实 substep 完整执行。Spring/wind 字段目前只为源码结构和预设解析兼容；三个产品节点都写入 `spring_enabled=False`，native 没有生产 consumer。BoneSpring 的响应来自固定 Distance、Angle、惯性和 soft-sphere 组合，不等于启用 `spring_*` 字段。
+Frame shift 每个 frame 只消费一次，其余 pass 按真实 substep 完整执行。Spring字段目前只为源码结构和预设解析兼容；三个产品节点都写入`spring_enabled=False`，native没有生产consumer。Field风是独立的活跃产品pass，不读取`spring_*`，也不存在旧MC2 wind字段。BoneSpring的响应来自固定Distance、Angle、惯性和soft-sphere组合，不等于启用`spring_*`字段。
 
 ### Setup collector 与分域
 
@@ -309,6 +358,7 @@ Profile 数值、同布局参数热更新与 scheduler 值不改变 request/doma
 | raw snapshot | Mesh positions/normals/loop UV/Pin，Bone rest/pose，component/Anchor pose | Mesh observation cache 或短生命周期 Bone adapter |
 | compiled static | logical identity、topology、constraint/primitive tables、parameter layout、output map | frozen fragment/program |
 | frame packet | animated pose、component/Anchor/collider、dt、task reference | 每 frame immutable packet |
+| Field substep packet | 当前logical positions在固定物理时间采样得到的`air_velocity_world_f32[N,3]`、快照/请求签名与诊断 | `mc2/field_bridge.py`构造的每fixed子步immutable packet |
 | native state | particle、Center/Teleport/scheduler history、constraint/self scratch | DomainV1 owner |
 | result/debug | logical output、事务 command、请求式冻结 snapshot | 产品 result/debug owner，只读 |
 
@@ -394,7 +444,8 @@ BoneCloth的推荐作者语义是让参与模拟的链骨尽量关闭`Bone > Rel
 
 ```text
 Center / inertia preparation
-  -> particle prediction
+  -> Field wind response（有有效packet时）
+  -> Integration / particle prediction
   -> Tether
   -> Distance phase A
   -> Angle
@@ -410,6 +461,7 @@ Center / inertia preparation
 维护时必须保持：
 
 - float32舍入位置是语义的一部分，不能先用double合并后一次转换。
+- Field sampler在进入上述native顺序前从当前logical positions构造完整packet；Center inertia、Field响应和Integration之间不得插入第二次采样或重新解释时间。
 - curve固定采样16点，位置`i/15`；disabled curve全部为基础值。
 - Distance velocity-reference attenuation固定`0.3`，Motion固定`0.95`。
 - Bending反向triangle bucket、ordered quad role、角度/volume门槛和first-wins marker顺序稳定。
@@ -440,7 +492,8 @@ Constraint、external 和 self 的 correction 记录必须按 production 相同�
 
 | 层 | 唯一职责 |
 |---|---|
-| authoring | `nodes.py`、`parameters.py`、`runtime_parameters.py` 定义公开字段、immutable 参数和 setup 有效值/固定值/禁用值。 |
+| authoring | `nodes.py`、`parameters.py`、`runtime_parameters.py` 定义公开字段、immutable 参数和 setup 有效值/固定值/禁用值；Field相关只拥有“响应场风”与响应强度。 |
+| Field输入 | 公共`../field/`拥有快照、采样和可视化；`field_bridge.py`把公共结果冻结为`MC2FieldSamplePacketV0`，`product_slot.py`负责每fixed子步的身份、时间与当前粒子顺序校验。 |
 | collect/capture | `product_authoring.py`、`product_collect.py`、setup capture/static adapter 生成显式 request、partition snapshot 和 frozen fragment。 |
 | compile | `domain_ir.py`、`domain_collect.py`、`domain_compile.py` 拥有 logical identity、parameter SoA、constraint/primitive relocation 和 output map。 |
 | execute | `product_slot.py`、`product_frame.py`、`cpu_backend.py`、`cpu_native_kernel.py` 管理 DomainV1 lifecycle、frame packet、scheduler 和 staged state。 |
@@ -451,7 +504,8 @@ topology、static build、frame capture、参数、runtime owner 和 observation
 
 ## C++ 与 native ABI 所有权
 
-- `mc2_domain_cpu.*` 拥有 DomainV1 lifecycle、persistent state、frame/parameter update、完整 mixed pass 和 output/readback。
+- `mc2_domain_cpu.*` 拥有 DomainV1 lifecycle、persistent state、frame/parameter update、Field风响应在内的完整 mixed pass 和 output/readback。
+- `apply_wind_response_mc2`只消费每粒子world-space空气速度、`dt`和响应强度；它不读取Field spec、Volume、紊流参数或Blender对象。
 - `mc2_kernels.*`、`mc2_static_build.*`、`mc2_self_collision.*` 等中立单元只处理插件自有 POD/SoA，不访问 Python、Blender 或旧 context 类型。
 - `mc2_domain_cpu_bindings.cpp` 只负责 nanobind 验证、buffer view、错误翻译和显式 readback；pure native step 不持有 `PyObject*`。
 - 架构审计禁止旧 context/interaction owner、重复 translation unit、测试专用生产入口和无合同转发层回流；不在蓝本冻结易漂移的文件或 binding 数量。
@@ -464,7 +518,7 @@ topology、static build、frame capture、参数、runtime owner 和 observation
 - Data：稳定 domain/partition/source/logical particle identity，拓扑/参数/primitive SoA，版本、容量和溢出规则。
 - Compile：capture -> static fragment -> domain compile -> backend allocation；静态数据只在失效范围上传。
 - Frame：task reference/Center/Anchor/Teleport -> frame packet -> StepBasic，frame shift 每帧只消费一次。
-- Substep：Center evaluator -> prediction -> Tether -> Distance A -> Angle -> Bending -> external Point/Edge -> Distance B -> Motion -> whole-domain self -> post/history。
+- Substep：current positions Field sample -> Center evaluator -> Center inertia -> Field wind response -> Integration/prediction -> Tether -> Distance A -> Angle -> Bending -> external Point/Edge -> Distance B -> Motion -> whole-domain self -> post/history。
 - IO：一个 request 对应一个 domain output；多个 target 由一次结果事务发布，失败整批回滚。
 - Debug/measurement：backend contract schema V2 用每个 pass 的 `request_writes` 单独声明请求式记录；普通 production writes 不包含 debug buffer。Pin primitive 参与标志与跨 owner 配对过滤决策属于 CPU/GPU exact 通道。请求式旁路记录与 production 求和等价，但不成为常驻 staging 或 backend ABI。
 
@@ -483,9 +537,9 @@ CPU 与 GPU 只能共享这些逻辑合同，不能共享 mutable state 或 phys
 
 ## 明确不支持与不得恢复
 
-当前不支持通用力场、Bone imported triangle、MC2 reduction/render mapping、shear/零 scale 或不满足 PoseBone proper transform 的输入。Bake/export 只通过 Physics World 公共结果与 Bake 合同扩展，不进入 solver 私有路径。
+当前只消费公共Field的WindV0 `air_velocity`，不支持其它Field类型或channel；Bone imported triangle、MC2 reduction/render mapping、shear/零scale或不满足PoseBone proper transform的输入同样不支持。Bake/export只通过Physics World公共结果与Bake合同扩展，不进入solver私有路径。
 
-不得恢复旧节点别名、full-array solve、逐 source world step、hidden task、普通 aggregate fallback、solver 内联 GN/PoseBone writeback、无请求 debug readback、Python shadow solver、第二套 self thickness 或未被 native 消费的公开字段。
+不得恢复旧节点别名、full-array solve、逐source world step、hidden task、普通aggregate fallback、solver内联GN/PoseBone writeback、无请求debug readback、Python shadow solver、第二套self thickness或未被native消费的公开字段。旧七个wind参数及其preset/profile/runtime兼容路径也不得恢复；公共Field源参数不能在MC2内复制成第二套authoring。
 
 ## 文档维护
 

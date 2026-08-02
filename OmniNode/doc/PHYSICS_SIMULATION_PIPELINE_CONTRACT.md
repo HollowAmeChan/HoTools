@@ -175,6 +175,7 @@ scheduled_substep_time(i, count) = sample_time_seconds + frame_step_dt * i / cou
 - `frame_context.dt` 是应用世界级 `time_scale` 后的统一基础步长。Rigid、SpringBone、MC2 和未来 solver 都必须从同一个 world owner 消费该值，不得自行读取 `Scene.render`、重新计算 fps，或用固定 `1/24`、`1/30`、`1/60` 替代有效 world 时间。
 - `frame_context.frame_step_dt` 是当前帧真正用于采样/推进的基础步长。same-frame 时它保留第一次求值采用的值；solver 不得用随后重算的 `dt` 改写同一帧的采样相位。
 - `frame_context.substep_sample_time_seconds(i)` 是使用公共 `frame_context.substeps` 时的子步起点时间。固定频率 solver 若本帧实际计划的 `update_count` 与公共 `substeps` 不同，必须用上式的 `scheduled_substep_time(i, update_count)`；任何空间与时间叠加采样，包括 Wind turbulence，都只能使用这两种同源显式 sample time，禁止读取墙钟、native 累加时钟或模块级计时器。
+- MC2 CPU 产品链使用自己的 fixed scheduler，因此第 `update_index` 个子步的 Field 采样时间必须精确为 `frame_context.sample_time_seconds + frame_context.frame_step_dt * update_index / scheduled_frame.schedule.update_count`。Field 快照保存的是当前模拟帧起点时间；每个子步从当前粒子位置重新采样，不能把帧起点值、Blender 时间轴时间或 native 内部时钟代入。
 - solver 可以保留局部 `time_scale` 作为产品调参，但它只能是统一基础时间之上的乘数：`solver_dt = frame_context.dt * solver_time_scale`。默认值必须为 1；局部倍率不得反向改写 `frame_context`，也不得成为第二个场景时间源。
 - 固定频率 scheduler、substeps、iterations 和 catch-up 上限只决定怎样离散、累计或限制 `solver_dt`，不改变时间来源。它们不得隐式假设 Blender 是 60 fps。
 - `frame_context.time_scale == 0` 或 `frame_context.dt == 0` 表示统一暂停。solver 可以同步参数、拓扑、动画输入、命令和只读结果，但不得推进数值时间；不能以 fallback dt 偷跑一步。
@@ -277,20 +278,25 @@ FieldSpec
 
 ### 通用 Field / 场
 
-Field 是 Physics World 的共享 component，不是某个 solver 的内置特效。Volume 是场的空间作用域；`field_type=WIND` 选择 `analytic.wind.v0` 生成器和 `air_velocity` 向量通道，turbulence 是同一个 Wind payload 上的空间/时间叠加参数，不创建第二种场对象。
+Field 是 Physics World 的共享 component，不是某个 solver 的内置特效。Volume 是场的空间作用域；`field_type=WIND` 选择 `analytic.wind.v0` 生成器和 `air_velocity` 向量通道，turbulence 是同一个 Wind payload 上的空间/时间叠加参数，不创建第二种场对象。当前公共 Field 已由 MC2 CPU 产品链正式消费，但 Field 的 authoring、快照、采样和诊断所有权仍全部留在 Physics World。
 
-F0/F1 已冻结边界：
+当前公共与 MC2 CPU V0 边界：
 
 - Empty 上的 `Object.hotools_field` 是持久 authoring 入口。公共 collector 把 RNA 与 evaluated transform 解析为纯值 `FieldSpecV0`，再原子协调 `world.implicit_objects` manifest 和 `FieldSnapshotV0`；禁用、删除、无效与重复 stable ID 都必须有显式移除或诊断，不能留下幽灵场。
-- 用户使用 Blender 原生 Empty，再在集中面板启用 Field；Physics World 不提供创建 Field 对象的 operator。面板先显示 `field_type`，只展开当前类型参数，过滤与合成权重默认折叠在高级属性中。
-- `VolumeSpecV0` 当前只接受 Sphere 和 Box。Sphere 使用局部单位球和线性边界衰减；Box 使用局部单位盒和硬边界、无衰减。Sphere 只接受均匀缩放，Box 接受非均匀缩放；shear、reflection 和奇异变换拒绝进入有效快照。
-- `air_velocity` 的公开采样输入是冻结快照、世界空间 `float64[N,3]` 位置、显式 sample time 和作用域上下文；输出是只读 `float32[N,3]`、稳定签名、命中 ID、统计与诊断。多个 Wind 按 stable ID 的规范顺序可加叠加。
-- turbulence 必须是版本化、seed 驱动且不依赖全局 RNG/墙钟的确定性函数。预览与正式 consumer 使用同一个公共 sampler；差别只在于预览显式允许 `PREVIEW_ONLY` 项，并使用 `timeline_time_seconds`，正式 consumer 使用 `PhysicsFrameContext` 的 sample/substep time。
-- 当前 `FIELD_ABI_VERSION=0`、channel 为 `air_velocity`、generator 为 `analytic.wind.v0`。这是 Field 公共 API 的预览版，不是 native ABI 承诺；版本变化必须同步 golden、capability 与消费者适配器。
+- 用户使用 Blender 原生 Empty，再在集中面板启用 Field；Physics World 不提供创建 Field 对象的 operator。面板先显示 `field_type`，只展开当前类型参数，过滤与合成权重默认折叠在高级属性中。作者侧不暴露 status 字段：有效且启用的 Empty 一律解析为 `ACTIVE`；`PREVIEW_ONLY` 只保留给程序化规格和显式创作预览，不是 Blender 作者需要管理的产品状态。
+- `VolumeSpecV0` 当前只接受 Sphere 和 Box。Sphere 在中心权重为 1，到局部单位球边界线性降至 0；Box 在局部单位盒内权重为 1、盒外为 0，没有内部衰减。Sphere 只接受均匀缩放，Box 接受非均匀缩放；shear、reflection 和奇异变换拒绝进入有效快照。V0 直接用 Volume 权重缩放 `air_velocity`；未来是否拆出独立参与权重仍是未冻结的设计质疑点。
+- `air_velocity` 的公开采样输入是冻结快照、世界空间 `float64[N,3]` 位置、显式 sample time 和作用域上下文；输出是只读 `float32[N,3]`、稳定签名、命中 ID、统计与诊断。多个 Wind 按 priority、stable ID 的规范顺序加法叠加。
+- turbulence 必须是版本化、seed 驱动且不依赖全局 RNG/墙钟的确定性函数。预览与正式 consumer 使用同一个公共 sampler；差别只在于预览可显式包含 `PREVIEW_ONLY` 项并使用 `timeline_time_seconds`，正式 consumer 只消费 `ACTIVE` 项并使用 `PhysicsFrameContext` 的 sample/substep time。
+- 当前 `FIELD_ABI_VERSION=0`、channel 为 `air_velocity`、generator 为 `analytic.wind.v0`。这是版本化的 Field 公共 API，不等于 native ABI；版本变化必须同步 golden、capability 与消费者适配器。
+- `collect_scope_field_specs` 在 World Begin 的 component collector 阶段发布当前 generation/frame/frame-start sample time 的 `FieldSnapshotV0` 到 `field_snapshot_v0` runtime cache，并把 resolver 诊断发布到 `physics.field.diagnostics`。快照、manifest 和诊断必须作为一次可回滚事务更新。
+- MC2 在 declaration 中显式消费 `field_air_velocity`。每个 fixed 子步先校验快照的 generation、frame 和帧起始 sample time，再轻量读取当前 logical particle positions，按完整且互斥的 partition 建立 `MC2FieldSamplePacketV0`；采样包固定为 ABI 0、只读 C-contiguous `float32[N,3]`，不会携带 Blender 对象或 native handle。
+- MC2 作用域上下文使用 consumer ID `mc2`、源 Object 名或 Armature 名、该源所属 Blender Collection 名，以及 MC2 单 bit 碰撞组换算后的公共组号 1..16。include/exclude、Collection 和碰撞组过滤均在公共 sampler 中执行；partition 必须无重叠且完整覆盖 logical particles，作用域外粒子保持零空气速度。
+- MC2 作者参数只保留 `field_wind_enabled`（“响应场风”）和 `field_wind_strength`（“风响应强度”，0..20）。Field 持有速度、方向、turbulence、Volume、衰减、作用域与合成参数。旧 `wind_influence`、`wind_frequency`、`wind_turbulence`、`wind_blend`、`wind_synchronization`、`wind_depth_weight`、`moving_wind` 已从 profile、runtime ABI 和节点输入删除，不提供隐藏字段、数据迁移或兼容映射。
+- MC2 native V0 在 Center inertia 之后、Integration 之前应用相对空气速度响应；响应率为 `field_wind_strength`，固定粒子不响应，法向响应 100%、切向响应 15%。精确零 `air_velocity` 在当前 packet ABI 中表示“该粒子没有有效场样本”，其有效响应强度归零，避免 Volume 外产生静止空气阻尼；这也意味着多个场精确抵消与未参与暂时不可区分，是未来独立参与权重通道需要解决的 V0 限制。
+- Field 快照或采样包校验失败必须发生在 native mutation 与 scheduler commit 前，并记录 MC2 slot 的 `last_step_failure`；成功子步可在 slot 的 `last_field_sample_packet` 检查最终采样签名、时间、诊断与 request signatures。公共 sampler 的 `FIELD_OUT_OF_SCOPE`、`FIELD_INVALID_SPEC`、重复/缺失 Field ID 等诊断不得被 solver 吞掉或改写成私有含义。
 - reserved channel 只有拿到显式 values 时才可使用注册的 vector/scalar/SDF 可视化模式；没有数值时只报告 reserved 状态与 Volume 边界，禁止伪造 sampler 或数值 glyph。
 - Field authoring/topology/scope 变化与逐帧采样必须分开定义 dirty/update 频率，不能把 turbulence 的时间变化误判为 solver topology rebuild。
 - solver 必须在 declaration/capability 中显式声明可消费的 Field channel，并只把公共快照/采样结果转换为自己的 backend 输入；不得扫描场景寻找私有 wind 对象，不得把 live Blender 对象或 backend handle 塞进 native context。
-- 当前能力状态是 `PREVIEW_ONLY`：公共快照、采样和显式可视化已存在，但尚无 active solver consumer。任何 solver 中遗留的 `wind_*` 字段仍不代表已经接入 Field。
 
 ### Solver Prepare
 
@@ -760,7 +766,7 @@ PhysicsWorldCache / solver slot
 | `Bone.hotools_collision` | `physicsWorld.collision` 的 `bone_collision` capability | SpringBone、MC2 BoneCloth/BoneSpring、scope、UI/preview |
 | `Object.hotools_object_collision` | `physicsWorld.collision` 的 `object_collision` capability | collider snapshot、SpringBone、MC2、UI/preview |
 | `Object.hotools_mesh_collision` | `physicsWorld.simple_cloth` 的 `simple_cloth` capability | 简单布料面板、MC2 MeshCloth、Mesh XPBD、BasePose与共享GN offset；字段含enabled、BasePose、半径组、Pin与碰撞组 |
-| `Object.hotools_field` | `physicsWorld.field` 的 `field_air_velocity` capability | Field Empty 创作、scope collector、公共采样与 preview；当前无 active solver consumer |
+| `Object.hotools_field` | `physicsWorld.field` 的 `field_air_velocity` capability | Field Empty 创作、scope collector、公共采样与 preview；MC2 CPU 产品链 active consumer |
 | `Object.hotools_rigid_body` | `physicsWorld.rigid` 的 `rigid_body` capability | Rigid/Jolt、scope、UI |
 | `Object.hotools_rigid_constraint` | `physicsWorld.rigid` 的 `rigid_constraint` capability | Rigid/Jolt、scope、UI |
 | `Scene.ho_*` 物理叠加层字段 | `physicsWorld.ui` | 面板、header、GPU preview |
@@ -863,7 +869,7 @@ solver slot 持有：
 - collider arrays。
 - solver outputs。
 - temporary constraints。
-- force fields。
+- Field 快照派生的逐子步 sample packet。
 - debug markers。
 
 特点：
