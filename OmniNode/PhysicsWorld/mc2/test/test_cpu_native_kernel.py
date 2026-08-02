@@ -1562,7 +1562,7 @@ def test_native_compiled_field_runtime_samples_in_cpp_before_solver_mutation():
             "step_integration_partitioned",
         ]
         native_state = windy.inspect()["kernel"]
-        assert native_state["field_runtime_handle"] == field_handle
+        assert native_state["field_runtime_handle"] == 0
         assert native_state["field_sample_count"] == 1
         assert native_state["field_apply_count"] == 1
         assert native_state["field_sampled_field_count"] == 1
@@ -1642,6 +1642,7 @@ def test_native_compiled_field_runtime_cancels_pending_sample_on_prefix_failure(
         assert state["field_sample_count"] == 1
         assert state["field_apply_count"] == 0
         assert state["field_prepared_active"] is False
+        assert state["field_runtime_handle"] == 0
     finally:
         kernel.step_center_inertia = original
         domain.dispose()

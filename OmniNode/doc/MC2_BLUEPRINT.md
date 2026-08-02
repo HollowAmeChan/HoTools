@@ -218,14 +218,14 @@ MC2源码基线以Team Center整体判定Teleport。逐粒子比较动画基准�
 #### Teleport生效前提与验收
 
 1. `Teleport模式`不能是`None`，距离或旋转至少一项越过按当前scale修正后的阈值；调试黄线/红线只证明判定已触发，不证明状态迁移和写回已经正确。
-2. 每个Mesh partition独立选择最终proxy顺序中的首个Fixed作为参考。骨架驱动MeshCloth时，BasePose只读对象必须保留与Source一致的Armature/Shape Key基础变形链，Fixed参考的animated world pose必须随控制骨骼变化。没有Fixed时只回退该Mesh对象原点；如果用户只移动骨骼而对象原点不动，则该partition不会因此触发Teleport。
+2. 每个Mesh partition独立选择最终proxy顺序中的首个Fixed作为参考。自动BasePose删除已知拓扑修改器并关闭HoTools物理参与，但保留Armature等纯形变修改器；Geometry Nodes原样保留，若改变顶点数则显式失败。Fixed参考读取这份隔离基础姿态并使用Source当前world transform。没有Fixed时回退该Mesh对象原点。
 3. `Keep`的目标是把瞬移前的局部模拟状态刚性映射到新参考坐标，使其后续行为与未发生瞬移的控制组一致，而不是把粒子留在旧世界位置；`Reset`的目标是从本帧动画姿态重新开始。多source统一域中每个partition分别判定和迁移，不能用第一个source的delta处理其它partition。
 4. 生效必须形成完整历史事务：粒子位置/旋转、velocity reference、真实速度、old animated、substep/Post历史、自碰cache以及外部collider previous/current都必须在external collision前完成重定基或失效。只迁移粒子而保留旧collider姿态会产生跨瞬移扫掠，表现为调试已触发但布料仍被推出、穿透或速度异常。
 5. 产品验收必须真实运行scheduler与substep并读取最终GN offset，不能只检查flags、阈值线、zero-substep或native中间位置。骨骼驱动MeshCloth还要覆盖动态约束、外碰、自碰和多帧继续运行；触发帧不得出现与瞬移距离同量级的位置误差，后续不得出现超出粒子限速的速度尖峰。
 
 Teleport产品验收必须使用默认可见语义的`world_inertia=1`，并让触发帧真实运行三个substep和最终writeback；不得再以`world_inertia=0`让普通跟随与Keep退化为同一行为，也不得只用zero-substep证明触发瞬间的内部状态。MeshCloth还必须读取真实GN offset：Reset触发帧最终offset为零，Keep的Fixed点保持原offset并精确随组件搬移；Move点允许在同帧继续物理解算，但不得回落到跳变前坐标系。BoneCloth与BoneSpring执行同一Reset/Keep语义。
 
-真实高速平移/旋转与collider场景已人工确认Keep/Reset安全；自动化同时覆盖1800粒子MeshCloth、骨骼驱动BasePose、动态约束、外碰、自碰和最终GN写回。Teleport状态视图把旧到新判定基准的真实位移箭头和旋转测量弧按None绿色、Keep黄色、Reset红色着色，并保留同色终点；这些几何只表达判定输入，不表示状态迁移完成或粒子速度。
+真实高速平移/旋转与collider场景已人工确认Keep/Reset安全；自动化同时覆盖1800粒子MeshCloth、拓扑修改器隔离且保留Armature/GN的BasePose、动态约束、外碰、自碰和最终GN写回。Teleport状态视图把旧到新判定基准的真实位移箭头和旋转测量弧按None绿色、Keep黄色、Reset红色着色，并保留同色终点；这些几何只表达判定输入，不表示状态迁移完成或粒子速度。
 
 可视化调试只消费请求后冻结的产品快照。`native.positions`保存统一域位置，`native.dynamics`保存速度与法线，whole-domain self记录由顶层`self_collision`独立持有；renderer不得依赖旧aggregate遗留的重复嵌套。Teleport视图必须读取真实task-reference判定记录，包括reference索引、旧/新位置与旋转、测量值、阈值和触发flags；`reference_index=-1`只表示该partition使用对象原点，位置、旋转与测量仍由同一task-reference记录提供，不能回读Center结果拼成第二套判定。调试验收除了检查字段形状，还必须在Blender中对速度、Teleport、自碰primitive/grid/candidate/contact逐层断言非空绘制批次；否则数据存在但视口全空仍会假通过。
 
@@ -399,8 +399,8 @@ Mesh动画固定使用BasePose读取对象与Source/写回对象：
 
 ```text
 BasePose read object
-  -> 只拥有Armature/Shape Key等topology-preserving局部基础变形
-  -> 永久移除物理GN output
+  -> 独立复制Source Mesh数据，删除已知拓扑修改器，保留纯形变修改器
+  -> 永久关闭全部Object级HoTools物理属性；Geometry Nodes保留并由顶点数门禁判定
   -> evaluated局部positions/normals使用Source当前world matrix转到世界空间
 
 Source/write object

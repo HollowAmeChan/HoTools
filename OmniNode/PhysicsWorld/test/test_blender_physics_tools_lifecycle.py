@@ -82,7 +82,7 @@ def main() -> None:
         assert {
             entry["domain"]
             for entry in solver_registry.iter_world_dispose_handlers()
-        } == {"spring_vrm", "rigid", "mc2", "mesh_xpbd"}
+        } == {"field", "spring_vrm", "rigid", "mc2", "mesh_xpbd"}
         lifecycle_events = []
         dispose_events = []
         dynamic_lifecycle = types.SimpleNamespace(

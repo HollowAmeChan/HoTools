@@ -75,6 +75,9 @@ def _make_source(armature):
     group.add((0, 1, 2), 1.0, "REPLACE")
     modifier = obj.modifiers.new("Armature", "ARMATURE")
     modifier.object = armature
+    subdivision = obj.modifiers.new("TopologyChangingSubdivision", "SUBSURF")
+    subdivision.levels = 1
+    subdivision.render_levels = 1
     return obj
 
 
@@ -268,6 +271,10 @@ def test_mesh_product_base_pose_contract() -> None:
         assert source.modifiers[-1].name == world_names.GN_OFFSET_MODIFIER_NAME
         assert source.hotools_mesh_collision.mc2_base_pose_proxy is None
         source.hotools_mesh_collision.enabled = True
+        source.hotools_object_collision.enabled = True
+        source.hotools_rigid_body.enabled = True
+        source.hotools_rigid_constraint.enabled = True
+        source.hotools_field.enabled = True
 
         cache_collection = base_pose.ensure_cache_collection(bpy.context.scene)
         layer_collection = bpy.context.view_layer.layer_collection.children.get(
@@ -302,8 +309,17 @@ def test_mesh_product_base_pose_contract() -> None:
         assert base_proxy is not source
         assert base_proxy.data is not source.data
         assert base_proxy.modifiers.get("Armature") is not None
-        assert base_proxy.modifiers.get(world_names.GN_OFFSET_MODIFIER_NAME) is None
-        assert base_proxy.data.attributes.get(world_names.GN_OFFSET_ATTRIBUTE_NAME) is None
+        assert base_proxy.modifiers.get("TopologyChangingSubdivision") is None
+        assert base_proxy.modifiers.get(world_names.GN_OFFSET_MODIFIER_NAME) is not None
+        assert base_proxy.hotools_mesh_collision.enabled is False
+        assert base_proxy.hotools_mesh_collision.mc2_base_pose_proxy is None
+        assert base_proxy.hotools_object_collision.enabled is False
+        assert base_proxy.hotools_rigid_body.enabled is False
+        assert base_proxy.hotools_rigid_constraint.enabled is False
+        assert base_proxy.hotools_field.enabled is False
+        assert base_proxy.data.attributes.get(
+            world_names.GN_OFFSET_ATTRIBUTE_NAME
+        ) is not None
         assert base_proxy[base_pose.CACHE_TOPOLOGY_SIGNATURE_KEY] == topology_signature
 
         base_proxy[base_pose.CACHE_TOPOLOGY_SIGNATURE_KEY] = "stale-token"

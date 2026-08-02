@@ -1103,6 +1103,9 @@ def test_domain_cpu_native_field_runtime_wind_uses_relative_velocity_and_fixed_v
             handle, field_runtime, 0.0
         ) is True
         hotools_native.mc2_domain_cpu_v1_step_prepared_field_wind(handle, 0.5)
+        assert hotools_native.mc2_domain_cpu_v1_inspect(handle)[
+            "field_runtime_handle"
+        ] == 0
         first = hotools_native.mc2_domain_cpu_v1_read_dynamics_debug(handle)[
             "velocities"
         ].copy()
@@ -1183,6 +1186,7 @@ def test_domain_cpu_native_field_runtime_zero_air_and_zero_response_are_noops():
         assert hotools_native.mc2_domain_cpu_v1_read(handle)["step_count"] == 1
         assert state["field_sample_count"] == 1
         assert state["field_apply_count"] == 1
+        assert state["field_runtime_handle"] == 0
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
         hotools_native.field_runtime_v1_dispose(field_runtime)
@@ -1209,6 +1213,7 @@ def test_domain_cpu_native_field_scope_miss_skips_particle_evaluator():
         assert state["field_response_active"] is True
         assert state["field_sample_count"] == 0
         assert state["field_apply_count"] == 0
+        assert state["field_runtime_handle"] == 0
         assert state["field_sample_buffer_valid"] is False
         np.testing.assert_array_equal(
             state["field_air_velocity_world"],

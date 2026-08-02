@@ -421,7 +421,7 @@ Object delta 和 full transform 可同时存在，但同一 target/component 同
 final_object_local_positions = animated_base_object_local_positions + final_local_offsets
 ```
 
-MC2 的 animated base 来自 BasePose evaluated mesh，不能用 source 原始 `Mesh.vertices` 替代，否则 Armature、Shape Key 等 topology-preserving 基础动画会丢失。
+MC2 的 animated base 来自无HoTools物理参与、已删除已知拓扑修改器的 BasePose evaluated mesh。它与 source 原始 `Mesh.vertices` 分属不同只读/写回 owner；Armature等纯形变修改器与Geometry Nodes保留，GN若改变顶点数则由final-proxy门禁拒绝。
 
 通用 result 不应为了 Bake 永久多复制一份 `float32[N,3]` base positions。推荐增加按需 provider registry：
 
@@ -950,7 +950,7 @@ API 探针已经完成，但人工生产验收否决该方案。生产代码不�
 - PC2 标准 header、每对象独立文件、并行写盘和 COMPLETE 前禁止播放。
 - PC2 保存/重开仍由 Mesh Cache modifier 精确回放。
 - PC2 从清理帧 truncate 后连续续写，DELETE 只处理 manifest ownership。
-- MC2 animated Armature/Shape Key BasePose + physics offset 对拍。
+- MC2 保留Armature/GN且隔离已知拓扑修改器的 BasePose + physics offset 对拍，并覆盖 Source 含拓扑修改器时的顶点数量稳定性。
 - live/playback modifier 互斥，无双重 offset。
 - `//` 路径、未保存 blend、重名对象、多场景。
 - 停在第 1 帧播放时首次 post handler 位于第 2 帧，但 Bake 正确回填第 1 帧。

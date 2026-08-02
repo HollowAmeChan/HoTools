@@ -16,7 +16,7 @@ SIMPLE_CLOTH_RNA_FIELDS = (
         "kwargs": {
             "type": "Object",
             "name": "BasePose只读对象",
-            "description": "MC2每帧只读这个Mesh对象的骨架/修改器变形结果作为基础姿态；不要指向当前物理写入对象",
+            "description": "MC2每帧只读这个无拓扑修改器、无物理参与的Mesh副本；纯形变和Geometry Nodes保留，改变顶点数时会明确报错",
             "poll": "mesh_object",
         },
     },

@@ -74,6 +74,7 @@ def build_scope_key(scope: PhysicsObjectScope) -> frozenset:
         bool(scope.include_rigid_body),
         bool(scope.include_rigid_constraint),
         bool(scope.include_hidden),
+        bool(scope.include_field),
     )
     return frozenset(entries) | {("flags", include_flags)}
 
@@ -247,6 +248,7 @@ def make_scope(
     include_rigid_body: bool = True,
     include_rigid_constraint: bool = True,
     include_hidden: bool = False,
+    include_field: bool = True,
 ) -> PhysicsObjectScope:
     """从 object 列表构造 PhysicsObjectScope，自动去重。"""
     deduped = dedupe_objects(objects)
@@ -257,6 +259,7 @@ def make_scope(
         include_rigid_body=include_rigid_body,
         include_rigid_constraint=include_rigid_constraint,
         include_hidden=include_hidden,
+        include_field=include_field,
     )
 
 

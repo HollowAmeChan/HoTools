@@ -14,9 +14,7 @@ from ..utils.blender_scene import (
 from .delta_output import (
     PhysicsDeltaOutputSpec,
     ensure_delta_output as _ensure_delta_output,
-    remove_delta_output as _remove_delta_output_by_spec,
 )
-from .output import remove_gn_offset_output
 from .topology_identity import mesh_topology_signature_from_arrays
 
 
@@ -165,15 +163,57 @@ def ensure_delta_output(obj: bpy.types.Object) -> None:
     _ensure_delta_output(obj, MC2_DELTA_SPEC)
 
 
-def _remove_managed_outputs(obj: bpy.types.Object) -> None:
-    _remove_delta_output_by_spec(obj, MC2_DELTA_SPEC)
-    remove_gn_offset_output(obj)
-
-
 def _disable_runtime_flags(obj: bpy.types.Object) -> None:
-    props = getattr(obj, "hotools_mesh_collision", None)
-    if props is not None:
-        props.mc2_base_pose_proxy = None
+    """让 BasePose 成为不会再次进入任何 Object 级物理域的只读对象。"""
+    switches = (
+        ("hotools_mesh_collision", "enabled", False),
+        ("hotools_object_collision", "enabled", False),
+        ("hotools_rigid_body", "enabled", False),
+        ("hotools_rigid_constraint", "enabled", False),
+        ("hotools_field", "enabled", False),
+    )
+    for group_name, property_name, value in switches:
+        props = getattr(obj, group_name, None)
+        if props is not None and hasattr(props, property_name):
+            setattr(props, property_name, value)
+
+    mesh_props = getattr(obj, "hotools_mesh_collision", None)
+    if mesh_props is not None:
+        mesh_props.mc2_base_pose_proxy = None
+
+
+_TOPOLOGY_CHANGING_MODIFIER_TYPES = frozenset({
+    "ARRAY",
+    "BEVEL",
+    "BOOLEAN",
+    "BUILD",
+    "DECIMATE",
+    "EDGE_SPLIT",
+    "EXPLODE",
+    "FLUID",
+    "MASK",
+    "MIRROR",
+    "MULTIRES",
+    "OCEAN",
+    "PARTICLE_INSTANCE",
+    "PARTICLE_SYSTEM",
+    "REMESH",
+    "SCREW",
+    "SKIN",
+    "SOLIDIFY",
+    "SUBSURF",
+    "TRIANGULATE",
+    "VOLUME_TO_MESH",
+    "WELD",
+    "WIREFRAME",
+})
+
+
+def _remove_topology_changing_modifiers(obj: bpy.types.Object) -> None:
+    """移除已知会改变拓扑的修改器；Geometry Nodes 保留并交给校验判定。"""
+    for modifier in tuple(obj.modifiers):
+        if str(modifier.type) in _TOPOLOGY_CHANGING_MODIFIER_TYPES:
+            obj.modifiers.remove(modifier)
 
 
 def create_base_pose_proxy(
@@ -200,7 +240,7 @@ def create_base_pose_proxy(
             CACHE_COLLECTION_NAME,
             hide_in_viewport=True,
         )
-        _remove_managed_outputs(base_obj)
+        _remove_topology_changing_modifiers(base_obj)
         _disable_runtime_flags(base_obj)
         base_obj.display_type = "WIRE"
         base_obj.hide_render = True

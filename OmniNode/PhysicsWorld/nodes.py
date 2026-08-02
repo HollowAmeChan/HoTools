@@ -108,6 +108,7 @@ def physicsObjectsFromScene(
         "刚体",
         "刚体约束",
         "包含隐藏",
+        "场",
     ],
     _OUTPUT_NAME=["对象范围"],
     mute_passthrough=False,
@@ -122,6 +123,7 @@ def physicsObjectsFromScene(
       骨骼碰撞 — 读取 Bone.hotools_collision.collision_type
       刚体     — 读取 hotools_rigid_body.enabled
       刚体约束 — 读取 hotools_rigid_constraint.enabled（仅 EMPTY 对象）
+      场       — 读取 hotools_field.enabled，并在帧开始注册公共场运行态
     """,
 )
 def physicsObjectScope(
@@ -131,6 +133,7 @@ def physicsObjectScope(
     include_rigid_body: bool = True,
     include_rigid_constraint: bool = True,
     include_hidden: bool = False,
+    include_field: bool = True,
 ) -> object:
     return make_scope(
         objects=objects,
@@ -139,6 +142,7 @@ def physicsObjectScope(
         include_rigid_body=bool(include_rigid_body),
         include_rigid_constraint=bool(include_rigid_constraint),
         include_hidden=bool(include_hidden),
+        include_field=bool(include_field),
     )
 
 

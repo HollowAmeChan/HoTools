@@ -93,7 +93,7 @@ Cache Read
 职责：
 
 - 显式定义当前物理世界能感知哪些 Blender object。
-- 决定是否包含简单碰撞、骨骼碰撞、简单布料、刚体、约束、隐藏对象等类别。
+- 决定是否包含简单碰撞、骨骼碰撞、刚体、约束、Field、隐藏对象等类别；Field 开关默认开启，关闭时 World Begin 必须发布本帧零场运行态而不是沿用旧场。
 - 只表达扫描范围和依赖范围，不表达具体 solver 参数。
 
 边界：
@@ -111,6 +111,7 @@ Cache Read
 
 - 在面板对象或自定义对象节点产出 solver spec 之前，校验真实 Mesh owner 和单用户写回目标。
 - 按消费声明准备 BasePose 只读对象；决定创建、拓扑失效刷新和手工替换语义。
+- BasePose 从 Source 的 Mesh 数据独立复制，创建时删除已知会改变拓扑的修改器并关闭全部 Object 级 HoTools 物理开关；Armature 等纯形变修改器保留。Geometry Nodes 暂不做语义猜测也不自动删除，若其改变 final-proxy 顶点数则由现有 evaluated mesh 校验明确报错。
 - 保证自动 BasePose 位于 Source 所属 Scene 的 `HoPhysicsCache` 集合，并真实进入目标 View Layer；代理用 View Layer 级隐藏保持视口不可见，但不能通过 exclude 或错误 Scene 从 Outliner 消失。
 - 准备共享 `hotools_physics_offset` 属性、受管 GN node group 和栈末端修改器；统一 writeback 只提交该公共资源上的最终 offset。
 - 多 Scene 使用各自的逻辑 `HoPhysicsCache` 集合，禁止按全局 Collection 名复用后把其它 Scene 的代理一起带入。
@@ -282,14 +283,14 @@ Field 是 Physics World 的共享 component，不是某个 solver 的内置特�
 
 当前公共与 MC2 CPU V0 边界：
 
-- Empty 上的 `Object.hotools_field` 是持久 authoring 入口。公共 collector 把 RNA 与 evaluated transform 解析为纯值 `FieldSpecV0`，再原子协调 `world.implicit_objects` manifest 和 `FieldSnapshotV0`；禁用、删除、无效与重复 stable ID 都必须有显式移除或诊断，不能留下幽灵场。
+- Empty 上的 `Object.hotools_field` 是持久 authoring 入口。公共 collector 把 RNA 与 evaluated transform 解析为纯值 `FieldSpecV0`，再原子协调 `world.implicit_objects` manifest 和 `FieldSnapshotV0`；World Begin 按 scope 顺序保留首个重复 UUID，并给后续可写 Field 自动分配新 UUID 和警告诊断。禁用、删除、取消注册或不可修复的无效身份都必须显式移除或诊断，不能留下幽灵场。
 - 用户使用 Blender 原生 Empty，再在集中面板启用 Field；Physics World 不提供创建 Field 对象的 operator。面板先显示 `field_type`，只展开当前类型参数，过滤与合成权重默认折叠在高级属性中。作者侧不暴露 status 字段：有效且启用的 Empty 一律解析为 `ACTIVE`；`PREVIEW_ONLY` 只保留给程序化规格和显式创作预览，不是 Blender 作者需要管理的产品状态。
 - `VolumeSpecV0` 当前只接受 Sphere 和 Box。Sphere 在中心权重为 1，到局部单位球边界线性降至 0；Box 在局部单位盒内权重为 1、盒外为 0，没有内部衰减。Sphere 只接受均匀缩放，Box 接受非均匀缩放；shear、reflection 和奇异变换拒绝进入有效快照。V0 直接用 Volume 权重缩放 `air_velocity`；未来是否拆出独立参与权重仍是未冻结的设计质疑点。
 - `air_velocity` 的生产采样入口是公共 `FieldRuntimeV1` evaluator：只读位置/context views、显式 sample time、调用方持有的输出和 scratch；输出 world-space `float32[N,3]` 与独立 `participation[N]`。累加结果必须先整批验证为有限且可由 `float32` 表示，再原子写入输出；失败时不能暴露半批新值或有效样本。多个 Wind 按 priority、stable ID 的规范顺序加法叠加。Python reference sampler 只用于 golden、差分、诊断和作者工具，不进入 solver 热路径。
 - turbulence 必须是版本化、seed 驱动且不依赖全局 RNG/墙钟的确定性函数。作者预览固定为 `AUTHOR_STATIC/t=0`，只展示静态注册状态；正式 consumer 和运行态调试使用同一个 native evaluator，并使用 `PhysicsFrameContext` 的 sample/substep time。
 - 当前 `FIELD_ABI_VERSION=0`、channel 为 `air_velocity`、generator 为 `analytic.wind.v0`。这是版本化的 Field 公共 API，不等于 native ABI；版本变化必须同步 golden、capability 与消费者适配器。
 - `collect_scope_field_specs` 在 World Begin 的 component collector 阶段发布当前 generation/frame/frame-start sample time 的 `FieldSnapshotV0`，并编译或热更新 `NativeFieldRuntimeV1` 到 `field_native_runtime_v1` runtime cache；resolver 诊断发布到 `physics.field.diagnostics`。snapshot、manifest、diagnostics 和 native owner 必须作为一次可回滚事务提交。config/value 不变时只热更新帧元数据；变化时 staged replacement，旧 owner 在新提交成功后释放。
-- native registry 使用进程内单调、不复用的 `uint64` handle。Python runtime owner 管理 create/update/inspect/dispose；consumer 在一次 native 调用中借用，不能长期保存裸指针或越过 world cache 生命周期。当前 binding 仅在 CPython GIL 串行条件下成立；释放 GIL、native worker 或异步 GPU 接入前，必须改为显式同步并让调用持有 `shared_ptr` lease。
+- native registry 使用进程内单调、不复用的 `uint64` handle。Python runtime owner 管理 create/update/inspect/dispose；consumer 在一次 native 调用中借用，不能长期保存裸指针或越过 world cache 生命周期。MC2 Domain 只允许在 `prepare -> step/cancel` 窗口保留借用 handle；prepare no-op、step 完成和异常 cancel 都必须立即清零。当前 binding 仅在 CPython GIL 串行条件下成立；释放 GIL、native worker 或异步 GPU 接入前，必须改为显式同步并让调用持有 `shared_ptr` lease。
 - MC2 在 declaration 中显式消费 `field_air_velocity`。Domain 静态同步时把完整且互斥的 partition consumer contexts 纳入 staged Domain 事务；context 语义变化强制 staged replacement，配置失败不得替换旧 owner/slot。参数更新时上传 `field_wind_enabled * field_wind_strength` 响应；每个 fixed 子步 Python 只传 runtime handle 与严格 World sample time 两个标量。
 - MC2 作用域上下文使用 consumer ID `mc2`、源 Object 名或 Armature 名、该源所属 Blender Collection 名，以及 MC2 单 bit 碰撞组的低 16 位公共 mask。include/exclude、Collection 和碰撞组过滤全部由 native Field evaluator 执行；作用域外粒子的 participation 为零。
 - MC2 作者参数只保留 `field_wind_enabled`（“响应场风”）和 `field_wind_strength`（“风响应强度”，0..20）。Field 持有速度、方向、turbulence、Volume、衰减、作用域与合成参数。旧 `wind_influence`、`wind_frequency`、`wind_turbulence`、`wind_blend`、`wind_synchronization`、`wind_depth_weight`、`moving_wind` 已从 profile、runtime ABI 和节点输入删除，不提供隐藏字段、数据迁移或兼容映射。

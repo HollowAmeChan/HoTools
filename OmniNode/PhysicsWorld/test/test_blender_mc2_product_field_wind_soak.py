@@ -227,12 +227,9 @@ def _assert_field_time_and_native_state(
         if runtime is None:
             assert state["field_runtime_handle"] == 0
             continue
-        expected_time = (
-            frame_context.sample_time_seconds
-            + frame_context.frame_step_dt * (update_count - 1) / update_count
-        )
-        assert state["field_runtime_handle"] == runtime.handle
-        assert state["field_sample_time_seconds"] == expected_time
+        # runtime 只在单次 prepare -> step/cancel 窗口借用；帧结束不得残留身份。
+        assert state["field_runtime_handle"] == 0
+        assert state["field_sample_time_seconds"] == -1.0
         assert state["field_prepared_active"] is False
         responsive = setup_type in responsive_setups
         if responsive:

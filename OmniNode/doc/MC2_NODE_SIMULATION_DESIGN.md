@@ -238,7 +238,7 @@ StepBasic prepare
 
 所有 setup 的能力差异由 compiled tables 和 capability 决定，不通过第二条 pass sequence 实现。
 
-Teleport是external collision之前完成的partition历史事务。MeshCloth以每个partition首个Fixed的animated world pose为参考，无Fixed才回退Source对象原点；骨骼驱动要成立，BasePose必须保留同一基础变形链。Keep/Reset触发帧除粒子与whole-domain self历史外，还必须让本域external Point/Edge把collider当前姿态视为old姿态，禁止公共上一帧快照产生跨瞬移扫掠。调试触发色只证明TaskReference判定，不替代最终GN/Bone写回验收。
+Teleport是external collision之前完成的partition历史事务。MeshCloth以每个partition首个Fixed的animated world pose为参考，无Fixed才回退Source对象原点；自动BasePose关闭HoTools物理参与并删除已知拓扑修改器，保留纯形变与Geometry Nodes，任何剩余修改器改变final-proxy顶点数时明确失败。Keep/Reset触发帧除粒子与whole-domain self历史外，还必须让本域external Point/Edge把collider当前姿态视为old姿态，禁止公共上一帧快照产生跨瞬移扫掠。调试触发色只证明TaskReference判定，不替代最终GN/Bone写回验收。
 
 ### 输出与原子写回
 

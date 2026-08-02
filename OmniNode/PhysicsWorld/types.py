@@ -36,6 +36,7 @@ class PhysicsObjectScope:
         "include_rigid_body",
         "include_rigid_constraint",
         "include_hidden",
+        "include_field",
     )
 
     def __init__(
@@ -46,6 +47,7 @@ class PhysicsObjectScope:
         include_rigid_body: bool = True,
         include_rigid_constraint: bool = True,
         include_hidden: bool = False,
+        include_field: bool = True,
     ) -> None:
         self.objects: tuple = tuple(objects) if objects else ()
         self.include_passive_collision: bool = bool(include_passive_collision)
@@ -53,6 +55,7 @@ class PhysicsObjectScope:
         self.include_rigid_body: bool = bool(include_rigid_body)
         self.include_rigid_constraint: bool = bool(include_rigid_constraint)
         self.include_hidden: bool = bool(include_hidden)
+        self.include_field: bool = bool(include_field)
 
     def __repr__(self) -> str:
         return (
@@ -62,7 +65,8 @@ class PhysicsObjectScope:
             f"bone={self.include_bone_collision}, "
             f"rigid={self.include_rigid_body}, "
             f"constraint={self.include_rigid_constraint}, "
-            f"hidden={self.include_hidden})"
+            f"hidden={self.include_hidden}, "
+            f"field={self.include_field})"
         )
 
 

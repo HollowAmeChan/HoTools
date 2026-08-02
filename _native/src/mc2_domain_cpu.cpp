@@ -3178,12 +3178,16 @@ bool DomainV1::prepare_field_wind(
     field_runtime_handle_ = runtime_handle;
     field_sample_time_seconds_ = sample_time_seconds;
     if (!field_response_active_ || runtime.fields().empty()) {
+        field_runtime_handle_ = 0;
+        field_sample_time_seconds_ = -1.0;
         return false;
     }
     if (!runtime.has_allowed_scope(
         field_consumer_contexts_.data(),
         field_consumer_contexts_.size()
     )) {
+        field_runtime_handle_ = 0;
+        field_sample_time_seconds_ = -1.0;
         return false;
     }
 
@@ -3215,6 +3219,8 @@ bool DomainV1::prepare_field_wind(
 
 void DomainV1::cancel_prepared_field_wind() noexcept {
     field_prepared_active_ = false;
+    field_runtime_handle_ = 0;
+    field_sample_time_seconds_ = -1.0;
 }
 
 void DomainV1::clear_prepared_field_wind() noexcept {
@@ -3236,6 +3242,8 @@ void DomainV1::step_prepared_field_wind(float dt) {
         field_effective_response_strength_values_.data()
     );
     field_prepared_active_ = false;
+    field_runtime_handle_ = 0;
+    field_sample_time_seconds_ = -1.0;
     ++field_apply_count_;
 }
 

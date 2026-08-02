@@ -382,32 +382,30 @@ def test_manifest_reconcile_removes_disabled_deleted_and_invalid_sources() -> No
     snapshot = world.runtime_cache(field_implicit.FIELD_SNAPSHOT_CACHE_KEY_V0)
     assert tuple(item.field_id for item in snapshot.fields) == (active_id,)
 
-    # Blender 复制对象会复制 UUID。冲突对象出现后，不能保留之前任意一份结果。
+    # Blender 复制对象会复制 UUID。World Begin 保留先出现的源，并给后续源重签。
     duplicate.hotools_field.enabled = True
     conflict_scope = world_types.PhysicsObjectScope((active, duplicate, disabled))
     conflict_report = field_implicit.collect_scope_field_specs(world, conflict_scope)
-    assert conflict_report.registered_ids == ()
-    assert conflict_report.removed_ids == (active_id,)
-    assert world.implicit_objects == []
+    duplicate_id = duplicate.hotools_field.field_id
+    assert duplicate_id != active_id
+    assert conflict_report.registered_ids == tuple(sorted((active_id, duplicate_id)))
+    assert conflict_report.removed_ids == ()
+    assert len(world.implicit_objects) == 2
     diagnostics = world.runtime_cache(field_names.FIELD_DIAGNOSTICS_CHANNEL)
     assert any(
         item.code == field_implicit.FIELD_DUPLICATE_ID
-        and item.field_id == active_id
+        and item.field_id == duplicate_id
+        and item.severity == "WARNING"
         for item in diagnostics
     )
 
-    # 冲突源删除后可重新注册；随后禁用必须按同 stable_id 移除。
-    restored_report = field_implicit.collect_scope_field_specs(
-        world,
-        world_types.PhysicsObjectScope((active, disabled)),
-    )
-    assert restored_report.registered_ids == (active_id,)
+    # 后续源离开 scope、保留源禁用时，两个身份都必须从 manifest 删除。
     active.hotools_field.enabled = False
     disabled_report = field_implicit.collect_scope_field_specs(
         world,
         world_types.PhysicsObjectScope((active, disabled)),
     )
-    assert disabled_report.removed_ids == (active_id,)
+    assert disabled_report.removed_ids == tuple(sorted((active_id, duplicate_id)))
     assert world.implicit_objects == []
 
     # 源从 manifest 中删除时同样不能留下持久 entry。
@@ -422,6 +420,49 @@ def test_manifest_reconcile_removes_disabled_deleted_and_invalid_sources() -> No
     )
     assert deleted_report.removed_ids == (active_id,)
     assert world.implicit_objects == []
+
+
+def test_scope_toggle_and_deleted_live_source_publish_safe_empty_runtime() -> None:
+    obj = _new_empty("Field_RuntimeDelete")
+    field_id = field_properties.ensure_field_id_v0(obj)
+    obj.hotools_field.enabled = True
+    world = world_types.PhysicsWorldCache()
+    world.generation = 9
+    world.frame_context.initialized = True
+    world.frame_context.generation = 9
+    world.frame_context.frame = 12
+
+    disabled_scope = world_types.PhysicsObjectScope((obj,), include_field=False)
+    disabled_report = field_implicit.collect_scope_field_specs(world, disabled_scope)
+    assert disabled_report.registered_ids == ()
+    disabled_runtime = world.runtime_cache(
+        field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1
+    )
+    assert disabled_runtime.debug_snapshot()["field_count"] == 0
+
+    active_scope = world_types.PhysicsObjectScope((obj,), include_field=True)
+    active_report = field_implicit.collect_scope_field_specs(world, active_scope)
+    assert active_report.registered_ids == (field_id,)
+    active_runtime = world.runtime_cache(
+        field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1
+    )
+    assert active_runtime is not disabled_runtime
+    assert disabled_runtime.live is False
+    assert active_runtime.debug_snapshot()["field_count"] == 1
+
+    stale_reference = obj
+    bpy.data.objects.remove(obj, do_unlink=True)
+    deleted_report = field_implicit.collect_scope_field_specs(
+        world,
+        world_types.PhysicsObjectScope((stale_reference,), include_field=True),
+    )
+    empty_runtime = world.runtime_cache(field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1)
+    assert deleted_report.removed_ids == (field_id,)
+    assert active_runtime.live is False
+    assert empty_runtime.live is True
+    assert empty_runtime.debug_snapshot()["field_count"] == 0
+    assert world.implicit_objects == []
+    world.omni_cache_dispose("deleted_field_runtime_test")
 
 
 def test_manifest_rejects_foreign_producer_without_mutation() -> None:

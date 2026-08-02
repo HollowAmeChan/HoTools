@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import uuid
 
 from .diagnostics import FieldDiagnosticV0
 from .names import (
@@ -96,6 +97,54 @@ def _candidate_identity(obj):
     if not raw_id:
         raise ValueError("缺少持久 field_id；请使用创建或修复操作生成 UUID")
     return canonical_field_id_v0(raw_id), enabled
+
+
+def repair_duplicate_field_ids_v0(objects) -> tuple[FieldDiagnosticV0, ...]:
+    """在 World Begin 边界修复 Blender 复制产生的重复 Field UUID。"""
+    used_ids: set[str] = set()
+    seen_objects: set[int] = set()
+    diagnostics = []
+    for obj in _flatten_sources(objects):
+        authoring_obj = _authoring_object(obj)
+        try:
+            object_key = int(authoring_obj.as_pointer())
+            if object_key in seen_objects:
+                continue
+            seen_objects.add(object_key)
+            props = authoring_obj.hotools_field
+            raw_id = str(getattr(props, "field_id", "") or "").strip()
+            enabled = bool(getattr(props, "enabled", False))
+        except (AttributeError, ReferenceError, TypeError):
+            continue
+        if not raw_id and not enabled:
+            continue
+        try:
+            field_id = canonical_field_id_v0(raw_id)
+        except ValueError:
+            continue
+        if field_id not in used_ids:
+            used_ids.add(field_id)
+            continue
+
+        new_id = str(uuid.uuid4())
+        while new_id in used_ids:
+            new_id = str(uuid.uuid4())
+        try:
+            props.field_id = new_id
+        except (AttributeError, ReferenceError, RuntimeError, TypeError):
+            # linked/read-only 数据不能静默伪造身份；后续纯暂存会保留重复诊断。
+            continue
+        used_ids.add(new_id)
+        diagnostics.append(FieldDiagnosticV0(
+            code=FIELD_DUPLICATE_ID,
+            field_id=new_id,
+            message=(
+                f"Field 源 {_source_label(authoring_obj)} 的重复 ID {field_id} "
+                f"已在帧开始自动改为 {new_id}"
+            ),
+            severity="WARNING",
+        ))
+    return tuple(diagnostics)
 
 
 def stage_field_sources_v0(objects, *, depsgraph=None) -> FieldSourceStageV0:
@@ -319,7 +368,12 @@ def reconcile_field_manifest_v0(
 
 def collect_scope_field_specs(world, scope) -> FieldManifestReportV0:
     """收集 Field，并把纯快照与公共 native runtime 一次性提交到 world。"""
-    objects = getattr(scope, "objects", ())
+    objects = (
+        getattr(scope, "objects", ())
+        if bool(getattr(scope, "include_field", True))
+        else ()
+    )
+    identity_diagnostics = repair_duplicate_field_ids_v0(objects)
     try:
         import bpy
 
@@ -330,7 +384,13 @@ def collect_scope_field_specs(world, scope) -> FieldManifestReportV0:
     except (AttributeError, RuntimeError):
         depsgraph = None
 
-    stage = stage_field_sources_v0(objects, depsgraph=depsgraph)
+    staged_sources = stage_field_sources_v0(objects, depsgraph=depsgraph)
+    stage = FieldSourceStageV0(
+        specs=staged_sources.specs,
+        disabled_field_ids=staged_sources.disabled_field_ids,
+        diagnostics=identity_diagnostics + staged_sources.diagnostics,
+        source_count=staged_sources.source_count,
+    )
     frame_context = getattr(world, "frame_context", None)
     snapshot = build_field_snapshot_v0(
         stage.specs,
@@ -413,5 +473,6 @@ __all__ = [
     "collect_scope_field_specs",
     "field_implicit_entry_v0",
     "reconcile_field_manifest_v0",
+    "repair_duplicate_field_ids_v0",
     "stage_field_sources_v0",
 ]
