@@ -94,6 +94,10 @@ def drawIn_VIEW3D_MT_pose_context_menu(self, context):
     self.layout.menu("VIEW3D_MT_pose_context_menu_hotools") 
 
 
+def drawIn_ARMATURE_MT_collection_context_menu(self, context):
+    self.layout.operator(boneOperators.OP_RemoveEmptyBoneCollections.bl_idname)
+
+
 
 cls = [
     PL_BoneTools,
@@ -117,6 +121,9 @@ def register():
 
     bpy.types.VIEW3D_MT_armature_context_menu.append(drawIn_VIEW3D_MT_armature_context_menu)
     bpy.types.VIEW3D_MT_pose_context_menu.append(drawIn_VIEW3D_MT_pose_context_menu)
+    bpy.types.ARMATURE_MT_collection_context_menu.append(
+        drawIn_ARMATURE_MT_collection_context_menu
+    )
     reg_props()
 
 
@@ -135,4 +142,7 @@ def unregister():
 
     bpy.types.VIEW3D_MT_armature_context_menu.remove(drawIn_VIEW3D_MT_armature_context_menu)
     bpy.types.VIEW3D_MT_pose_context_menu.remove(drawIn_VIEW3D_MT_pose_context_menu)
+    bpy.types.ARMATURE_MT_collection_context_menu.remove(
+        drawIn_ARMATURE_MT_collection_context_menu
+    )
     ureg_props()

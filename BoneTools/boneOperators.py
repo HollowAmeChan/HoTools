@@ -1825,6 +1825,37 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     drawMergeArmaturesPanel(layout, context)
 
 
+class OP_RemoveEmptyBoneCollections(Operator):
+    bl_idname = "ho.remove_empty_bone_collections"
+    bl_label = "移除无骨的骨集合"
+    bl_description = "移除当前骨架中不包含任何骨骼的骨集合"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        armature = context.active_object.data
+        collections = getattr(armature, "collections_all", armature.collections)
+        empty_collections = [collection for collection in collections if not collection.bones]
+
+        for collection in empty_collections:
+            try:
+                armature.collections.remove(collection)
+            except (ReferenceError, RuntimeError):
+                # A parent collection may already have been removed with its children.
+                continue
+
+        removed_count = len(empty_collections)
+        if removed_count:
+            self.report({'INFO'}, f"已移除 {removed_count} 个无骨集合")
+        else:
+            self.report({'INFO'}, "没有找到无骨集合")
+        return {'FINISHED'}
+
+
 cls = [
     OP_ApplyRestPose,
     OP_ForceClearBoneRotation,
@@ -1849,6 +1880,7 @@ cls = [
     OP_BoneApplyConstraint,
     OP_BoneRemoveConstraints,
     OP_MergeArmatures,
+    OP_RemoveEmptyBoneCollections,
 ]
 
 
