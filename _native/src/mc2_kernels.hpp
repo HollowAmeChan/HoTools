@@ -514,6 +514,16 @@ struct Mc2ParticleIntegrationView {
     const float* gravity_values = nullptr;
 };
 
+struct Mc2WindResponseView {
+    float* velocities = nullptr;
+    const float* world_normals = nullptr;
+    const float* air_velocity_world = nullptr;
+    const float* inv_masses = nullptr;
+    const float* response_strength_values = nullptr;
+    std::int64_t vertex_count = 0;
+    float dt = 0.0f;
+};
+
 struct Mc2PartitionKeepTransformView {
     float* positions = nullptr;
     float* rotations = nullptr;
@@ -573,6 +583,7 @@ bool apply_partitioned_substep_inertia_mc2(Mc2PartitionedSubstepInertiaView& vie
 bool derive_center_world_pose_mc2(Mc2CenterPoseView& view);
 bool evaluate_center_frame_shift_mc2(Mc2CenterFrameShiftView& view);
 bool evaluate_center_step_mc2(Mc2CenterStepView& view);
+void apply_wind_response_mc2(Mc2WindResponseView& view);
 void integrate_particles_mc2(Mc2ParticleIntegrationView& view);
 void apply_partition_keep_transform_mc2(Mc2PartitionKeepTransformView& view);
 void apply_centrifugal_velocity_mc2(Mc2CentrifugalView& view);

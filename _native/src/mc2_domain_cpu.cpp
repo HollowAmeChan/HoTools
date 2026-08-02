@@ -3068,6 +3068,41 @@ void DomainV1::configure_integration(const float* damping_values) {
     integration_ready_ = true;
 }
 
+void DomainV1::step_wind_response(
+    const float* air_velocity_world,
+    float dt,
+    const float* response_strength_values
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU wind response step requires update_frame");
+    }
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 CPU wind response requires particle configuration");
+    }
+    require_finite(air_velocity_world, particle_count_ * 3, "wind air velocity");
+    require_finite(response_strength_values, particle_count_, "wind response strength");
+    if (!std::isfinite(dt) || dt <= 0.0f) {
+        throw std::invalid_argument("MC2 CPU wind response dt must be finite and positive");
+    }
+    for (std::size_t index = 0; index < particle_count_; ++index) {
+        if (response_strength_values[index] < 0.0f ||
+            response_strength_values[index] > 20.0f) {
+            throw std::invalid_argument("MC2 CPU wind response strength must be in 0..20");
+        }
+    }
+    hotools::Mc2WindResponseView view;
+    view.velocities = state_velocities_.data();
+    view.world_normals = world_normals_.data();
+    view.air_velocity_world = air_velocity_world;
+    view.inv_masses = inertia_inv_masses_.data();
+    view.response_strength_values = response_strength_values;
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.dt = dt;
+    hotools::apply_wind_response_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::step_integration(
     float dt,
     float simulation_power,

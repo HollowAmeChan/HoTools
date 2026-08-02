@@ -298,6 +298,11 @@ public:
         float depth_inertia
     );
     void configure_integration(const float* damping_values);
+    void step_wind_response(
+        const float* air_velocity_world,
+        float dt,
+        const float* response_strength_values
+    );
     void step_integration(
         float dt,
         float simulation_power,

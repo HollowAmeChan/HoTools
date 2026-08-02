@@ -4357,6 +4357,54 @@ bool evaluate_center_step_mc2(Mc2CenterStepView& view) {
     return true;
 }
 
+void apply_wind_response_mc2(Mc2WindResponseView& view) {
+    if (view.vertex_count <= 0 || view.velocities == nullptr ||
+        view.world_normals == nullptr || view.air_velocity_world == nullptr ||
+        view.inv_masses == nullptr || view.response_strength_values == nullptr) {
+        return;
+    }
+    constexpr float kTangentResponseRatio = 0.15f;
+    constexpr float kNormalLengthSquaredEpsilon = kMc2Epsilon * kMc2Epsilon;
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        if (view.inv_masses[vertex] <= 0.0f) continue;
+        const float rate = std::max(0.0f, view.response_strength_values[vertex]);
+        if (rate <= 0.0f) continue;
+        const float alpha = 1.0f - std::exp(-rate * view.dt);
+        const auto offset = vertex * 3;
+        const float relative[3] = {
+            view.air_velocity_world[offset] - view.velocities[offset],
+            view.air_velocity_world[offset + 1] - view.velocities[offset + 1],
+            view.air_velocity_world[offset + 2] - view.velocities[offset + 2],
+        };
+        const float normal_length_squared =
+            view.world_normals[offset] * view.world_normals[offset] +
+            view.world_normals[offset + 1] * view.world_normals[offset + 1] +
+            view.world_normals[offset + 2] * view.world_normals[offset + 2];
+        float coupled[3] = {relative[0], relative[1], relative[2]};
+        if (normal_length_squared > kNormalLengthSquaredEpsilon) {
+            // Wind Response V0 固定为法向完整响应、切向 15% 响应。
+            const float inverse_normal_length = 1.0f / std::sqrt(normal_length_squared);
+            const float normal[3] = {
+                view.world_normals[offset] * inverse_normal_length,
+                view.world_normals[offset + 1] * inverse_normal_length,
+                view.world_normals[offset + 2] * inverse_normal_length,
+            };
+            const float normal_scale =
+                relative[0] * normal[0] + relative[1] * normal[1] +
+                relative[2] * normal[2];
+            for (std::int64_t component = 0; component < 3; ++component) {
+                const float normal_component = normal[component] * normal_scale;
+                const float tangent_component = relative[component] - normal_component;
+                coupled[component] =
+                    normal_component + kTangentResponseRatio * tangent_component;
+            }
+        }
+        for (std::int64_t component = 0; component < 3; ++component) {
+            view.velocities[offset + component] += coupled[component] * alpha;
+        }
+    }
+}
+
 void integrate_particles_mc2(Mc2ParticleIntegrationView& view) {
     if (view.vertex_count <= 0 || view.positions == nullptr || view.velocities == nullptr) {
         return;

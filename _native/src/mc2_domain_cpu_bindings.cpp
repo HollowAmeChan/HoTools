@@ -59,6 +59,24 @@ nb::ndarray<nb::numpy, T> owned_array_2d(
 }
 
 template<typename T>
+nb::ndarray<nb::numpy, T, nb::ro> owned_readonly_array_2d(
+    std::vector<T>&& values,
+    std::size_t rows,
+    std::size_t columns
+) {
+    if (values.size() != rows * columns) {
+        throw nb::value_error("MC2 CPU output shape mismatch");
+    }
+    auto* owner_data = new std::vector<T>(std::move(values));
+    nb::capsule owner(owner_data, [](void* pointer) noexcept {
+        delete static_cast<std::vector<T>*>(pointer);
+    });
+    return nb::ndarray<nb::numpy, T, nb::ro>(
+        owner_data->data(), {rows, columns}, owner
+    );
+}
+
+template<typename T>
 nb::ndarray<nb::numpy, T> owned_array_1d(std::vector<T>&& values) {
     auto* owner_data = new std::vector<T>(std::move(values));
     nb::capsule owner(owner_data, [](void* pointer) noexcept {
@@ -1294,6 +1312,32 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit particle integration slice using the shared native kernel."
     );
     module.def(
+        "mc2_domain_cpu_v1_step_wind_response",
+        [](std::uint64_t handle,
+           cf32_2d air_velocity_world,
+           float dt,
+           cf32_1d response_strength) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(air_velocity_world.shape(0)) != domain->particle_count() ||
+                air_velocity_world.shape(1) != 3) {
+                throw nb::value_error(
+                    "MC2 CPU wind air_velocity_world must be [particle_count,3]"
+                );
+            }
+            if (static_cast<std::size_t>(response_strength.shape(0)) != domain->particle_count()) {
+                throw nb::value_error(
+                    "MC2 CPU wind response_strength must match particle_count"
+                );
+            }
+            domain->step_wind_response(
+                air_velocity_world.data(), dt, response_strength.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("air_velocity_world"), nb::arg("dt"),
+        nb::arg("response_strength"),
+        "Apply the fixed V0 normal/tangent wind response to native particle velocities."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_integration_partitioned",
         [](std::uint64_t handle,
            float dt,
@@ -1367,6 +1411,17 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("handle"), nb::arg("dt"), nb::arg("dynamic_friction_values"),
         nb::arg("static_friction_speed_values"), nb::arg("particle_speed_limit_values"),
         "Run owned post/history with per-particle partition parameters."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_read_positions",
+        [](std::uint64_t handle) {
+            auto* domain = require_domain(handle);
+            return owned_readonly_array_2d<float>(
+                std::vector<float>(domain->world_positions()), domain->particle_count(), 3
+            );
+        },
+        nb::arg("handle"),
+        "Read an immutable owned copy of the current world positions as [N,3]."
     );
     module.def(
         "mc2_domain_cpu_v1_read",
