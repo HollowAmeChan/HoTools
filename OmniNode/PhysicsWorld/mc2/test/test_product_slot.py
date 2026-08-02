@@ -1109,6 +1109,73 @@ def test_slot_native_executes_complete_compiled_frame():
         world.omni_cache_dispose("native_substep_test_complete")
 
 
+def test_slot_native_field_wind_changes_only_the_scoped_partition():
+    calm_world = _world()
+    windy_world = _world()
+    calm_kernel = native_kernel_module.MC2NativeCPUKernelV1()
+    windy_kernel = native_kernel_module.MC2NativeCPUKernelV1()
+    try:
+        _sync_mesh_product_slot(calm_world, _collection(), kernel=calm_kernel)
+        _sync_mesh_product_slot(windy_world, _collection(), kernel=windy_kernel)
+        calm_slot = calm_world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
+        windy_slot = windy_world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
+        calm_owner = calm_slot.data["owner"]
+        windy_owner = windy_slot.data["owner"]
+        program = windy_owner.compiled.program
+        frame = _domain_frame(program, frame=14)
+        calm_scheduled = _scheduled(calm_slot, frame)
+        windy_scheduled = _scheduled(windy_slot, frame)
+        assert calm_scheduled.schedule == windy_scheduled.schedule
+
+        calm_world.frame_context = types.SimpleNamespace(
+            frame=14,
+            generation=1,
+            sample_time_seconds=4.0,
+            frame_step_dt=0.1,
+        )
+        windy_world.frame_context = types.SimpleNamespace(
+            frame=14,
+            generation=1,
+            sample_time_seconds=4.0,
+            frame_step_dt=0.1,
+        )
+        windy_world.set_runtime_cache(
+            field_names.FIELD_SNAPSHOT_CACHE_KEY_V0,
+            _field_snapshot(frame=14, sample_time_seconds=4.0),
+        )
+        slot_module.publish_mc2_product_frame(
+            calm_world, calm_slot, calm_scheduled, _empty_collider_frame(14),
+        )
+        slot_module.publish_mc2_product_frame(
+            windy_world, windy_slot, windy_scheduled, _empty_collider_frame(14),
+        )
+        for _ in range(calm_scheduled.schedule.update_count):
+            slot_module.step_mc2_product_substep(calm_world, calm_slot)
+            slot_module.step_mc2_product_substep(windy_world, windy_slot)
+
+        calm_positions = calm_owner.read_output().world_positions
+        windy_positions = windy_owner.read_output().world_positions
+        owners = np.asarray(program.particle_partition_index, dtype=np.intp)
+        attributes = np.asarray(program.particle_attribute_flags, dtype=np.uint32)
+        sleeve_dynamic = (owners == 0) & ((attributes & np.uint32(1)) == 0)
+        assert sleeve_dynamic.any()
+        assert np.any(windy_positions[sleeve_dynamic] != calm_positions[sleeve_dynamic])
+        np.testing.assert_array_equal(
+            windy_positions[owners == 1], calm_positions[owners == 1]
+        )
+        expected_time = 4.0 + (
+            0.1
+            * (calm_scheduled.schedule.update_count - 1)
+            / calm_scheduled.schedule.update_count
+        )
+        assert windy_slot.data["last_field_sample_packet"].sample_time_seconds == (
+            expected_time
+        )
+    finally:
+        calm_world.omni_cache_dispose("native_field_calm_test_complete")
+        windy_world.omni_cache_dispose("native_field_windy_test_complete")
+
+
 TESTS = tuple(
     (name, value)
     for name, value in sorted(globals().items())
