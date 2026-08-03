@@ -1,9 +1,26 @@
 import math
 import os
+import sys
 from array import array
 from dataclasses import dataclass
 
 import bpy
+import numpy as np
+try:
+    from .._Lib.py313.PIL import Image as PILImage
+except (ImportError, ValueError):
+    try:
+        from .._Lib.py311.PIL import Image as PILImage
+    except (ImportError, ValueError):
+        lib_variant = 'py313' if sys.version_info[:2] == (3, 13) else 'py311'
+        lib_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            '_Lib',
+            lib_variant,
+        )
+        if lib_path not in sys.path:
+            sys.path.insert(0, lib_path)
+        from PIL import Image as PILImage
 from bpy.props import (
     BoolProperty,
     CollectionProperty,
@@ -265,7 +282,7 @@ def _collect_materials(objects):
     return materials
 
 
-def _validate_images(materials):
+def _validate_images(materials, force_alignment=False, target_resolution=2048):
     image_roles = {}
     dimensions = set()
 
@@ -285,6 +302,11 @@ def _validate_images(materials):
             if previous_role and previous_role != role:
                 raise ValueError(f'图像“{image.name}”不能同时作为主色和法线使用')
             image_roles[pointer] = role
+
+    if force_alignment:
+        if target_resolution <= 0:
+            raise ValueError('统一分辨率必须大于 0')
+        return target_resolution, target_resolution
 
     if len(dimensions) != 1:
         sizes = ', '.join(f'{width}x{height}' for width, height in sorted(dimensions))
@@ -307,10 +329,14 @@ def _validate_uvs(objects):
 def _scan_context(context, create_output_dir=False):
     objects = [obj for obj in context.selected_objects if obj.type == 'MESH']
     materials = _collect_materials(objects)
-    source_size = _validate_images(materials)
+    scene = context.scene
+    source_size = _validate_images(
+        materials,
+        force_alignment=scene.ho_texpacker_force_alignment,
+        target_resolution=scene.ho_texpacker_resolution,
+    )
     _validate_uvs(objects)
 
-    scene = context.scene
     output_dir = bpy.path.abspath(scene.ho_texpacker_output_dir)
     if not output_dir:
         raise ValueError('请选择输出目录')
@@ -346,6 +372,46 @@ def _read_pixels(image, pixel_count):
     pixels = array('f', [0.0]) * pixel_count
     image.pixels.foreach_get(pixels)
     return pixels
+
+
+def _read_image_pixels(image, target_size):
+    source_width, source_height = image.size
+    target_width, target_height = target_size
+    if (source_width, source_height) == target_size:
+        return _read_pixels(image, target_width * target_height * 4)
+
+    source_pixels = np.empty(
+        (source_height, source_width, 4),
+        dtype=np.float32,
+    )
+    image.pixels.foreach_get(source_pixels.reshape(-1))
+
+    # Filter premultiplied RGB so transparent edges do not bleed their color.
+    alpha = source_pixels[..., 3:4]
+    source_pixels[..., :3] *= alpha
+    resized_channels = []
+    for channel in range(4):
+        channel_image = PILImage.fromarray(source_pixels[..., channel], mode='F')
+        resized = channel_image.resize(
+            (target_width, target_height),
+            resample=PILImage.Resampling.LANCZOS,
+        )
+        resized_channels.append(np.asarray(resized, dtype=np.float32))
+
+    resized_pixels = np.stack(resized_channels, axis=-1)
+    resized_alpha = resized_pixels[..., 3:4]
+    np.divide(
+        resized_pixels[..., :3],
+        np.maximum(resized_alpha, 1.0e-8),
+        out=resized_pixels[..., :3],
+        where=resized_alpha > 1.0e-8,
+    )
+    resized_pixels[..., :3] = np.where(
+        resized_alpha > 1.0e-8,
+        resized_pixels[..., :3],
+        0.0,
+    )
+    return array('f', resized_pixels.reshape(-1))
 
 
 def _prepare_image_preview(image, max_size=96):
@@ -404,14 +470,13 @@ def _build_atlas(materials, image_attr, output_path, atlas_name, source_size,
     atlas_width = source_width * grid_size
     atlas_height = source_height * grid_size
     atlas_pixels = array('f', fill_pixel) * (atlas_width * atlas_height)
-    source_pixel_count = source_width * source_height * 4
     row_length = source_width * 4
 
     for item in materials:
         image = getattr(item, image_attr)
         if image is None:
             continue
-        source_pixels = _read_pixels(image, source_pixel_count)
+        source_pixels = _read_image_pixels(image, source_size)
         column = item.cell_index % grid_size
         row = item.cell_index // grid_size
         destination_x = column * source_width
@@ -635,7 +700,8 @@ class HO_OT_pack_texture_atlas(Operator):
         atlas_height = scan.source_size[1] * scan.grid_size
         self.expected_summary = (
             f'{len(scan.materials)} 个材质，{scan.grid_size} x {scan.grid_size} 排列，'
-            f'{atlas_width} x {atlas_height} px'
+            f'单格 {scan.source_size[0]} x {scan.source_size[1]} px，'
+            f'图集 {atlas_width} x {atlas_height} px'
         )
         self.expected_base_path = scan.base_path
         self.expected_normal_path = scan.normal_path
@@ -867,6 +933,10 @@ def drawTexPackerPanel(layout, context):
     column.prop(scene, 'ho_texpacker_output_dir', text='输出目录')
     column.prop(scene, 'ho_texpacker_atlas_name', text='图集名称')
     column.prop(scene, 'ho_texpacker_overwrite', text='覆盖同名文件')
+    column.prop(scene, 'ho_texpacker_force_alignment', text='强制统一分辨率')
+    resolution_row = column.row(align=True)
+    resolution_row.enabled = scene.ho_texpacker_force_alignment
+    resolution_row.prop(scene, 'ho_texpacker_resolution', text='单格分辨率')
     column.separator()
     column.operator(HO_OT_pack_texture_atlas.bl_idname, icon='UV')
 
@@ -897,9 +967,23 @@ def register():
         name='覆盖同名文件',
         default=False,
     )
+    bpy.types.Scene.ho_texpacker_force_alignment = BoolProperty(
+        name='强制统一分辨率',
+        description='将所有主色与法线贴图抗锯齿缩放到统一的正方形分辨率',
+        default=True,
+    )
+    bpy.types.Scene.ho_texpacker_resolution = IntProperty(
+        name='单格分辨率',
+        description='图集每个材质单元格的边长（像素）',
+        default=2048,
+        min=1,
+        max=16384,
+    )
 
 
 def unregister():
+    del bpy.types.Scene.ho_texpacker_resolution
+    del bpy.types.Scene.ho_texpacker_force_alignment
     del bpy.types.Scene.ho_texpacker_overwrite
     del bpy.types.Scene.ho_texpacker_atlas_name
     del bpy.types.Scene.ho_texpacker_output_dir
