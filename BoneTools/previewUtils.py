@@ -43,13 +43,25 @@ class AuxPreviewUtils:
             aux = getattr(props, "auxBone", None)
             if aux is None or aux_type == "NONE":
                 continue
+            normalized_sources = [name for name in source_bones if name]
+            previous_sources = [
+                str(getattr(ref, "name", ""))
+                for ref in aux.sourceBones
+                if getattr(ref, "name", "")
+            ]
+            same_identity = (
+                bool(getattr(aux, "isAuxBone", False))
+                and str(getattr(aux, "auxType", "")) == aux_type
+                and previous_sources == normalized_sources
+            )
             aux.isAuxBone = True
             aux.auxType = aux_type
             aux.sourceBones.clear()
-            for source_name in source_bones:
-                if source_name:
-                    ref = aux.sourceBones.add()
-                    ref.name = source_name
+            if not same_identity:
+                aux.constraintNames.clear()
+            for source_name in normalized_sources:
+                ref = aux.sourceBones.add()
+                ref.name = source_name
 
     @staticmethod
     def tag_redraw():

@@ -611,6 +611,33 @@ class FBXExporter:
 
         name_map = {}  # 原骨名 -> MCH骨名
 
+        # 先完成全部名称预检，避免处理到一半才发现冲突而留下半成品。
+        for src_name in mch_source_names:
+            preferred_name = FBXExporter.MCH_PREFIX + src_name
+            existing_names = sorted(
+                bone.name
+                for bone in arm.bones
+                if FBXExporter.is_mch_aux_bone_for_source(bone, src_name)
+                and edit_bones.get(bone.name) is not None
+            )
+            if len(existing_names) > 1:
+                raise RuntimeError(
+                    f"骨架 {getattr(ob, 'name', '<未知>')} 的主骨 {src_name} "
+                    "存在多个显式 MCH 辅助骨：" + "、".join(existing_names)
+                )
+            if existing_names and existing_names[0] != preferred_name:
+                raise RuntimeError(
+                    f"骨架 {getattr(ob, 'name', '<未知>')} 的主骨 {src_name} "
+                    f"已有非标准名称的显式 MCH：{existing_names[0]}；"
+                    f"期望名称为 {preferred_name}，创建已终止。"
+                )
+            if not existing_names and edit_bones.get(preferred_name) is not None:
+                raise RuntimeError(
+                    f"骨架 {getattr(ob, 'name', '<未知>')} 的主骨 {src_name} "
+                    f"生成 MCH 时发生骨名冲突：{preferred_name}；"
+                    "创建已终止，请先改名或删除冲突骨。"
+                )
+
         # 所有 MCH 骨归入专属骨骼集合（Blender 4.0+）。没有则新建；低版本无 collections 属性时为 None
         mch_collection = None
         collections = getattr(arm, "collections", None)
@@ -622,19 +649,25 @@ class FBXExporter:
                 except (RuntimeError, AttributeError):
                     mch_collection = None
 
-        # 1. 先建全部 MCH 副本，拷贝原始朝向
+        # 1. 先建全部 MCH 副本，拷贝原始朝向。只按 Aux 属性复用既有 MCH；
+        # 同名普通骨必须保留，Blender 会为新 MCH 分配唯一名称。
         for src_name in mch_source_names:
             src = edit_bones.get(src_name)
             if src is None:
                 continue
-            mch_name = FBXExporter.MCH_PREFIX + src_name
-            existed = edit_bones.get(mch_name)
-            if existed is not None:  # 防重名（理论上不该有，工程无残留）
-                edit_bones.remove(existed)
-            mch = edit_bones.new(mch_name)
-            mch.head = src.head.copy()
-            mch.tail = src.tail.copy()
-            mch.roll = src.roll
+            existing_names = sorted(
+                bone.name
+                for bone in arm.bones
+                if FBXExporter.is_mch_aux_bone_for_source(bone, src_name)
+                and edit_bones.get(bone.name) is not None
+            )
+            if existing_names:
+                mch = edit_bones.get(existing_names[0])
+            else:
+                mch = edit_bones.new(FBXExporter.MCH_PREFIX + src_name)
+                mch.head = src.head.copy()
+                mch.tail = src.tail.copy()
+                mch.roll = src.roll
             mch.use_deform = False
             # Keep MCH outside the deform chain.  Its runtime relationship to
             # the source bone is supplied by a Parent/Child Of constraint.
@@ -646,7 +679,7 @@ class FBXExporter:
                     bone_utils.replace_bone_collections(mch, [mch_collection])
                 except (RuntimeError, AttributeError):
                     pass
-            name_map[src_name] = mch_name
+            name_map[src_name] = mch.name
 
         # 2. 原始子级保持原父级，MCH 只作为主骨下的平行旁路骨。
 
@@ -669,24 +702,25 @@ class FBXExporter:
     def transfer_constraints_to_mch(ob, name_map):
         """把本骨架内指向 name_map 里原骨的约束 subtarget / 驱动 bone_target 改指对应 MCH。
 
-        只处理指向本骨架自身（target==ob）的引用，与 ConstraintAnalyzer 的单骨架范围一致；
+        只处理指向本骨架自身（target==ob）的引用，与 Rig 约束 IR 的单骨架范围一致；
         跨骨架引用不动。在 OBJECT 模式下调用。
         """
         if not name_map:
             return
 
-        # 1. pose bone 约束：subtarget（及带极向目标的 pole_subtarget）
+        # 1. pose bone 约束：subtarget（及带极向目标的 pole_subtarget）。
+        # 本函数在 MCH Parent 创建前执行，因此无需按显示名称排除生成约束。
         for pbone in ob.pose.bones:
             for con in pbone.constraints:
-                if con.name == FBXExporter.MCH_PARENT_CONSTRAINT_NAME:
+                if FBXExporter.is_registered_mch_parent_constraint(ob, pbone, con):
                     continue
                 if getattr(con, "target", None) == ob:
                     sub = getattr(con, "subtarget", "")
-                    if sub in name_map:
+                    if sub in name_map and name_map[sub] != pbone.name:
                         con.subtarget = name_map[sub]
                 if getattr(con, "pole_target", None) == ob:
                     psub = getattr(con, "pole_subtarget", "")
-                    if psub in name_map:
+                    if psub in name_map and name_map[psub] != pbone.name:
                         con.pole_subtarget = name_map[psub]
 
         # 2. 驱动器变量的 bone_target（指向本骨架的骨）
@@ -704,6 +738,19 @@ class FBXExporter:
         if not name_map:
             return 0
 
+        # Preflight every owner before changing metadata or adding the first
+        # Parent constraint. A later collision must not leave earlier MCH bones
+        # partially rewritten.
+        from BoneTools.boneProperty import _ensure_aux_constraint_name_available
+        for _source_name, mch_name in name_map.items():
+            mch = ob.pose.bones.get(mch_name)
+            if mch is not None:
+                _ensure_aux_constraint_name_available(
+                    mch,
+                    FBXExporter.MCH_PARENT_CONSTRAINT_NAME,
+                    "CHILD_OF",
+                )
+
         count = 0
         pending_inverse = []
         for source_name, mch_name in name_map.items():
@@ -712,17 +759,34 @@ class FBXExporter:
             if source is None or mch is None:
                 continue
 
+            mch_bone = ob.data.bones.get(mch_name)
+            mch_props = getattr(mch_bone, "hotools_boneprops", None)
+            mch_aux = getattr(mch_props, "auxBone", None) if mch_props else None
+            registered_names = {
+                str(getattr(item, "name", ""))
+                for item in getattr(mch_aux, "constraintNames", ())
+                if getattr(item, "name", "")
+            }
             constraint = next(
                 (
                     item
                     for item in mch.constraints
-                    if item.name == FBXExporter.MCH_PARENT_CONSTRAINT_NAME
+                    if item.type == "CHILD_OF" and item.name in registered_names
                 ),
                 None,
             )
-            if constraint is None or constraint.type != "CHILD_OF":
-                if constraint is not None:
-                    mch.constraints.remove(constraint)
+            from BoneTools.boneProperty import _register_aux_constraint
+            if mch_props is not None and hasattr(mch_props, "generateMCH"):
+                mch_props.generateMCH = False
+            if mch_aux is not None:
+                mch_aux.isAuxBone = True
+                mch_aux.auxType = "MCH"
+                mch_aux.sourceBones.clear()
+                mch_aux.constraintNames.clear()
+                source_ref = mch_aux.sourceBones.add()
+                source_ref.name = source_name
+
+            if constraint is None:
                 constraint = mch.constraints.new("CHILD_OF")
             constraint.name = FBXExporter.MCH_PARENT_CONSTRAINT_NAME
             constraint.target = ob
@@ -737,6 +801,7 @@ class FBXExporter:
             constraint.use_scale_x = False
             constraint.use_scale_y = False
             constraint.use_scale_z = False
+            _register_aux_constraint(mch, constraint)
 
             pending_inverse.append((mch_name, constraint.name))
             count += 1
@@ -772,28 +837,71 @@ class FBXExporter:
         return count
 
     @staticmethod
-    def export_armature_constraints_json(ob, fbx_filepath, suffix):
-        """分析本骨架内可导出的约束并写出 Unity JSON。返回写出的文件路径，无约束则返回 None。
+    def is_mch_aux_bone_for_source(data_bone, source_name):
+        """Return whether one data Bone explicitly describes this MCH relation."""
+        props = getattr(data_bone, "hotools_boneprops", None)
+        aux = getattr(props, "auxBone", None) if props is not None else None
+        if aux is None or not bool(getattr(aux, "isAuxBone", False)):
+            return False
+        if str(getattr(aux, "auxType", "")).strip().upper() != "MCH":
+            return False
+        source_names = [
+            str(getattr(item, "name", ""))
+            for item in getattr(aux, "sourceBones", ())
+            if getattr(item, "name", "")
+        ]
+        return source_names == [source_name]
 
-        约束的 target 已在 transfer_constraints_to_mch 中改指 MCH，故 analyze 读到的
-        targetPath 天然指向 MCH 骨（Unity 端 RotationConstraint 的 source 即 MCH）。
-        文件名为 <fbx名>_<骨架名><suffix>.json，suffix 用于与集合 JSON 区分避免冲突。
-        """
-        from .ConstraintAnalyzer import ConstraintAnalyzer
-        from .UnityConstraintMapper import UnityConstraintMapper
+    @staticmethod
+    def is_registered_mch_parent_constraint(ob, pose_bone, constraint):
+        """Identify an existing generated Parent by owner-local Aux metadata."""
+        data_bone = ob.data.bones.get(getattr(pose_bone, "name", ""))
+        props = getattr(data_bone, "hotools_boneprops", None)
+        aux = getattr(props, "auxBone", None) if props is not None else None
+        if aux is None or not bool(getattr(aux, "isAuxBone", False)):
+            return False
+        if str(getattr(aux, "auxType", "")).strip().upper() != "MCH":
+            return False
+        registered_names = {
+            str(getattr(item, "name", ""))
+            for item in getattr(aux, "constraintNames", ())
+            if getattr(item, "name", "")
+        }
+        source_names = [
+            str(getattr(item, "name", ""))
+            for item in getattr(aux, "sourceBones", ())
+            if getattr(item, "name", "")
+        ]
+        return (
+            getattr(constraint, "type", "") == "CHILD_OF"
+            and getattr(constraint, "name", "") in registered_names
+            and getattr(constraint, "target", None) == ob
+            and source_names == [getattr(constraint, "subtarget", "")]
+        )
 
-        constraints_list = ConstraintAnalyzer.analyze(ob)
-        if not constraints_list:
+    @staticmethod
+    def export_armature_constraint_ir(ob, fbx_filepath, suffix):
+        """Write the armature's neutral rig constraint IR next to the FBX."""
+        from .ConstraintIRExporter import ConstraintIRExporter
+
+        constraint_ir = ConstraintIRExporter.build_ir(ob)
+        if constraint_ir.is_empty():
             return None
 
-        json_str = UnityConstraintMapper.export_to_json(ob.name, constraints_list)
         base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
         json_path = FBXExporter.unity_metadata_path(
             fbx_filepath,
             f"{base_name}_{ob.name}{suffix}.json",
         )
         with open(json_path, "w", encoding="utf-8") as f:
-            f.write(json_str)
+            json.dump(
+                constraint_ir.to_dict(),
+                f,
+                indent=2,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            f.write("\n")
         return json_path
     @staticmethod
     def export_armature_collections_json(ob, fbx_filepath, suffix):
@@ -838,7 +946,7 @@ class FBXExporter:
             f"{base_name}_unity.json",
         )
         manifest = {
-            "version": "2.0",
+            "version": "3.0",
             "exportTime": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "fbxFile": os.path.basename(fbx_filepath),
             "files": entries,
@@ -1040,12 +1148,13 @@ class FBXExporter:
                 if bpy.ops.object.mode_set.poll():
                     bpy.ops.object.mode_set(mode="OBJECT")
 
-            # 回 OBJECT 模式后 pose bones 才刷新；先清主骨 pose 变换，再转移约束/驱动。
+            # 回 OBJECT 模式后 pose bones 才刷新。先清主骨 pose 变换并转移既有引用，
+            # 最后创建 MCH Parent；这样无需用约束显示名称识别并排除生成约束。
             for ob in view_layer_armatures:
                 name_map = name_maps.get(ob.name, {})
                 FBXExporter.clear_pose_bone_transforms(ob, name_map.keys())
-                FBXExporter.add_mch_parent_constraints(ob, name_map)
                 FBXExporter.transfer_constraints_to_mch(ob, name_map)
+                FBXExporter.add_mch_parent_constraints(ob, name_map)
         finally:
             for state in reversed(visibility_states):
                 FBXExporter.restore_armature_bone_visibility(state)
@@ -1067,17 +1176,17 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ) # type: ignore
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。无权重骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="为勾选了generateMCH的骨生成MCH_前缀同级旁路骨、清空主骨变换并写入Parent约束语义。仅存在于导出的FBX,工程不留痕",default=True) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="为勾选了generateMCH的骨生成MCH_前缀同级旁路骨、清空主骨变换并写入HoTools_MCH_Parent绑定。仅存在于导出的FBX,工程不留痕",default=True) # type: ignore
     showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
-    exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内可识别的Parent、Fan、Twist约束为Unity可用的JSON,统一写入FBX旁的HoFBX文件夹。MCH Parent约束也在此文件中；约束目标已随MCH转移",default=False) # type: ignore
-    boneConstraintSuffix:bpy.props.StringProperty(name="约束后缀",description="HoFBX文件夹内的约束JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
+    exportBoneConstraint:BoolProperty(name="导出Rig约束IR(JSON)",description="导出Aux骨、原始Blender约束参数和MCH绑定的中立IR；最终运行时方案由导入端决定",default=False) # type: ignore
+    boneConstraintSuffix:bpy.props.StringProperty(name="约束IR后缀",description="HoFBX文件夹内的Rig约束IR文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
     exportBoneCollection:BoolProperty(name="导出骨骼集合(JSON)",description="导出各骨架的骨骼集合(Bone Collections)为JSON,统一写入FBX旁的HoFBX文件夹",default=False) # type: ignore
     boneCollectionSuffix:bpy.props.StringProperty(name="集合后缀",description="HoFBX文件夹内的集合JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_collection") # type: ignore
     exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
     humanoidMappingSuffix:bpy.props.StringProperty(name="Humanoid后缀",description="HoFBX文件夹内的Humanoid mapping JSON文件后缀",default="_humanoid") # type: ignore
-    exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成约束、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
+    exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成Rig约束IR、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。随导出末尾撤销,工程不留痕",default=False) # type: ignore
     removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
@@ -1256,7 +1365,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 ob.name for ob in selection if ob.type == "ARMATURE"
             }
 
-            # 导出约束 JSON（约束 target 已在上一步改指 MCH，targetPath 天然指向 MCH）
+            # 导出中立 Rig 约束 IR。约束目标保留 MCH 预处理后的 Blender 事实。
             export_constraints = self.exportUnityMetadata or self.exportBoneConstraint
             export_collections = self.exportUnityMetadata or self.exportBoneCollection
             export_humanoid = self.exportUnityMetadata or self.exportHumanoidMapping
@@ -1267,13 +1376,13 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                         continue
                     if ob.name not in bpy.context.view_layer.objects:
                         continue
-                    json_path = FBXExporter.export_armature_constraints_json(
+                    json_path = FBXExporter.export_armature_constraint_ir(
                         ob, self.filepath, self.boneConstraintSuffix
                     )
                     if json_path:
                         exported_json.append(json_path)
                         metadata_entries.append({
-                            "kind": "constraints",
+                            "kind": "rigConstraintIR",
                             "armatureName": ob.name,
                             "file": os.path.basename(json_path),
                         })
@@ -1410,7 +1519,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         if self.exportUnityMetadata:
             info = json_col.row()
             info.enabled = False
-            info.label(text="将自动生成约束、集合和Humanoid映射 JSON", icon='INFO')
+            info.label(text="将自动生成Rig约束IR、集合和Humanoid映射 JSON", icon='INFO')
         else:
             json_col.prop(self, "exportBoneConstraint")
             if self.exportBoneConstraint:
@@ -1429,7 +1538,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自实现,长度为主体骨的一半),在MCH步骤之前执行;仅预处理模式不撤销,叶骨会留在工程供检视",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨",description="对 generateMCH=True 的骨生成 MCH_ 同级旁路骨、清空主骨变换并写入Parent约束;仅预处理模式不会自动撤销",default=False) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨",description="对 generateMCH=True 的骨生成 MCH_ 同级旁路骨、清空主骨变换并写入HoTools_MCH_Parent绑定;仅预处理模式不会自动撤销",default=False) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。仅预处理模式不自动撤销,修改会留在工程里,需手动 Ctrl+Z 还原",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器（type==NODES），避免几何节点改变导出网格；预处理结束前生效",default=True) # type: ignore

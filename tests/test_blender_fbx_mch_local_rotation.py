@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 
 import bpy
-from bpy.props import BoolProperty, PointerProperty
+from bpy.props import BoolProperty, CollectionProperty, PointerProperty, StringProperty
 from bpy.types import PropertyGroup
 from mathutils import Matrix
 
@@ -13,14 +13,29 @@ if str(ADDON_DIR) not in sys.path:
     sys.path.insert(0, str(ADDON_DIR))
 
 from Exporter.FbxExporter import FBXExporter
-from Exporter.UnityConstraintMapper import UnityConstraintMapper
-from Exporter.ConstraintAnalyzer import ConstraintAnalyzer
+from Exporter.ConstraintIRExporter import ConstraintIRExporter
+from BoneTools.auxBone.boneTwist import TwistBoneCore
+from BoneTools.boneProperty import _register_aux_constraint, _replace_aux_constraints
 from BoneTools.boneOperators import OP_ForceClearBoneRotation
+from BoneTools.previewUtils import AuxPreviewUtils
+from Utils import bone_utils
 from io_scene_fbx import parse_fbx
+
+
+class TestBoneRef(PropertyGroup):
+    name: StringProperty(default="")
+
+
+class TestAuxInfo(PropertyGroup):
+    isAuxBone: BoolProperty(default=False)
+    auxType: StringProperty(default="NONE")
+    sourceBones: CollectionProperty(type=TestBoneRef)
+    constraintNames: CollectionProperty(type=TestBoneRef)
 
 
 class TestBoneProps(PropertyGroup):
     generateMCH: BoolProperty(default=False)
+    auxBone: PointerProperty(type=TestAuxInfo)
 
 
 def assert_matrix_close(actual, expected, tolerance=1e-5):
@@ -78,6 +93,8 @@ def read_fbx_bone_parents(filepath, bone_names):
     }
 
 
+bpy.utils.register_class(TestBoneRef)
+bpy.utils.register_class(TestAuxInfo)
 bpy.utils.register_class(TestBoneProps)
 bpy.types.Bone.hotools_boneprops = PointerProperty(type=TestBoneProps)
 
@@ -176,6 +193,13 @@ for source_name, mch_name in name_map.items():
     assert constraint.target == armature
     assert constraint.subtarget == source_name
     assert abs(constraint.influence - 1.0) < 1e-6
+    mch_aux = armature.data.bones[mch_name].hotools_boneprops.auxBone
+    assert mch_aux.isAuxBone
+    assert mch_aux.auxType == "MCH"
+    assert [item.name for item in mch_aux.sourceBones] == [source_name]
+    assert [item.name for item in mch_aux.constraintNames] == [
+        FBXExporter.MCH_PARENT_CONSTRAINT_NAME
+    ]
 
 mch_before_follow = armature.pose.bones["MCH_First"].matrix.copy()
 armature.pose.bones["First"].rotation_mode = "XYZ"
@@ -190,26 +214,56 @@ assert any(
 assert FBXExporter.clear_pose_bone_transforms(armature, name_map) == 2
 bpy.context.view_layer.update()
 
-parent_constraints = ConstraintAnalyzer.analyze(armature)
-constraint_data = UnityConstraintMapper.export_to_dict(
-    armature.name,
-    parent_constraints,
-)
-constraint_map = {
-    item["boneName"]: item["constraints"]
-    for item in constraint_data["bones"]
+constraint_data = ConstraintIRExporter.export_to_dict(armature)
+binding_map = {
+    item["mchBone"]: item
+    for item in constraint_data["mchBindings"]
 }
-assert constraint_map["MCH_First"] == [
-    {
-        "type": "Child",
-        "semantic": "parent",
-        "targetPath": "First",
-        "weight": 1.0,
-        "space": {"source": "world", "target": "world"},
-        "maintainOffset": True,
-    }
+assert binding_map["MCH_First"]["sourceBone"] == "First"
+assert binding_map["MCH_Second"]["sourceBone"] == "Second"
+assert binding_map["MCH_First"]["constraint"]["constraintType"] == "CHILD_OF"
+assert binding_map["MCH_First"]["constraint"]["parameters"]["influence"] == 1.0
+assert binding_map["MCH_First"]["constraint"]["parameters"]["use_scale_x"] is False
+assert binding_map["MCH_First"]["constraint"]["parameters"]["use_rotation_y"] is True
+assert "type" not in binding_map["MCH_First"]["constraint"]
+aux_map = {item["boneName"]: item for item in constraint_data["auxBones"]}
+assert set(aux_map) == {"MCH_First", "MCH_Second"}
+for source_name, mch_name in name_map.items():
+    assert aux_map[mch_name]["auxType"] == "MCH"
+    assert aux_map[mch_name]["sourceBones"] == [source_name]
+    assert aux_map[mch_name]["constraintNames"] == [
+        FBXExporter.MCH_PARENT_CONSTRAINT_NAME
+    ]
+    assert aux_map[mch_name]["constraints"] == []
+assert constraint_data["unknownConstraints"] == []
+assert [item["relationType"] for item in constraint_data["knownConstraints"]] == [
+    "MCH_BINDING",
+    "MCH_BINDING",
 ]
-assert constraint_map["MCH_Second"][0]["targetPath"] == "Second"
+assert {item["auxType"] for item in constraint_data["knownConstraints"]} == {"MCH"}
+
+# RNA collections must preserve every target entry rather than serialize the
+# bpy_prop_collection itself as an empty RNA struct.
+armature_constraint = armature.pose.bones["Leaf"].constraints.new("ARMATURE")
+armature_constraint.name = "RawArmatureTargets"
+armature_constraint.mute = True
+armature_target = armature_constraint.targets.new()
+armature_target.target = armature
+armature_target.subtarget = "First"
+armature_target.weight = 0.4
+reference_probe = ConstraintIRExporter.export_to_dict(armature)
+raw_armature = next(
+    item["constraint"]
+    for item in reference_probe["unknownConstraints"]
+    if item["ownerBone"] == "Leaf"
+    and item["constraint"]["name"] == "RawArmatureTargets"
+)
+target_records = raw_armature["references"]["targets"]
+assert len(target_records) == 1
+assert target_records[0]["properties"]["subtarget"] == "First"
+assert abs(target_records[0]["properties"]["weight"] - 0.4) < 1e-6
+assert target_records[0]["properties"]["target"]["name"] == armature.name
+armature.pose.bones["Leaf"].constraints.remove(armature_constraint)
 
 for bone_name in name_map:
     assert_matrix_close(
@@ -250,6 +304,125 @@ with tempfile.TemporaryDirectory(prefix="hotools_fbx_mch_") as temp_dir:
         "MCH_First": "Root",
         "MCH_Second": "First",
     }
+
+
+# A preferred display-name collision must not delete or repurpose the user's bone.
+# Re-running preprocessing must find the generated MCH by Aux properties and reuse it.
+collision_data = bpy.data.armatures.new("MCHNameCollisionData")
+collision_armature = bpy.data.objects.new("MCHNameCollision", collision_data)
+bpy.context.scene.collection.objects.link(collision_armature)
+bpy.ops.object.select_all(action="DESELECT")
+bpy.context.view_layer.objects.active = collision_armature
+collision_armature.select_set(True)
+bpy.ops.object.mode_set(mode="EDIT")
+
+collision_root = collision_data.edit_bones.new("Root")
+collision_root.head = (0.0, 0.0, 0.0)
+collision_root.tail = (0.0, 1.0, 0.0)
+collision_main = collision_data.edit_bones.new("Main")
+collision_main.head = collision_root.tail
+collision_main.tail = (0.8, 2.0, 0.4)
+collision_main.parent = collision_root
+user_named_bone = collision_data.edit_bones.new("MCH_Main")
+user_named_bone.head = (2.0, 0.0, 0.0)
+user_named_bone.tail = (2.0, 1.0, 0.0)
+malformed_sidecar = collision_data.edit_bones.new("MalformedSidecar")
+malformed_sidecar.head = (3.0, 0.0, 0.0)
+malformed_sidecar.tail = (3.0, 1.0, 0.0)
+bpy.ops.object.mode_set(mode="OBJECT")
+collision_data.bones["Main"].hotools_boneprops.generateMCH = True
+malformed_aux = collision_data.bones[
+    "MalformedSidecar"
+].hotools_boneprops.auxBone
+malformed_aux.isAuxBone = True
+malformed_aux.auxType = "MCH"
+for source_name in ("Main", "Root"):
+    source_ref = malformed_aux.sourceBones.add()
+    source_ref.name = source_name
+
+# A user-owned preferred name is a hard error. No MCH bone may be created
+# before the caller fixes the collision.
+try:
+    FBXExporter.clear_armatures_bone_rotation(
+        [collision_armature], [collision_armature], collision_armature
+    )
+except RuntimeError as error:
+    assert "MCH_Main" in str(error)
+else:
+    raise AssertionError("MCH preprocessing must stop on a user bone-name collision")
+assert collision_data.bones.get("MCH_Main") is not None
+assert collision_data.bones.get("MalformedSidecar") is not None
+assert not collision_data.bones["MCH_Main"].hotools_boneprops.auxBone.isAuxBone
+assert collision_data.bones.get("MCH_Main.001") is None
+
+bpy.ops.object.mode_set(mode="EDIT")
+collision_data.edit_bones.remove(collision_data.edit_bones["MCH_Main"])
+bpy.ops.object.mode_set(mode="OBJECT")
+first_collision_map = FBXExporter.clear_armatures_bone_rotation(
+    [collision_armature], [collision_armature], collision_armature
+)[collision_armature.name]
+generated_collision_name = first_collision_map["Main"]
+assert generated_collision_name == "MCH_Main"
+assert generated_collision_name != "MalformedSidecar"
+assert collision_data.bones.get("MCH_Main") is not None
+assert FBXExporter.is_mch_aux_bone_for_source(
+    collision_data.bones[generated_collision_name], "Main"
+)
+bone_count_after_first_run = len(collision_data.bones)
+
+second_collision_map = FBXExporter.clear_armatures_bone_rotation(
+    [collision_armature], [collision_armature], collision_armature
+)[collision_armature.name]
+assert second_collision_map == first_collision_map
+assert len(collision_data.bones) == bone_count_after_first_run
+generated_constraint = collision_armature.pose.bones[
+    generated_collision_name
+].constraints[0]
+assert generated_constraint.target == collision_armature
+assert generated_constraint.subtarget == "Main"
+
+# An unregistered preferred constraint name is also a hard collision. The
+# generator must stop until the user removes or renames that constraint.
+bpy.context.view_layer.objects.active = collision_armature
+bpy.ops.object.mode_set(mode="EDIT")
+aux_owner = collision_data.edit_bones.new("AuxOwner")
+aux_owner.head = (0.0, 1.0, 0.0)
+aux_owner.tail = (0.0, 2.0, 0.0)
+aux_owner.parent = collision_data.edit_bones["Root"]
+bpy.ops.object.mode_set(mode="OBJECT")
+AuxPreviewUtils.set_aux_bone_props(
+    collision_armature,
+    ["AuxOwner"],
+    "TWIST",
+    ["Main"],
+)
+aux_pose = collision_armature.pose.bones["AuxOwner"]
+canonical_name = bone_utils.aux_constraint_name("TWIST", "CopyRotation")
+user_constraint = aux_pose.constraints.new("COPY_ROTATION")
+user_constraint.name = canonical_name
+try:
+    TwistBoneCore._ensure_copy_rotation_constraint(
+        aux_pose,
+        collision_armature,
+        "Main",
+        0.5,
+    )
+except RuntimeError as error:
+    assert canonical_name in str(error)
+else:
+    raise AssertionError("Aux constraint generation must stop on a preferred-name collision")
+assert len(aux_pose.constraints) == 1
+aux_pose.constraints.remove(user_constraint)
+generated_copy = TwistBoneCore._ensure_copy_rotation_constraint(
+    aux_pose,
+    collision_armature,
+    "Main",
+    0.5,
+)
+assert generated_copy.name == canonical_name
+_replace_aux_constraints(aux_pose, [generated_copy])
+aux_info = collision_data.bones["AuxOwner"].hotools_boneprops.auxBone
+assert [item.name for item in aux_info.constraintNames] == [generated_copy.name]
 
 
 # The manual command uses the same rest/pose clearing contract as MCH export.

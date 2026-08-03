@@ -355,13 +355,13 @@ BoneTools/hoAux/ir/
 | `coordinate.py` | bind/current matrix 和坐标系换算 |
 | `reference_solver.py` | 与 Unity 共用算法定义的 Python 预演器 |
 
-现有 `Exporter/BoneConstraintExporter.py` 最终只能调用 `hoAux.ir` 的公开 facade 并负责选择输出路径，不能持有 HoAux IR schema、writer、parser 或 capability 定义。现有 `ConstraintAnalyzer`/`UnityConstraintMapper` 继续服务普通 aux，不作为 HoAux 系统依赖。
+`Exporter/BoneConstraintExporter.py` 只负责普通 aux 与 MCH 的中立 Rig 约束 IR。HoAux 仍只能通过 `hoAux.ir` 的公开 facade 导出；普通 IR 导出器不能持有 HoAux schema、writer、parser 或 capability 定义，两套系统也不能互相推造身份字段。
 
 Source IR 是导出时的完整事实快照；Blender 作者态不持久保存骨集合成员、owned/uses 或 capability 字符串列表。导出时 resolver 从稳定 Key、Name Table 和实际 Blender 数据采集这些关系，不监测、不修复也不回写 Blender；validator 只检查 JSON/schema 结构，Unity importer 再根据 capability set 决定哪些记录可以执行。
 
 ## 11. 与当前普通 aux 导出的关系
 
-当前普通 aux 导出只识别 Fan/Twist，Unity mapper 把空间硬编码为 world/world，并将 Twist 降级为世界 Y 轴 RotationConstraint。它没有导出通用 Copy Location、Stretch To、Driver，也没有保留 `LOCAL_OWNER_ORIENT`。
+当前普通 aux 导出由 `auxBone.isAuxBone` 识别 owner，并保留该 owner 上指向同骨架的原始约束、空间、轴和类型专用参数。它不再把 Fan/Twist 转成 Unity 组件，也不再执行 world/world 或 Twist Y 轴降级；这些决策属于导入预览和落地策略。
 
 另外，现有 FBX 流程会生成 MCH、清理主骨静置方向，并重定向 constraint subtarget 与 driver bone target。HoAux IR 不能在这之后重新猜测原始 Blender 语义。
 

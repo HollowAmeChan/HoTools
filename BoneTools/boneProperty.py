@@ -21,6 +21,7 @@ AUX_BONE_TYPE_ITEMS = (
     ("FAN_SINGLE", "FanSingle", "单骨 fan 辅助骨"),
     ("FAN_SIDE", "FanSide", "侧向 fan 辅助骨"),
     ("TWIST", "Twist", "扭转辅助骨"),
+    ("MCH", "MCH", "由主骨属性生成的中间绑定骨"),
 )
 
 
@@ -32,6 +33,105 @@ class PG_Hotools_BoneRef(PropertyGroup):
         description="关联骨的名称",
         default="",
     )  # type: ignore
+
+
+def _register_aux_constraint(pose_bone, constraint):
+    """把生成约束登记到 owner 骨的 Aux 属性中。
+
+    Blender Constraint 不支持自定义属性，也没有可序列化的稳定指针，因此这里保存
+    约束名，并且只在同一根 PoseBone 的局部约束栈内解析，不做全骨架名称搜索。
+    """
+    if pose_bone is None or constraint is None:
+        return
+    armature = getattr(pose_bone, "id_data", None)
+    data = getattr(armature, "data", None)
+    bones = getattr(data, "bones", None)
+    getter = getattr(bones, "get", None)
+    data_bone = getter(pose_bone.name) if callable(getter) else None
+    props = getattr(data_bone, "hotools_boneprops", None)
+    aux = getattr(props, "auxBone", None) if props is not None else None
+    if aux is None:
+        return
+    constraint_name = str(getattr(constraint, "name", "") or "")
+    if not constraint_name:
+        return
+    for ref in aux.constraintNames:
+        if ref.name == constraint_name:
+            return
+    ref = aux.constraintNames.add()
+    ref.name = constraint_name
+
+
+def _find_registered_aux_constraint(pose_bone, constraint_type):
+    """Resolve one generated constraint from this owner's local registered names."""
+    if pose_bone is None:
+        return None
+    armature = getattr(pose_bone, "id_data", None)
+    data_bone = getattr(getattr(armature, "data", None), "bones", None)
+    getter = getattr(data_bone, "get", None)
+    bone = getter(pose_bone.name) if callable(getter) else None
+    props = getattr(bone, "hotools_boneprops", None)
+    aux = getattr(props, "auxBone", None) if props is not None else None
+    if aux is None:
+        return None
+    registered_names = {
+        str(getattr(ref, "name", ""))
+        for ref in aux.constraintNames
+        if getattr(ref, "name", "")
+    }
+    for constraint in pose_bone.constraints:
+        if constraint.name in registered_names and constraint.type == constraint_type:
+            return constraint
+    return None
+
+
+def _ensure_aux_constraint_name_available(pose_bone, constraint_name, constraint_type):
+    """Reject an unowned preferred name instead of accepting Blender's ``.001``."""
+    if pose_bone is None:
+        return
+    armature = getattr(pose_bone, "id_data", None)
+    bones = getattr(getattr(armature, "data", None), "bones", None)
+    getter = getattr(bones, "get", None)
+    data_bone = getter(pose_bone.name) if callable(getter) else None
+    props = getattr(data_bone, "hotools_boneprops", None)
+    aux = getattr(props, "auxBone", None) if props is not None else None
+    registered_names = {
+        str(getattr(ref, "name", ""))
+        for ref in getattr(aux, "constraintNames", ())
+        if getattr(ref, "name", "")
+    }
+    for existing in getattr(pose_bone, "constraints", ()):
+        if getattr(existing, "name", "") != constraint_name:
+            continue
+        if constraint_name not in registered_names:
+            raise RuntimeError(
+                f"骨架 {getattr(armature, 'name', '<未知>')} 的骨骼 {pose_bone.name} "
+                f"已有未登记约束 {constraint_name}，无法创建 {constraint_type}；"
+                "请先改名或删除冲突约束。"
+            )
+        if getattr(existing, "type", "") != constraint_type:
+            raise RuntimeError(
+                f"骨架 {getattr(armature, 'name', '<未知>')} 的骨骼 {pose_bone.name} "
+                f"已登记约束 {constraint_name} 类型为 {getattr(existing, 'type', '<未知>')}，"
+                f"与需要的 {constraint_type} 不一致。"
+            )
+
+
+def _replace_aux_constraints(pose_bone, constraints):
+    """Replace this owner's local constraint-name index with actual current names."""
+    if pose_bone is None:
+        return
+    armature = getattr(pose_bone, "id_data", None)
+    bones = getattr(getattr(armature, "data", None), "bones", None)
+    getter = getattr(bones, "get", None)
+    bone = getter(pose_bone.name) if callable(getter) else None
+    props = getattr(bone, "hotools_boneprops", None)
+    aux = getattr(props, "auxBone", None) if props is not None else None
+    if aux is None:
+        return
+    aux.constraintNames.clear()
+    for constraint in constraints:
+        _register_aux_constraint(pose_bone, constraint)
 
 
 class PG_Hotools_AuxGroupState(PropertyGroup):
@@ -71,6 +171,11 @@ class PG_Hotools_AuxBoneInfo(PropertyGroup):
     sourceBones: CollectionProperty(
         name="关联骨",
         description="定义此辅助骨所依附的骨；数量不定（单骨1根、两骨2根、三骨3根……）",
+        type=PG_Hotools_BoneRef,
+    )  # type: ignore
+    constraintNames: CollectionProperty(
+        name="关联约束",
+        description="该辅助骨语义明确引用的约束名称，仅在当前骨骼的约束栈内解析",
         type=PG_Hotools_BoneRef,
     )  # type: ignore
 
@@ -131,6 +236,7 @@ class OT_Hotools_AuxBoneClear(Operator):
         if aux is None:
             return {"CANCELLED"}
         aux.sourceBones.clear()
+        aux.constraintNames.clear()
         aux.auxType = "NONE"
         aux.isAuxBone = False
         return {"FINISHED"}
@@ -165,6 +271,9 @@ class PT_Hotools_PosebonePanel(Panel):
             box.label(text="关联骨：")
             for ref in aux.sourceBones:
                 box.label(text=ref.name, icon="BONE_DATA")
+            box.label(text="关联约束：")
+            for ref in aux.constraintNames:
+                box.label(text=ref.name, icon="CONSTRAINT_BONE")
             box.operator("hotools.aux_bone_clear", icon="TRASH", text="清除辅助骨信息")
 
         hoaux = props.hoAux

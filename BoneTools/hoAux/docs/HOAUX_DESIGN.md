@@ -734,7 +734,7 @@ Pipeline
 
 ## 15. Blender 与 Unity 的共同 Source IR
 
-HoAux 系统需要独立于现有普通辅助骨 `ConstraintAnalyzer` 的导出路径。
+HoAux 系统需要独立于普通辅助骨的中立 `ConstraintIRExporter` 导出路径。
 
 坐标系可行性、Unity 矩阵定义、尾端子骨策略和预演门槛见 [UNITY_IR_FEASIBILITY.md](./UNITY_IR_FEASIBILITY.md)。结论是 Unity Transform 能提供所需矩阵，但必须由中央求值器缓存 bind pose 并计算相对绑定态空间，不能直接映射到 Unity 原生 Constraint 或 `localEulerAngles`。
 

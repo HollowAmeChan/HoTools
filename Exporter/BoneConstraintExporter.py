@@ -1,20 +1,12 @@
-"""
-HoTools 骨骼约束导出器 — 导出 Unity 可用的约束 JSON 文件。
+"""Standalone Blender operator for exporting the neutral rig constraint IR."""
 
-导出流程:
-1. ConstraintAnalyzer 识别语义约束(fan/twist/通用)
-2. UnityConstraintMapper 映射为 Unity JSON 格式
-3. 写入文件
-
-只导出约束到当前骨架内部骨的约束;跨骨架约束被过滤。
-"""
+import traceback
 
 import bpy
-import os
 from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
-from .ConstraintAnalyzer import ConstraintAnalyzer
-from .UnityConstraintMapper import UnityConstraintMapper
+
+from .ConstraintIRExporter import ConstraintIRExporter
 
 
 def reg_props():
@@ -25,88 +17,78 @@ def ureg_props():
     return
 
 
-class OP_2unity_exportJsonBoneConstraint(Operator, ExportHelper):
-    bl_idname = "ho.exportboneconstraint_unityjson"
-    bl_label = "导出骨骼约束"
-    bl_description = "导出活动骨架内的约束为 Unity JSON 文件。只导出约束到骨架内部骨的 HoTools 辅助骨约束(fan/twist)"
+class OP_exportRigConstraintIR(Operator, ExportHelper):
+    bl_idname = "ho.export_rig_constraint_ir"
+    bl_label = "导出 Rig 约束 IR"
+    bl_description = "导出 Aux 骨、原始 Blender 约束参数和 MCH 绑定；落地方案由导入端决定"
     filename_ext = ".json"
 
     filter_glob: bpy.props.StringProperty(
         default="*.json",
-        options={'HIDDEN'},
+        options={"HIDDEN"},
         maxlen=255,
     )  # type: ignore
 
     def execute(self, context):
         armature = context.active_object
-
-        # 验证选择
-        if armature is None or armature.type != 'ARMATURE':
-            self.report({'ERROR'}, "请选择一个骨架对象")
-            return {'CANCELLED'}
+        if armature is None or armature.type != "ARMATURE":
+            self.report({"ERROR"}, "请选择一个骨架对象")
+            return {"CANCELLED"}
 
         try:
-            # 1. 语义识别
-            constraints_list = ConstraintAnalyzer.analyze(armature)
+            constraint_ir = ConstraintIRExporter.build_ir(armature)
+            if constraint_ir.is_empty():
+                self.report({"WARNING"}, "未找到 Aux 骨、MCH 开关或 MCH 绑定")
+                return {"CANCELLED"}
 
-            # 统计信息
-            total_exported = len(constraints_list)
+            with open(self.filepath, "w", encoding="utf-8") as output:
+                import json
 
-            if total_exported == 0:
-                self.report({'WARNING'}, "未找到可导出的约束(辅助骨约束必须约束到骨架内部骨)")
-                return {'CANCELLED'}
+                json.dump(
+                    constraint_ir.to_dict(),
+                    output,
+                    indent=2,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+                output.write("\n")
 
-            # 2. Unity 映射
-            json_str = UnityConstraintMapper.export_to_json(
-                armature.name, constraints_list
-            )
-
-            # 3. 写入文件
-            with open(self.filepath, 'w', encoding='utf-8') as f:
-                f.write(json_str)
-
-            # 报告成功
-            fan_count = sum(1 for c in constraints_list if hasattr(c, 'fan_type'))
-            twist_count = sum(1 for c in constraints_list if hasattr(c, 'source_bone'))
             self.report(
-                {'INFO'},
-                f"成功导出 {total_exported} 个约束 "
-                f"(Fan: {fan_count}, Twist: {twist_count})"
+                {"INFO"},
+                "已导出 "
+                f"{len(constraint_ir.aux_bones)} 根 Aux 骨、"
+                f"{len(constraint_ir.mch_bindings)} 条 MCH 绑定、"
+                f"{len(constraint_ir.known_constraints)} 条已知约束、"
+                f"{len(constraint_ir.unknown_constraints)} 条未知约束",
             )
-
-        except Exception as e:
-            import traceback
+        except Exception as exc:
             traceback.print_exc()
-            self.report({'ERROR'}, f"导出失败: {str(e)}")
-            return {'CANCELLED'}
+            self.report({"ERROR"}, f"导出失败: {exc}")
+            return {"CANCELLED"}
 
-        return {'FINISHED'}
-
-
-cls = [
-    OP_2unity_exportJsonBoneConstraint
-]
+        return {"FINISHED"}
 
 
-def OPF_2unity_exportJsonBoneConstraint(self, context):
-    self.layout.operator_context = 'INVOKE_DEFAULT'
+CLASSES = (OP_exportRigConstraintIR,)
+
+
+def draw_export_menu(self, _context):
+    self.layout.operator_context = "INVOKE_DEFAULT"
     self.layout.operator(
-        OP_2unity_exportJsonBoneConstraint.bl_idname,
-        text="HoTools - 骨骼约束 (.json)"
+        OP_exportRigConstraintIR.bl_idname,
+        text="HoTools - Rig 约束 IR (.json)",
     )
 
 
 def register():
-    for i in cls:
-        bpy.utils.register_class(i)
-
-    bpy.types.TOPBAR_MT_file_export.append(OPF_2unity_exportJsonBoneConstraint)
+    for cls in CLASSES:
+        bpy.utils.register_class(cls)
+    bpy.types.TOPBAR_MT_file_export.append(draw_export_menu)
     reg_props()
 
 
 def unregister():
-    for i in cls:
-        bpy.utils.unregister_class(i)
-
-    bpy.types.TOPBAR_MT_file_export.remove(OPF_2unity_exportJsonBoneConstraint)
+    bpy.types.TOPBAR_MT_file_export.remove(draw_export_menu)
+    for cls in reversed(CLASSES):
+        bpy.utils.unregister_class(cls)
     ureg_props()

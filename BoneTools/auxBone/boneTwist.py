@@ -585,6 +585,22 @@ class TwistBoneCore:
         return f"{main_stem}{side_suffix}", int(index_text)
 
     @staticmethod
+    def _twist_aux_source(data_bone) -> str:
+        """Return the sole source of an explicitly owned Twist bone."""
+        props = getattr(data_bone, "hotools_boneprops", None)
+        aux = getattr(props, "auxBone", None) if props is not None else None
+        if aux is None or not bool(getattr(aux, "isAuxBone", False)):
+            return ""
+        if str(getattr(aux, "auxType", "")).strip().upper() != "TWIST":
+            return ""
+        sources = [
+            str(getattr(ref, "name", ""))
+            for ref in getattr(aux, "sourceBones", ())
+            if getattr(ref, "name", "")
+        ]
+        return sources[0] if len(sources) == 1 else ""
+
+    @staticmethod
     def _rotate_vector_around_axis(vector, axis, angle_rad):
         return AuxPreviewUtils.rotate_vector_around_axis(vector, axis, angle_rad)
 
@@ -611,12 +627,23 @@ class TwistBoneCore:
                 props.generateMCH = False
             aux = getattr(props, "auxBone", None)
             if aux is not None and aux_type != "NONE":
+                normalized_sources = [src for src in source_bones if src]
+                previous_sources = [
+                    str(getattr(ref, "name", ""))
+                    for ref in aux.sourceBones
+                    if getattr(ref, "name", "")
+                ]
+                same_identity = (
+                    bool(getattr(aux, "isAuxBone", False))
+                    and str(getattr(aux, "auxType", "")) == aux_type
+                    and previous_sources == normalized_sources
+                )
                 aux.isAuxBone = True
                 aux.auxType = aux_type
                 aux.sourceBones.clear()
-                for src in source_bones:
-                    if not src:
-                        continue
+                if not same_identity:
+                    aux.constraintNames.clear()
+                for src in normalized_sources:
                     ref = aux.sourceBones.add()
                     ref.name = src
 
@@ -647,11 +674,12 @@ class TwistBoneCore:
         influence: float = 1.0,
     ):
         name = bone_utils.aux_constraint_name(TwistBoneCore.AUX_TYPE, "CopyRotation")
-        constraint = None
-        for item in pose_bone.constraints:
-            if item.type == "COPY_ROTATION" and item.name == name:
-                constraint = item
-                break
+        from ..boneProperty import (
+            _ensure_aux_constraint_name_available,
+            _find_registered_aux_constraint,
+        )
+        constraint = _find_registered_aux_constraint(pose_bone, "COPY_ROTATION")
+        _ensure_aux_constraint_name_available(pose_bone, name, "COPY_ROTATION")
 
         if constraint is None:
             constraint = pose_bone.constraints.new("COPY_ROTATION")
@@ -666,6 +694,8 @@ class TwistBoneCore:
         constraint.use_x = True
         constraint.use_y = True
         constraint.use_z = True
+        from ..boneProperty import _register_aux_constraint
+        _register_aux_constraint(pose_bone, constraint)
         return constraint
 
     @staticmethod
@@ -675,11 +705,12 @@ class TwistBoneCore:
         target_bone_name: str,
     ):
         name = bone_utils.aux_constraint_name(TwistBoneCore.AUX_TYPE, "StretchTo")
-        constraint = None
-        for item in pose_bone.constraints:
-            if item.type == "STRETCH_TO" and item.name == name:
-                constraint = item
-                break
+        from ..boneProperty import (
+            _ensure_aux_constraint_name_available,
+            _find_registered_aux_constraint,
+        )
+        constraint = _find_registered_aux_constraint(pose_bone, "STRETCH_TO")
+        _ensure_aux_constraint_name_available(pose_bone, name, "STRETCH_TO")
 
         if constraint is None:
             constraint = pose_bone.constraints.new("STRETCH_TO")
@@ -690,6 +721,8 @@ class TwistBoneCore:
         constraint.volume = "NO_VOLUME"
         constraint.keep_axis = "SWING_Y"
         constraint.influence = 1.0
+        from ..boneProperty import _register_aux_constraint
+        _register_aux_constraint(pose_bone, constraint)
         return constraint
 
     @staticmethod
@@ -705,10 +738,8 @@ class TwistBoneCore:
         source_set = set(source_bones)
         source_to_twists: dict[str, list[str]] = {}
         for bone_name in twist_bone_names:
-            parsed = TwistBoneCore._parse_twist_name(bone_name)
-            if parsed is None:
-                continue
-            main_name = parsed[0]
+            data_bone = armature.data.bones.get(bone_name)
+            main_name = TwistBoneCore._twist_aux_source(data_bone)
             if main_name not in source_set:
                 continue
             source_to_twists.setdefault(main_name, []).append(bone_name)
@@ -736,6 +767,32 @@ class TwistBoneCore:
                     continue
                 targets[source_bone_name] = target_bone_name
 
+                # Validate every owner before creating the first constraint so
+                # a later name collision cannot leave a partially rebuilt chain.
+                from ..boneProperty import _ensure_aux_constraint_name_available
+                copy_name = bone_utils.aux_constraint_name(
+                    TwistBoneCore.AUX_TYPE,
+                    "CopyRotation",
+                )
+                stretch_name = bone_utils.aux_constraint_name(
+                    TwistBoneCore.AUX_TYPE,
+                    "StretchTo",
+                )
+                for bone_name in twist_list:
+                    pose_bone = armature.pose.bones.get(bone_name)
+                    if pose_bone is None:
+                        continue
+                    _ensure_aux_constraint_name_available(
+                        pose_bone,
+                        copy_name,
+                        "COPY_ROTATION",
+                    )
+                    _ensure_aux_constraint_name_available(
+                        pose_bone,
+                        stretch_name,
+                        "STRETCH_TO",
+                    )
+
                 total = len(twist_list)
                 for index, bone_name in enumerate(twist_list):
                     pose_bone = armature.pose.bones.get(bone_name)
@@ -746,17 +803,19 @@ class TwistBoneCore:
                     else:
                         t = index / (total - 1)
                         influence = top_influence + (bottom_influence - top_influence) * t
-                    TwistBoneCore._ensure_copy_rotation_constraint(
+                    copy_rotation = TwistBoneCore._ensure_copy_rotation_constraint(
                         pose_bone,
                         armature,
                         target_bone_name,
                         influence,
                     )
-                    TwistBoneCore._ensure_stretch_to_constraint(
+                    stretch_to = TwistBoneCore._ensure_stretch_to_constraint(
                         pose_bone,
                         armature,
                         target_bone_name,
                     )
+                    from ..boneProperty import _replace_aux_constraints
+                    _replace_aux_constraints(pose_bone, [copy_rotation, stretch_to])
                     added += 1
         finally:
             context.view_layer.objects.active = old_active
@@ -878,22 +937,34 @@ class TwistBoneCore:
             # 让骨链、权重和约束都按没有特殊保留时的传统流程处理。
             twist_count = max(count - 1 if keep_head_end_weight else count, 0)
             padding = max(2, len(str(count)))
-            new_bone_names = [
+            requested_names = [
                 TwistBoneCore._twist_name(bn, count - i, padding)
                 for i in range(twist_count)
             ]
 
-            existed: list[tuple[int, str]] = []
+            existed_names = []
             for bone in list(edit_bones):
-                parsed = TwistBoneCore._parse_twist_name(bone.name)
-                if parsed is None or parsed[0] != bn:
+                data_bone = armature.data.bones.get(bone.name)
+                if TwistBoneCore._twist_aux_source(data_bone) != bn:
                     continue
-                existed.append((parsed[1], bone.name))
-            if existed:
-                existed.sort(key=lambda item: item[0], reverse=True)
-                result["replaced_names"] = [name for _, name in existed]
-                result["replaced_count"] = len(existed)
-                for _, name in existed:
+                existed_names.append(bone.name)
+            owned_names = set(existed_names)
+            collisions = [
+                name
+                for name in requested_names
+                if edit_bones.get(name) is not None and name not in owned_names
+            ]
+            if collisions:
+                raise RuntimeError(
+                    f"骨架 {getattr(armature, 'name', '<未知>')} 的源骨 {bn} "
+                    "生成 Twist 时发生骨名冲突：" + "、".join(collisions)
+                    + "；创建已终止，请先改名或删除冲突骨。"
+                )
+            if existed_names:
+                existed_names.sort(reverse=True)
+                result["replaced_names"] = list(existed_names)
+                result["replaced_count"] = len(existed_names)
+                for name in existed_names:
                     old_twist = edit_bones.get(name)
                     if old_twist is not None:
                         edit_bones.remove(old_twist)
@@ -904,27 +975,29 @@ class TwistBoneCore:
             ]
             point_offset = 1 if keep_head_end_weight else 0
 
-            for i, new_name in enumerate(new_bone_names, start=1):
-                new_bone = edit_bones.new(new_name)
+            created_names = []
+            for i, requested_name in enumerate(requested_names, start=1):
+                new_bone = edit_bones.new(requested_name)
                 new_bone.head = corrected_points[i - 1 + point_offset].copy()
                 new_bone.tail = new_bone.head + bone_dir * twist_length
                 new_bone.roll = 0.0
                 new_bone.use_deform = True
                 new_bone.parent = old_bone
                 new_bone.use_connect = False
+                created_names.append(new_bone.name)
 
-            bone_utils.assign_bones_to_collection(armature, new_bone_names, bone_collection_name)
+            bone_utils.assign_bones_to_collection(armature, created_names, bone_collection_name)
             bpy.context.view_layer.objects.active = armature
             bone_utils.set_object_mode(armature, "OBJECT")
             # 设置 hotools 属性：辅助骨不走 MCH 流程(保留旋转)，并写入辅助骨自描述信息
             TwistBoneCore._apply_hotools_bone_props(
                 armature,
-                new_bone_names,
+                created_names,
                 aux_type="TWIST",
                 source_bones=[bn],
             )
-            result["created_names"] = new_bone_names
-            result["created_count"] = len(new_bone_names)
+            result["created_names"] = created_names
+            result["created_count"] = len(created_names)
 
             return result
         finally:

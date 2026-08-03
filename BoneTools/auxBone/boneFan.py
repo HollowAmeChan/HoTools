@@ -781,12 +781,23 @@ class BoneFanCore:
                 props.generateMCH = False
             aux = getattr(props, "auxBone", None)
             if aux is not None and aux_type != "NONE":
+                normalized_sources = [src for src in source_bones if src]
+                previous_sources = [
+                    str(getattr(ref, "name", ""))
+                    for ref in aux.sourceBones
+                    if getattr(ref, "name", "")
+                ]
+                same_identity = (
+                    bool(getattr(aux, "isAuxBone", False))
+                    and str(getattr(aux, "auxType", "")) == aux_type
+                    and previous_sources == normalized_sources
+                )
                 aux.isAuxBone = True
                 aux.auxType = aux_type
                 aux.sourceBones.clear()
-                for src in source_bones:
-                    if not src:
-                        continue
+                if not same_identity:
+                    aux.constraintNames.clear()
+                for src in normalized_sources:
                     ref = aux.sourceBones.add()
                     ref.name = src
 
@@ -1156,11 +1167,12 @@ class BoneFanCore:
     @classmethod
     def _ensure_copy_rotation_constraint(cls, pose_bone, target_armature: bpy.types.Object, target_bone_name: str, influence: float = 1.0):
         name = bone_utils.aux_constraint_name(cls.AUX_TYPE, "CopyRotation")
-        constraint = None
-        for item in pose_bone.constraints:
-            if item.type == "COPY_ROTATION" and item.name == name:
-                constraint = item
-                break
+        from ..boneProperty import (
+            _ensure_aux_constraint_name_available,
+            _find_registered_aux_constraint,
+        )
+        constraint = _find_registered_aux_constraint(pose_bone, "COPY_ROTATION")
+        _ensure_aux_constraint_name_available(pose_bone, name, "COPY_ROTATION")
 
         if constraint is None:
             constraint = pose_bone.constraints.new("COPY_ROTATION")
@@ -1175,6 +1187,8 @@ class BoneFanCore:
         constraint.use_x = True
         constraint.use_y = True
         constraint.use_z = True
+        from ..boneProperty import _register_aux_constraint
+        _register_aux_constraint(pose_bone, constraint)
         return constraint
 
     @classmethod
@@ -1205,6 +1219,19 @@ class BoneFanCore:
             armature.select_set(True)
             bpy.context.view_layer.objects.active = armature
             bone_utils.set_object_mode(armature, "POSE")
+            from ..boneProperty import _ensure_aux_constraint_name_available
+            preferred_name = bone_utils.aux_constraint_name(
+                cls.AUX_TYPE,
+                "CopyRotation",
+            )
+            for fan_name in fan_names:
+                pose_bone = armature.pose.bones.get(fan_name)
+                if pose_bone is not None:
+                    _ensure_aux_constraint_name_available(
+                        pose_bone,
+                        preferred_name,
+                        "COPY_ROTATION",
+                    )
             for fan_name, pin_name in zip(fan_names, pin_names):
                 parsed = cls._parse_fan_name(fan_name)
                 if parsed is None:
@@ -1215,12 +1242,14 @@ class BoneFanCore:
                 pose_bone = armature.pose.bones.get(fan_name)
                 if pose_bone is None:
                     continue
-                cls._ensure_copy_rotation_constraint(
+                constraint = cls._ensure_copy_rotation_constraint(
                     pose_bone,
                     armature,
                     pin_name,
                     influence,
                 )
+                from ..boneProperty import _replace_aux_constraints
+                _replace_aux_constraints(pose_bone, [constraint])
         finally:
             if old_active is not None:
                 try:
