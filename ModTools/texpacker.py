@@ -57,7 +57,7 @@ def _walk_upstream_nodes(socket):
     return result
 
 
-def _find_principled(material):
+def _get_material_surface(material):
     if not material.use_nodes or not material.node_tree:
         raise ValueError(f'材质“{material.name}”未启用节点')
 
@@ -69,25 +69,142 @@ def _find_principled(material):
         raise ValueError(f'材质“{material.name}”没有活动的材质输出节点')
 
     surface = outputs[0].inputs.get('Surface')
+    if surface is None:
+        raise ValueError(f'材质“{material.name}”的活动输出没有表面输入')
+    return surface
+
+
+def _find_principled(material, surface):
     principled = [
         node for node in _walk_upstream_nodes(surface)
         if node.type == 'BSDF_PRINCIPLED'
     ]
-    if len(principled) != 1:
+    if len(principled) > 1:
         raise ValueError(
-            f'材质“{material.name}”连接到输出的原理化 BSDF 必须有且只有一个'
+            f'材质“{material.name}”连接到输出的原理化 BSDF 最多只能有一个'
         )
-    return principled[0]
+    return principled[0] if principled else None
+
+
+def _unique_image_nodes(nodes):
+    image_nodes = [
+        node for node in nodes
+        if node.type == 'TEX_IMAGE' and node.image is not None
+    ]
+    return list({node.as_pointer(): node for node in image_nodes}.values())
+
+
+def _require_single_base_image(material, image_nodes, source_name):
+    if len(image_nodes) != 1:
+        raise ValueError(
+            f'材质“{material.name}”的{source_name}必须有且只有一张图像纹理'
+        )
+    return image_nodes[0], image_nodes[0].image
+
+
+_BASE_COLOR_INPUT_NAMES = (
+    'basecolor',
+    'basecolour',
+    'maincolor',
+    'maincolour',
+    'albedo',
+    'diffusecolor',
+    'diffusecolour',
+    'diffuse',
+    'basetexture',
+    'maintexture',
+    'basetex',
+    'maintex',
+    '主色',
+    '主颜色',
+    '基础色',
+    '基础颜色',
+    '底色',
+    '主贴图',
+    '主纹理',
+    'color',
+    'colour',
+    '颜色',
+)
+_GENERIC_COLOR_INPUT_NAMES = {'color', 'colour', '颜色'}
+
+
+def _base_color_input_priority(socket):
+    normalized = ''.join(
+        character.lower() for character in socket.name
+        if character.isalnum()
+    )
+    for priority, name in enumerate(_BASE_COLOR_INPUT_NAMES):
+        if normalized == name:
+            return priority
+    for priority, name in enumerate(_BASE_COLOR_INPUT_NAMES):
+        if name not in _GENERIC_COLOR_INPUT_NAMES and name in normalized:
+            return len(_BASE_COLOR_INPUT_NAMES) + priority
+    return None
+
+
+def _find_fallback_base_image(material, surface):
+    direct_images = _unique_image_nodes(
+        link.from_node for link in surface.links if link.is_valid
+    )
+    if direct_images:
+        return _require_single_base_image(
+            material,
+            direct_images,
+            '材质输出直连输入',
+        )
+
+    shader_nodes = []
+    for link in surface.links:
+        if not link.is_valid or link.from_socket.type != 'SHADER':
+            continue
+        shader_nodes.append(link.from_node)
+
+    image_inputs = []
+    preferred_inputs = []
+    for shader_index, shader_node in enumerate(shader_nodes):
+        for input_index, node_input in enumerate(shader_node.inputs):
+            image_nodes = _unique_image_nodes(_walk_upstream_nodes(node_input))
+            if not image_nodes:
+                continue
+            candidate = (
+                shader_index,
+                input_index,
+                shader_node,
+                node_input,
+                image_nodes,
+            )
+            image_inputs.append(candidate)
+            priority = _base_color_input_priority(node_input)
+            if priority is not None:
+                preferred_inputs.append((priority, *candidate))
+
+    if preferred_inputs:
+        _, _, _, shader_node, node_input, image_nodes = min(
+            preferred_inputs,
+            key=lambda candidate: candidate[:3],
+        )
+    elif image_inputs:
+        _, _, shader_node, node_input, image_nodes = image_inputs[0]
+    else:
+        shader_node = None
+        node_input = None
+        image_nodes = []
+
+    source_name = '着色器节点输入'
+    if shader_node is not None:
+        source_name = (
+            f'着色器节点“{shader_node.name}”的“{node_input.name}”输入'
+        )
+    return _require_single_base_image(
+        material,
+        image_nodes,
+        source_name,
+    )
 
 
 def _find_single_image(material, socket, channel_name, required):
-    image_nodes = [
-        node for node in _walk_upstream_nodes(socket)
-        if node.type == 'TEX_IMAGE' and node.image is not None
-    ]
-    # A node can only occur once in this traversal, but preserve this guard if
-    # Blender changes how node pointers are exposed in a future version.
-    image_nodes = list({node.as_pointer(): node for node in image_nodes}.values())
+    image_nodes = _unique_image_nodes(_walk_upstream_nodes(socket))
 
     if not image_nodes and not required:
         return None, None
@@ -114,15 +231,23 @@ def _collect_materials(objects):
             if pointer in seen:
                 continue
 
-            principled = _find_principled(material)
-            base_socket = principled.inputs.get('Base Color')
-            normal_socket = principled.inputs.get('Normal')
-            base_node, base_image = _find_single_image(
-                material, base_socket, '主色', required=True
-            )
-            normal_node, normal_image = _find_single_image(
-                material, normal_socket, '法线', required=False
-            )
+            surface = _get_material_surface(material)
+            principled = _find_principled(material, surface)
+            if principled:
+                base_socket = principled.inputs.get('Base Color')
+                normal_socket = principled.inputs.get('Normal')
+                base_node, base_image = _find_single_image(
+                    material, base_socket, '主色', required=True
+                )
+                normal_node, normal_image = _find_single_image(
+                    material, normal_socket, '法线', required=False
+                )
+            else:
+                base_node, base_image = _find_fallback_base_image(
+                    material,
+                    surface,
+                )
+                normal_node, normal_image = None, None
             materials.append(MaterialTextures(
                 material=material,
                 base_node_name=base_node.name,
