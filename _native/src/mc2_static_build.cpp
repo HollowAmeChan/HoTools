@@ -602,6 +602,15 @@ Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
     constexpr std::uint8_t kTriangle = 0x80u;
     constexpr std::uint8_t kIncludeLine = 0x01u;
     std::vector<std::vector<std::int32_t>> children(vertex_count);
+    for (std::size_t edge = 0; edge < edge_count; ++edge) {
+        const auto first = edges[edge * 2];
+        const auto second = edges[edge * 2 + 1];
+        if (first < 0 || second < 0 || first == second ||
+            first >= static_cast<std::int32_t>(vertex_count) ||
+            second >= static_cast<std::int32_t>(vertex_count)) {
+            throw std::invalid_argument("bone baseline edges contains an invalid vertex index");
+        }
+    }
     for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
         const auto parent = parent_indices[vertex];
         if (parent < -1 || parent >= static_cast<std::int32_t>(vertex_count) ||

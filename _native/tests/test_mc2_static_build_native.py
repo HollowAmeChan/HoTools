@@ -135,6 +135,93 @@ def test_mesh_final_proxy_derived_arrays() -> None:
     np.testing.assert_allclose(np.linalg.norm(bind_rotations, axis=1), 1.0, atol=1.0e-12)
 
 
+def test_bone_baseline_keeps_classic_parent_depth_with_fixed_tail() -> None:
+    count = 5
+    positions = np.asarray(
+        tuple((float(index), 0.0, 0.0) for index in range(count)),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * count, dtype=np.float64)
+    tangents = np.asarray(((1.0, 0.0, 0.0),) * count, dtype=np.float64)
+    attributes = np.asarray((0x01, 0x02, 0x02, 0x02, 0x01), dtype=np.uint8)
+    parents = np.asarray((-1, 0, 1, 2, 3), dtype=np.int32)
+    edges = np.asarray(((0, 1), (1, 2), (2, 3), (3, 4)), dtype=np.int32)
+    root_inputs = np.asarray((0,), dtype=np.int32)
+    child_ranges = np.empty((count, 2), dtype=np.int32)
+    child_data = np.empty(count, dtype=np.int32)
+    baseline_flags = np.empty(count, dtype=np.uint8)
+    baseline_ranges = np.empty((count, 2), dtype=np.int32)
+    baseline_data = np.empty(count, dtype=np.int32)
+    final_attributes = np.empty(count, dtype=np.uint8)
+    roots = np.empty(count, dtype=np.int32)
+    depths = np.empty(count, dtype=np.float64)
+    local_positions = np.empty((count, 3), dtype=np.float64)
+    local_rotations = np.empty((count, 4), dtype=np.float64)
+
+    counts = hotools_native.mc2_build_bone_transform_baseline_derived(
+        positions,
+        normals,
+        tangents,
+        attributes,
+        parents,
+        edges,
+        root_inputs,
+        child_ranges,
+        child_data,
+        baseline_flags,
+        baseline_ranges,
+        baseline_data,
+        final_attributes,
+        roots,
+        depths,
+        local_positions,
+        local_rotations,
+        False,
+    )
+
+    assert counts == {
+        "child_count": 4,
+        "baseline_count": 1,
+        "baseline_data_count": 4,
+    }
+    np.testing.assert_array_equal(final_attributes, attributes)
+    np.testing.assert_array_equal(roots, (-1, 0, 0, 0, -1))
+    # 末端 Fixed 不得把经典单根 parent depth 改写成双端图距离场。
+    np.testing.assert_allclose(
+        depths,
+        (0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0, 0.0),
+        rtol=0.0,
+        atol=1.0e-12,
+    )
+    invalid_edges = edges.copy()
+    invalid_edges[-1] = (4, 4)
+    try:
+        hotools_native.mc2_build_bone_transform_baseline_derived(
+            positions,
+            normals,
+            tangents,
+            attributes,
+            parents,
+            invalid_edges,
+            root_inputs,
+            child_ranges,
+            child_data,
+            baseline_flags,
+            baseline_ranges,
+            baseline_data,
+            final_attributes,
+            roots,
+            depths,
+            local_positions,
+            local_rotations,
+            False,
+        )
+    except ValueError as exc:
+        assert "bone baseline edges" in str(exc)
+    else:
+        raise AssertionError("Bone baseline accepted a self-loop edge")
+
+
 
 def test_mesh_baseline_derived_arrays() -> None:
     positions = np.asarray(
@@ -488,6 +575,8 @@ if __name__ == "__main__":
     test_mesh_final_proxy_derived_arrays()
     print("PASS MC2 native final proxy derived arrays")
 
+    test_bone_baseline_keeps_classic_parent_depth_with_fixed_tail()
+    print("PASS MC2 native classic Bone depth")
     test_mesh_baseline_derived_arrays()
     test_mesh_depth_blends_parent_path_with_fixed_surface_distance()
     print("PASS MC2 native baseline derived arrays")
