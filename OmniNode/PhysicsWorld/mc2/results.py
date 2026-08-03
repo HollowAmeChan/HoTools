@@ -45,6 +45,7 @@ def _mc2_bone_mesh_output_rotations(
     fragment,
     logical_by_source,
     partition_index: int,
+    tail_absorption: bool = True,
 ) -> np.ndarray:
     from .native import native_module
     from .static_data import (
@@ -89,6 +90,15 @@ def _mc2_bone_mesh_output_rotations(
     proxy = pack_mc2_proxy_static(fragment.final_proxy)
     finalizer = pack_mc2_proxy_finalizer_static(fragment.finalizer)
     baseline = pack_mc2_baseline_static(fragment.static.baseline)
+    child_ranges = baseline["child_ranges"]
+    child_data = baseline["child_data"]
+    if fragment.setup_type == MC2_SETUP_BONE_CLOTH:
+        child_ranges = fragment.output_endpoint_child_ranges
+        child_data = fragment.output_endpoint_child_data
+        if not tail_absorption:
+            # 关闭时保留粒子平移和三角面姿态，但不消费记录的下一粒子。
+            child_ranges = fragment.output_empty_child_ranges
+            child_data = fragment.output_endpoint_child_data[:0]
     # baseline 只为 baseline_data 中的粒子生成旋转；其它合法粒子使用
     # 零四元数表示“无 baseline”。native BoneCloth mesh 输入仍要求整块数组
     # 都是单位四元数，因此这里只在上传边界将占位行规范为恒等旋转。
@@ -124,8 +134,8 @@ def _mc2_bone_mesh_output_rotations(
             frame_packet.animated_base_world_rotations[logical_indices],
             dtype=np.float32,
         ),
-        baseline["child_ranges"],
-        baseline["child_data"],
+        child_ranges,
+        child_data,
         baseline["baseline_ranges"],
         baseline["baseline_data"],
         baseline["vertex_local_positions"],
@@ -466,6 +476,11 @@ def make_mc2_bone_domain_results(
             fragment=fragment,
             logical_by_source=logical_by_source,
             partition_index=partition_index,
+            tail_absorption=(
+                static_input.partition.setup_options.tail_absorption
+                if program.setup_type == MC2_SETUP_BONE_CLOTH
+                else True
+            ),
         )
         entries.append(_make_mc2_bone_result_values(
             setup_type=program.setup_type,

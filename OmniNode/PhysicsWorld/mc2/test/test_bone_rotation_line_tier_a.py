@@ -186,10 +186,111 @@ def test_native_bone_line_output_matches_tier_a() -> None:
         )
 
 
+def _native_bone_mesh_output(values, *, child_ranges, child_data) -> np.ndarray:
+    native = mc2_native.require_mc2_native_module()
+    count = len(values["positions"])
+    output = np.empty((count, 4), dtype=np.float32)
+    native.mc2_bone_mesh_output_v1(
+        np.ascontiguousarray(values["attributes"], dtype=np.uint8),
+        np.ascontiguousarray(values["positions"], dtype=np.float32),
+        np.ascontiguousarray(values["base_positions"], dtype=np.float32),
+        np.ascontiguousarray(values["base_rotations"], dtype=np.float32),
+        np.ascontiguousarray(child_ranges, dtype=np.int32),
+        np.ascontiguousarray(child_data, dtype=np.int32),
+        np.ascontiguousarray(((0, count),), dtype=np.int32),
+        np.ascontiguousarray(values["baseline_data"], dtype=np.int32),
+        np.ascontiguousarray(values["vertex_local_positions"], dtype=np.float32),
+        np.ascontiguousarray(values["vertex_local_rotations"], dtype=np.float32),
+        np.empty((0, 3), dtype=np.int32),
+        np.zeros((count, 2), dtype=np.float32),
+        np.zeros((count, 2), dtype=np.int32),
+        np.empty((0, 2), dtype=np.int32),
+        np.ascontiguousarray(
+            ((0.0, 0.0, 0.0, 1.0),) * count,
+            dtype=np.float32,
+        ),
+        np.ascontiguousarray(
+            values["vertex_to_transform_rotations"], dtype=np.float32
+        ),
+        np.ascontiguousarray((
+            1.0,
+            1.0,
+            values["animation_pose_ratio"],
+            values["blend_weight"],
+        ), dtype=np.float32),
+        output,
+    )
+    return output
+
+
+def _rotate_vector_xyzw(rotation, vector) -> np.ndarray:
+    quaternion = np.asarray(rotation, dtype=np.float32)
+    value = np.asarray(vector, dtype=np.float32)
+    xyz = quaternion[:3]
+    return value + np.float32(2.0) * np.cross(
+        xyz,
+        np.cross(xyz, value) + quaternion[3] * value,
+    )
+
+
+def test_native_bone_mesh_tail_absorption_uses_recorded_endpoint() -> None:
+    values = _fixtures()["bone_rotation_line_full_001"]["input"]
+    endpoint_ranges = ((0, 1), (1, 1), (2, 0))
+    endpoint_data = (1, 2)
+    wrong_parent_data = (2, 2)
+    disabled_ranges = ((0, 0),) * len(values["positions"])
+    enabled = _native_bone_mesh_output(
+        values,
+        child_ranges=endpoint_ranges,
+        child_data=endpoint_data,
+    )
+    wrong_parent = _native_bone_mesh_output(
+        values,
+        child_ranges=endpoint_ranges,
+        child_data=wrong_parent_data,
+    )
+    disabled = _native_bone_mesh_output(
+        values,
+        child_ranges=disabled_ranges,
+        child_data=(),
+    )
+
+    simulated_positions = np.asarray(values["positions"], dtype=np.float32)
+    recorded_direction = simulated_positions[1] - simulated_positions[0]
+    recorded_direction /= np.linalg.norm(recorded_direction)
+    output_axis = _rotate_vector_xyzw(enabled[0], (0.0, 1.0, 0.0))
+    output_axis /= np.linalg.norm(output_axis)
+    np.testing.assert_allclose(
+        output_axis,
+        recorded_direction,
+        rtol=1.0e-6,
+        atol=1.0e-6,
+    )
+
+    assert not np.allclose(enabled[0], wrong_parent[0], rtol=1.0e-6, atol=1.0e-7)
+    assert not np.allclose(enabled[0], disabled[0], rtol=1.0e-6, atol=1.0e-7)
+    np.testing.assert_allclose(
+        disabled,
+        np.asarray(((0.0, 0.0, 0.0, 1.0),) * len(disabled)),
+        rtol=1.0e-6,
+        atol=1.0e-7,
+    )
+    np.testing.assert_allclose(
+        np.linalg.norm(disabled, axis=1),
+        np.ones(len(disabled), dtype=np.float32),
+        rtol=1.0e-6,
+        atol=1.0e-7,
+    )
+
+
 TESTS = (
     ("Tier A Bone Line rotation", test_bone_line_rotation_matches_tier_a),
     ("Bone Line rotation stage order", test_bone_line_rotation_locks_stage_order),
     ("Native Bone Line output", test_native_bone_line_output_matches_tier_a),
+    (
+        "Native Bone mesh Tail absorption",
+        test_native_bone_mesh_tail_absorption_uses_recorded_endpoint,
+    ),
 )
 
 

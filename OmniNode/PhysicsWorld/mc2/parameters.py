@@ -533,6 +533,7 @@ class MC2SetupOptionsSpec:
     rotational_interpolation: float = 0.5
     root_rotation: float = 0.5
     collided_by_groups: int = 0
+    tail_absorption: bool = True
 
     def __post_init__(self) -> None:
         if self.setup_type not in MC2_SETUP_TYPES:
@@ -555,6 +556,8 @@ class MC2SetupOptionsSpec:
             raise ValueError("MeshCloth/BoneSpring connection_mode 必须是 Line(0)")
         if self.collided_by_groups < 0 or self.collided_by_groups > 0xFFFF:
             raise ValueError("collided_by_groups 必须位于 0..65535")
+        if type(self.tail_absorption) is not bool:
+            raise TypeError("tail_absorption 必须是 bool")
 
     @property
     def signature(self) -> str:
@@ -573,6 +576,7 @@ def make_mc2_setup_options(
     rotational_interpolation=0.5,
     root_rotation=0.5,
     collided_by_groups=0,
+    tail_absorption=True,
 ) -> MC2SetupOptionsSpec:
     setup_type = str(setup_type or "").strip().lower()
     if setup_type not in MC2_SETUP_TYPES:
@@ -617,6 +621,9 @@ def make_mc2_setup_options(
             _clamp(root_rotation, "root_rotation", 0.0, 1.0)
         ),
         collided_by_groups=max(0, min(0xFFFF, int(collided_by_groups))),
+        tail_absorption=(
+            bool(tail_absorption) if setup_type == MC2_SETUP_BONE_CLOTH else False
+        ),
     )
 
 
