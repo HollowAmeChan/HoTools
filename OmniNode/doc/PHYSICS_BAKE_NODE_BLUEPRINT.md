@@ -365,7 +365,7 @@ Bone command 应声明 `owned_components`。Bake 只记录 solver/writeback 真�
 - position + rotation：增加 location；
 - scale：只有公共 command 明确拥有 scale 时才记录，不能因为矩阵可分解就默认 K scale。
 
-MC2 BoneCloth/BoneSpring 的参与骨骼统一使用 `position_rotation`，必须保留最终粒子的 location 与 rotation；注册阶段拒绝 `use_connect=True`。SpringBone 若只拥有旋转，也不能生成 location/scale 曲线。
+MC2 connected bone 的 `rotation_only_connected` 不应产生 location 曲线；disconnected bone 的 `position_rotation` 必须保留非零 location。SpringBone 若只拥有旋转，也不能生成 location/scale 曲线。
 
 rotation property 按 PoseBone 当前 mode 记录：
 
@@ -883,7 +883,7 @@ physicsWorld/mc2/setups/mesh_cloth/bake_provider.py
 4. Object/PC2 boundary baseline 与跨格式公共 snapshot。
 5. manifest 自有回绕检测、Bake 侧暂停请求和 journal 恢复。
 
-完成门槛：未参与物理的 Bone/Object 曲线逐项不变；断连 Bone、三种 rotation mode、parented object、同帧和双 world 通过后台测试；停在第 1 帧开始播放时最终 Action 同时拥有正确第 1、2 帧；从高帧回到第 1 帧后在完整事务结束后暂停。
+完成门槛：未参与物理的 Bone/Object 曲线逐项不变；connected/disconnected bone、三种 rotation mode、parented object、同帧和双 world 通过后台测试；停在第 1 帧开始播放时最终 Action 同时拥有正确第 1、2 帧；从高帧回到第 1 帧后在完整事务结束后暂停。
 
 ### Phase 2：PC2 Mesh Bake
 
@@ -943,7 +943,7 @@ API 探针已经完成，但人工生产验收否决该方案。生产代码不�
 
 - `keyframe_insert` 对 Action slot/layer 的实际行为。
 - 只清精确物理 Bone，未参与骨全部数据不变。
-- MC2 BoneCloth/BoneSpring 的所有参与骨骼都生成 location 与 rotation；`use_connect=True` 的骨骼在注册阶段拒绝。
+- MC2 connected bone 不生成 location；disconnected bone 保留 location。
 - Object Euler/Quaternion delta round-trip。
 - parented full transform round-trip。
 - Mesh Cache modifier PC2 播放。

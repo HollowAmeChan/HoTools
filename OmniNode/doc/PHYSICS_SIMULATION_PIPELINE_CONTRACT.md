@@ -471,7 +471,7 @@ debug_markers
 - solver 在 Prepare 阶段读取自己声明的 tag，按 `version/signature` 做懒重建或参数热更新。
 - 直接任务 socket 与隐式对象 registry 是两种不同产品合同。需要在一个模拟步内显式组合、随图输入立即增删的组件可直接输入 task list；需要跨帧持久存在、由注册/规则节点懒更新的程序化实体才进入 `implicit_objects`。同一类输入不得同时保留两条生产路径。
 - solver 可以选择强类型显式装配，也可以选择通用 implicit object registry。选择显式装配时，collector 不接 Physics World 或 implicit registry；选择 implicit registry 时，注册节点只处理声明过的通用 tag。具体 domain 的节点拓扑由其蓝本维护。
-- 强类型显式装配必须在 domain 前完成 source 与完整对象属性解析。以 MC2 BoneCloth 为例，生产链固定为 `面板对象/自定义对象 -> BoneCloth域 -> 完整Bone分区 -> Bone域收集 -> MC2模拟步`：domain 拒绝 raw Bone，collector 只校验和分组已完整解析的显式分区，不得读取 Bone 面板、补对象/域默认值或访问 Physics World；跨 Armature 时 collector 输出多个可见 request。普通面板对象的控制 Bone 只选择骨链，链上每根模拟 Bone 自己持有的半径和外碰接受掩码必须保留到 compiled particle；自定义对象则使用显式分区属性，默认空掩码。BoneCloth/BoneSpring source 在注册阶段拒绝参与模拟且 `use_connect=True` 的骨骼；横向平级连接由模拟拓扑表达。
+- 强类型显式装配必须在 domain 前完成 source 与完整对象属性解析。以 MC2 BoneCloth 为例，生产链固定为 `面板对象/自定义对象 -> BoneCloth域 -> 完整Bone分区 -> Bone域收集 -> MC2模拟步`：domain 拒绝 raw Bone，collector 只校验和分组已完整解析的显式分区，不得读取 Bone 面板、补对象/域默认值或访问 Physics World；跨 Armature 时 collector 输出多个可见 request。普通面板对象的控制 Bone 只选择骨链，链上每根模拟 Bone 自己持有的半径和外碰接受掩码必须保留到 compiled particle；自定义对象则使用显式分区属性，默认空掩码。
 - 如果多个 writer 写同一个 tag + stable_id，线性 world 链路中后写者覆盖前写者。多个对象天然 append 到同一个 tag 下，solver 直接 collect all。
 - `implicit_objects` 不用于表达一次性命令。force、impulse、activate、sensor event、contact event 等仍走 `exchange` 或 `result_streams`。
 
@@ -1128,7 +1128,7 @@ solver step 应产生统一 result stream，而不是直接写 Blender。
 
 当solver下一帧会从同一个Blender owner重新采集frame input时，必须定义输出反馈屏障：能够区分“上帧物理写回仍残留”和“本帧动画/driver已经覆盖”。该屏障及其持久状态由solver frame adapter拥有；统一writeback只应用结果plan，不替solver决定动画输入、不记录solver私有反馈状态，也不默认清零PoseBone。若蓝本在动画求值前恢复初始Transform、动画求值后再读取，Blender适配器必须在内存中表达等价输入时序，不得在solver执行期倒写场景来伪造早更新。
 
-当 Physics World owner 因跳帧而替换时，通用 registry 提供 `world_replace_handlers(previous_world, world, reason)` 生命周期。solver 可以在该边界转移自己拥有的轻量 frame feedback，但不得复制 solver slot、native handle 或结果流；显式 reset/scope restart 仍通过 `scope_restart_handlers` 清理反馈。MC2 BoneCloth 在跳帧时携带上一帧的 source/expected basis，以识别 Blender 暂存的旧 PoseBone 写回；目标帧已经完成动画求值时，adapter 必须优先采用新的当前 basis。统一 writeback 在 restart 时清理过 `PoseBone.matrix_basis` 后，adapter 必须从该 RNA basis 重建输入，不得在同一 frame callback 中回读尚未刷新的 `PoseBone.matrix`。Bone 结果必须从最终粒子世界位置与旋转生成完整目标 Pose，再反算 `matrix_basis`；模拟集合外的父 Pose 矩阵应在结果生成时捕获，不能依赖同批写回后的实时父级。
+当 Physics World owner 因跳帧而替换时，通用 registry 提供 `world_replace_handlers(previous_world, world, reason)` 生命周期。solver 可以在该边界转移自己拥有的轻量 frame feedback，但不得复制 solver slot、native handle 或结果流；显式 reset/scope restart 仍通过 `scope_restart_handlers` 清理反馈。MC2 BoneCloth 在跳帧时携带上一帧的 source/expected basis，以识别 Blender 暂存的旧 PoseBone 写回；目标帧已经完成动画求值时，adapter 必须优先采用新的当前 basis。统一 writeback 在 restart 时清理过 `PoseBone.matrix_basis` 后，adapter 必须从该 RNA basis 重建输入，不得在同一 frame callback 中回读尚未刷新的 `PoseBone.matrix`。
 
 **性能说明：** result stream 不应每帧在 Python 层构造 per-item dict 列表。对于骨骼数量较多的 solver（50+ bones），每帧为每根骨骼创建 Python dict 的开销不可忽视。推荐做法：
 

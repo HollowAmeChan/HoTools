@@ -80,7 +80,7 @@ def _make_armature():
         bone.head = (0.0, index * 0.25, 0.2)
         bone.tail = (0.0, (index + 1) * 0.25, 0.2)
         bone.parent = parent
-        bone.use_connect = False
+        bone.use_connect = index > 0
         parent = bone
     static = data.edit_bones.new("StaticCollider")
     static.head = (0.03, 0.25, 0.2)

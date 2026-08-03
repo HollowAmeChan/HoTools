@@ -109,7 +109,7 @@ def make_armature(name, x_offset, scale):
         bone.head = (0.0, index * 0.12, 0.02 * index)
         bone.tail = (0.015 * index, (index + 1) * 0.12, 0.02 * (index + 1))
         bone.parent = parent
-        bone.use_connect = False
+        bone.use_connect = index > 0 and index != 3
         parent = bone
     bpy.ops.object.mode_set(mode="OBJECT")
     obj.select_set(False)

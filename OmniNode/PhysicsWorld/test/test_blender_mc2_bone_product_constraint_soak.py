@@ -107,7 +107,7 @@ def _armature(
                 0.44 + depth * 0.04,
             )
             bone.parent = previous
-            bone.use_connect = False
+            bone.use_connect = depth > 0 and depth != 3
             previous = bone
 
     bpy.ops.object.mode_set(mode="OBJECT")
@@ -141,7 +141,7 @@ def _self_scope_armature(name: str):
                     0.44 + depth * 0.04,
                 )
                 bone.parent = previous
-                bone.use_connect = False
+                bone.use_connect = depth > 0 and depth != 3
                 previous = bone
     bpy.ops.object.mode_set(mode="OBJECT")
     obj.select_set(False)

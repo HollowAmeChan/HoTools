@@ -20,6 +20,9 @@ from .runtime_parameters import (
     MC2_RUNTIME_FLOAT_FIELDS,
     MC2_RUNTIME_INT_FIELDS,
 )
+from .results import MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED
+
+
 MC2_DEBUG_DRAW_MODES = {
     MC2_DEBUG_DRAW_MODE: {
         "solver": MC2_SOLVER_ID,
@@ -763,19 +766,27 @@ def _product_output_payload(slot, compiled, frame_packet, output) -> dict:
     target_positions = np.asarray(output.world_positions, dtype=np.float32)
     applied = np.ones((program.particle_count,), dtype=np.uint8)
     targets = tuple(target.target_id for target in program.output_targets)
+    motion_modes = ()
     writeback_schema = "mc2_domain_output_v1"
     target_kind = "mesh_vertex"
+    rotation_only_count = 0
+    position_rotation_count = 0
     has_plan = True
     if program.setup_type != MC2_SETUP_MESH_CLOTH:
         plans = tuple((slot.data.get("output_writeback_plans") or {}).values())
-        record_names = tuple(
-            str(record.get("bone_name") or "")
+        records = tuple(
+            record
             for plan in plans
             for batch in plan.get("batches") or ()
             for record in batch.get("records") or ()
         )
-        if any(not name for name in record_names) or len(set(record_names)) != len(record_names):
-            raise RuntimeError("Bone产品调试writeback plan包含缺项或重名")
+        mode_by_name = {}
+        for record in records:
+            name = str(record.get("bone_name") or "")
+            mode = str(record.get("motion_mode") or "")
+            if not name or not mode or name in mode_by_name:
+                raise RuntimeError("Bone产品调试writeback plan包含缺项或重名")
+            mode_by_name[name] = mode
         applied.fill(0)
         logical_names = []
         logical_indices = []
@@ -803,13 +814,21 @@ def _product_output_payload(slot, compiled, frame_packet, output) -> dict:
                 continue
             logical_names.append(name)
             logical_indices.append(logical_index)
-        if set(logical_names) != set(record_names):
+        if set(logical_names) != set(mode_by_name):
             raise RuntimeError("Bone产品调试output map与writeback plan不一致")
-        applied[np.asarray(logical_indices, dtype=np.uint32)] = 1
+        motion_modes = tuple((name, mode_by_name[name]) for name in logical_names)
+        for index, (_name, mode) in zip(logical_indices, motion_modes):
+            if mode != MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED:
+                applied[index] = 1
         target_positions = target_positions.copy()
         target_positions[applied == 0] = base_positions[applied == 0]
         targets = tuple(logical_names)
         target_kind = "bone"
+        rotation_only_count = sum(
+            mode == MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED
+            for _name, mode in motion_modes
+        )
+        position_rotation_count = len(motion_modes) - rotation_only_count
         schemas = {
             str(plan.get("schema") or "") for plan in plans
             if str(plan.get("schema") or "")
@@ -831,6 +850,9 @@ def _product_output_payload(slot, compiled, frame_packet, output) -> dict:
         "has_writeback_plan": has_plan,
         "writeback_targets": targets,
         "writeback_target_kind": target_kind,
+        "writeback_motion_modes": motion_modes,
+        "rotation_only_connected_count": rotation_only_count,
+        "position_rotation_count": position_rotation_count,
     }
 
 

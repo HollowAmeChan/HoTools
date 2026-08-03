@@ -58,10 +58,9 @@ class _Bones:
 
 
 class _Bone:
-    def __init__(self, name, children=(), *, group=1, collided=0, use_connect=False):
+    def __init__(self, name, children=(), *, group=1, collided=0):
         self.name = name
         self.children = list(children)
-        self.use_connect = bool(use_connect)
         self.hotools_collision = SimpleNamespace(
             primary_collision_group=group,
             collided_by_groups=collided,
@@ -189,20 +188,6 @@ def test_invalid_panel_source_and_collision_groups_fail_explicitly():
             pass
         else:
             raise AssertionError(f"invalid BoneCloth properties accepted: {values!r}")
-
-
-def test_connected_simulation_bone_is_rejected_at_registration():
-    tip = _Bone("Tip", use_connect=True)
-    root = _Bone("Root", (tip,))
-    control = _Bone("Control", (root,))
-    armature = _Armature(401, "ConnectedRig", (control, root, tip))
-    try:
-        object_spec.make_mc2_bone_cloth_custom_object((armature, "Control"))
-    except ValueError as exc:
-        assert "use_connect=True" in str(exc)
-        assert "Tip" in str(exc)
-    else:
-        raise AssertionError("BoneCloth accepted a connected simulation bone")
 
 
 def test_bone_collision_radius_adapter_declares_exact_conversion_boundary():

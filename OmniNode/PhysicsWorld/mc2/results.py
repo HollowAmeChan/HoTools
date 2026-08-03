@@ -20,21 +20,41 @@ from .names import (
 
 MC2_PUBLIC_RESULT_SCHEMA_VERSION = 0
 MC2_BONE_MOTION_POSITION_ROTATION = "position_rotation"
+MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED = "rotation_only_connected"
+
+
+def mc2_bone_motion_mode(pose_bone) -> str:
+    return (
+        MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED
+        if bool(getattr(getattr(pose_bone, "bone", None), "use_connect", False))
+        else MC2_BONE_MOTION_POSITION_ROTATION
+    )
 
 
 def _mc2_bone_writeback_basis(
     pose_bone,
     target_matrix,
     target_pose_matrices,
-    reference_pose_matrices=None,
 ):
     basis = matrix_basis_from_pose_matrix(
         pose_bone,
         target_matrix,
         target_pose_matrices,
-        reference_pose_matrices,
     )
+    if (
+        mc2_bone_motion_mode(pose_bone)
+        == MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED
+    ):
+        basis.translation = (0.0, 0.0, 0.0)
     return basis
+
+
+def _mc2_bone_motion_counts(records) -> tuple[int, int]:
+    connected_count = sum(
+        record.get("motion_mode") == MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED
+        for record in records
+    )
+    return connected_count, len(records) - connected_count
 
 
 def _mc2_bone_line_output_rotations(
@@ -282,11 +302,6 @@ def _make_mc2_bone_result_values(
         pose_index = pose_indices.get(name, -1)
         if pose_bone is None or pose_index < 0:
             raise ValueError(f"MC2 Bone result target is missing stable bone {name!r}")
-        if bool(getattr(getattr(pose_bone, "bone", None), "use_connect", False)):
-            raise ValueError(
-                "BoneCloth 不支持 use_connect=True；"
-                f"请先断开骨骼 {name!r} 的 Connected 属性"
-            )
         x, y, z, w = (float(value) for value in rotation_xyzw)
         pose_rotation = inverse_component_rotation @ mathutils.Quaternion((w, x, y, z))
         pose_rotation.normalize()
@@ -299,28 +314,24 @@ def _make_mc2_bone_result_values(
             "bone_name": name,
             "pose_index": pose_index,
             "pose_bone": pose_bone,
+            "motion_mode": mc2_bone_motion_mode(pose_bone),
         })
-
-    target_names = set(target_pose_matrices)
-    reference_pose_matrices = {}
-    for record in records:
-        parent = getattr(record["pose_bone"], "parent", None)
-        if parent is not None and parent.name not in target_names:
-            reference_pose_matrices[parent.name] = parent.matrix.copy()
 
     matrix_bases = tuple(
         _mc2_bone_writeback_basis(
             record["pose_bone"],
             target_pose_matrices[record["bone_name"]],
             target_pose_matrices,
-            reference_pose_matrices,
         )
         for record in records
     )
+    connected_count, free_count = _mc2_bone_motion_counts(records)
     plan = {
         "schema": "mc2_bone_writeback_plan_v0",
         "armature": armature,
         "bone_count": len(records),
+        "rotation_only_connected_count": connected_count,
+        "position_rotation_count": free_count,
         "batches": ({
             "source_kind": setup_type,
             "source_root": identities[0] if identities else "",
@@ -329,7 +340,6 @@ def _make_mc2_bone_result_values(
             "target_pose_matrices": tuple(
                 target_pose_matrices[record["bone_name"]] for record in records
             ),
-            "reference_pose_matrices": reference_pose_matrices,
             "current_tails": (),
         },),
     }
@@ -354,6 +364,8 @@ def _make_mc2_bone_result_values(
         "topology_signature": str(topology_signature or ""),
         "revision": int(revision),
         "target_key": f"{int(armature_ptr)}:{int(armature_data_ptr)}",
+        "rotation_only_connected_count": connected_count,
+        "position_rotation_count": free_count,
     })
     result.update(dict(result_metadata or {}))
     return result, plan
@@ -527,7 +539,6 @@ def merge_mc2_bone_results(entries) -> tuple[tuple[dict, ...], dict[str, dict]]:
         primary_result, primary_plan = target_entries[0]
         armature = primary_plan.get("armature")
         global_target_pose_matrices = {}
-        global_reference_pose_matrices = {}
         source_batches = []
         task_ids = []
         topology_signatures = []
@@ -550,15 +561,7 @@ def merge_mc2_bone_results(entries) -> tuple[tuple[dict, ...], dict[str, dict]]:
                             f"MC2 Bone components overlap on target bone {bone_name!r}"
                         )
                     global_target_pose_matrices[bone_name] = target_matrix
-                for name, matrix in (
-                    batch.get("reference_pose_matrices") or {}
-                ).items():
-                    global_reference_pose_matrices.setdefault(name, matrix)
                 source_batches.append(batch)
-
-        for name in tuple(global_reference_pose_matrices):
-            if name in global_target_pose_matrices:
-                global_reference_pose_matrices.pop(name, None)
 
         merged_batches = []
         for batch in source_batches:
@@ -569,7 +572,6 @@ def merge_mc2_bone_results(entries) -> tuple[tuple[dict, ...], dict[str, dict]]:
                     record["pose_bone"],
                     target_matrix,
                     global_target_pose_matrices,
-                    global_reference_pose_matrices,
                 )
                 for record, target_matrix in zip(records, target_matrices)
             )
@@ -579,10 +581,18 @@ def merge_mc2_bone_results(entries) -> tuple[tuple[dict, ...], dict[str, dict]]:
             merged_batch["target_pose_matrices"] = target_matrices
             merged_batches.append(merged_batch)
 
+        merged_records = tuple(
+            record
+            for batch in merged_batches
+            for record in batch.get("records") or ()
+        )
+        connected_count, free_count = _mc2_bone_motion_counts(merged_records)
         merged_plan = {
             "schema": primary_plan.get("schema", "mc2_bone_writeback_plan_v0"),
             "armature": armature,
             "bone_count": len(global_target_pose_matrices),
+            "rotation_only_connected_count": connected_count,
+            "position_rotation_count": free_count,
             "component_count": len(target_entries),
             "task_ids": tuple(task_ids),
             "batches": tuple(merged_batches),
@@ -598,6 +608,8 @@ def merge_mc2_bone_results(entries) -> tuple[tuple[dict, ...], dict[str, dict]]:
             "topology_signatures": tuple(topology_signatures),
             "revisions": tuple(revisions),
             "revision": max(revisions, default=0),
+            "rotation_only_connected_count": connected_count,
+            "position_rotation_count": free_count,
         })
         merged_results.append(merged_result)
 
@@ -715,8 +727,10 @@ def iter_mc2_results(world, channel: str | None = None):
 
 __all__ = [
     "MC2_BONE_MOTION_POSITION_ROTATION",
+    "MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED",
     "MC2_PUBLIC_RESULT_SCHEMA_VERSION",
     "iter_mc2_results",
+    "mc2_bone_motion_mode",
     "make_mc2_bone_domain_results",
     "make_mc2_mesh_domain_results",
     "merge_mc2_bone_results",

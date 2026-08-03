@@ -8,25 +8,6 @@ from ...names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from ...source_identity import mc2_source_token
 
 
-def _validate_disconnected_bones(armature, bone_names) -> None:
-    """BoneCloth 将模拟拓扑与 Blender 的 Connected 约束严格分离。"""
-
-    collection = getattr(getattr(armature, "data", None), "bones", None)
-    if collection is None:
-        collection = getattr(getattr(armature, "pose", None), "bones", None)
-    if collection is None:
-        return
-    for name in tuple(bone_names):
-        bone = getattr(collection, "get", lambda _name: None)(name)
-        if bone is None:
-            continue
-        if bool(getattr(bone, "use_connect", False)):
-            raise ValueError(
-                "BoneCloth 不支持 use_connect=True；"
-                f"请先断开骨骼 {str(name)!r} 的 Connected 属性"
-            )
-
-
 @dataclass(frozen=True)
 class MC2BoneChainSourceV1:
     """One ordered and resolved Bone chain within an Armature."""
@@ -87,8 +68,6 @@ class MC2BonePartitionSourceV1:
         roots = tuple(chain.root_bone for chain in chains)
         if len(set(roots)) != len(roots):
             raise ValueError("Bone partition cannot repeat a root chain")
-        for chain in chains:
-            _validate_disconnected_bones(self.armature, chain.bone_names)
 
     @property
     def task_sources(self) -> tuple[dict, ...]:
@@ -140,27 +119,9 @@ def expand_mc2_bone_cloth_control(
     value,
 ) -> tuple[MC2BoneChainSourceV1, ...]:
     if isinstance(value, dict) and value.get("armature") is not None:
-        armature = value["armature"]
-        explicit_chains = value.get("chains")
-        if explicit_chains:
-            chains = []
-            for chain in explicit_chains:
-                if isinstance(chain, dict):
-                    payload = dict(chain)
-                    payload.setdefault("armature", armature)
-                else:
-                    names = tuple(str(name) for name in (chain or ()) if str(name))
-                    payload = {
-                        "armature": armature,
-                        "root_bone": names[0] if names else "",
-                        "bones": names,
-                    }
-                chains.append(make_mc2_bone_chain_source(payload))
-            if not chains:
-                raise ValueError("BoneCloth explicit chains cannot be empty")
-            return tuple(chains)
         if value.get("bones"):
             return (make_mc2_bone_chain_source(value),)
+        armature = value["armature"]
         parent_name = str(value.get("bone") or value.get("root_bone") or "").strip()
     elif isinstance(value, tuple) and len(value) == 2:
         armature, parent_name = value
@@ -173,9 +134,7 @@ def expand_mc2_bone_cloth_control(
         raise ValueError(f"BoneCloth control Bone not found: {parent_name!r}")
     children = tuple(getattr(parent, "children", ()) or ())
     if not children:
-        # 平级骨可以作为一个单粒子链参与横向 product 连接；横向拓扑
-        # 不应要求宿主再人为创建一个父级中控骨。
-        return (MC2BoneChainSourceV1(armature, parent_name, (parent_name,)),)
+        raise ValueError(f"BoneCloth control Bone has no child chains: {parent_name!r}")
     return tuple(
         MC2BoneChainSourceV1(armature, names[0], names)
         for names in (_chain_names(child) for child in children)
@@ -187,12 +146,6 @@ def mc2_bone_cloth_property_owner(value) -> tuple[object, str]:
     if isinstance(value, dict) and value.get("armature") is not None:
         armature = value["armature"]
         names = tuple(str(name) for name in (value.get("bones") or ()) if str(name))
-        if not names and value.get("chains"):
-            first_chain = tuple(value["chains"])[0]
-            if isinstance(first_chain, dict):
-                names = tuple(
-                    str(name) for name in (first_chain.get("bones") or ()) if str(name)
-                )
         bone_name = str(
             value.get("bone") or value.get("root_bone") or (names[0] if names else "")
         ).strip()

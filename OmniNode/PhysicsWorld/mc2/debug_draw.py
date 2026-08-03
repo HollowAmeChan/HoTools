@@ -434,8 +434,7 @@ def _build_slot_status_lines(snapshot: dict, filters: dict) -> list[str]:
             ((attributes[:count] & 0x02) != 0) & (roots[:count] < 0)
         ))
         lines.append(
-            f"深度：有效粒子{count}，无可达Fixed的Move {unrooted}；"
-            "红色仅表示深度越界或父级根归属无效，双端固定链允许深度下降。"
+            f"深度：有效粒子{count}，无可达Fixed的Move {unrooted}；无根或红色逆序需要检查。"
         )
     if filters.get("show_gravity"):
         lines.append(
@@ -1123,18 +1122,18 @@ def _append_depth_batches(
     inversion_lines = []
     jump_lines = []
     root_boundary_lines = []
-    depth_deltas = []
+    positive_deltas = []
     for index in range(count):
         if not int(attributes[index]) & 0x02:
             continue
         parent = int(parents[index])
         if 0 <= parent < count:
-            delta = abs(float(depths[index]) - float(depths[parent]))
+            delta = float(depths[index]) - float(depths[parent])
             if delta > 1.0e-6:
-                depth_deltas.append(delta)
+                positive_deltas.append(delta)
     jump_threshold = max(
         0.25,
-        float(np.median(depth_deltas)) * 4.0 if depth_deltas else 0.25,
+        float(np.median(positive_deltas)) * 4.0 if positive_deltas else 0.25,
     )
 
     for index in range(draw_count):
@@ -1155,22 +1154,15 @@ def _append_depth_batches(
             add_point(invalid, positions[index])
             continue
         raw_depth = float(depths[index])
-        parent_depth = float(depths[parent])
-        parent_root = effective_root(parent)
-        depth_valid = (
-            np.isfinite(raw_depth)
-            and -1.0e-5 <= raw_depth <= 1.0 + 1.0e-5
-            and np.isfinite(parent_depth)
-            and -1.0e-5 <= parent_depth <= 1.0 + 1.0e-5
-        )
-        if not depth_valid or parent_root != root:
-            add_line(inversion_lines, positions[parent], positions[index])
-            add_point(invalid, positions[index])
-            continue
         depth = min(max(raw_depth, 0.0), 1.0)
         bin_index = min(int(depth * len(_DEPTH_COLORS)), len(_DEPTH_COLORS) - 1)
         add_point(bins[bin_index], positions[index])
-        if abs(depth - parent_depth) > jump_threshold:
+        parent_depth = float(depths[parent])
+        parent_root = effective_root(parent)
+        if raw_depth + 1.0e-5 < parent_depth or parent_root != root:
+            add_line(inversion_lines, positions[parent], positions[index])
+            add_point(invalid, positions[index])
+        elif depth - parent_depth > jump_threshold:
             add_line(jump_lines, positions[parent], positions[index])
 
     edges = np.asarray(
