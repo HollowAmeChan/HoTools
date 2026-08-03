@@ -58,6 +58,8 @@ def _draw_group_buttons(layout, operator_id, active_group=None, mask=None):
 
 def _draw_bone_collision_details(layout, props):
     layout.prop(props, "pin")
+    if props.collision_type == "NONE":
+        return
     col = layout.column(align=True)
     col.label(text="主碰撞组")
     _draw_group_buttons(col, _BONE_SET_PRIMARY_GROUP_OP, active_group=props.primary_collision_group)
@@ -600,7 +602,6 @@ class PT_Hotools_Bone_CollisionSubPanel(Panel):
         return (
             context.mode == "POSE"
             and props is not None
-            and props.collision_type != "NONE"
         )
 
     def draw(self, context):
