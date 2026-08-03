@@ -1128,7 +1128,7 @@ solver step 应产生统一 result stream，而不是直接写 Blender。
 
 当solver下一帧会从同一个Blender owner重新采集frame input时，必须定义输出反馈屏障：能够区分“上帧物理写回仍残留”和“本帧动画/driver已经覆盖”。该屏障及其持久状态由solver frame adapter拥有；统一writeback只应用结果plan，不替solver决定动画输入、不记录solver私有反馈状态，也不默认清零PoseBone。若蓝本在动画求值前恢复初始Transform、动画求值后再读取，Blender适配器必须在内存中表达等价输入时序，不得在solver执行期倒写场景来伪造早更新。
 
-当 Physics World owner 因跳帧而替换时，通用 registry 提供 `world_replace_handlers(previous_world, world, reason)` 生命周期。solver 可以在该边界转移自己拥有的轻量 frame feedback，但不得复制 solver slot、native handle 或结果流；显式 reset/scope restart 仍通过 `scope_restart_handlers` 清理反馈。MC2 BoneCloth 在跳帧时携带上一帧的 source/expected basis，以识别 Blender 暂存的旧 PoseBone 写回；目标帧已经完成动画求值时，adapter 必须优先采用新的当前 basis。
+当 Physics World owner 因跳帧而替换时，通用 registry 提供 `world_replace_handlers(previous_world, world, reason)` 生命周期。solver 可以在该边界转移自己拥有的轻量 frame feedback，但不得复制 solver slot、native handle 或结果流；显式 reset/scope restart 仍通过 `scope_restart_handlers` 清理反馈。MC2 BoneCloth 在跳帧时携带上一帧的 source/expected basis，以识别 Blender 暂存的旧 PoseBone 写回；目标帧已经完成动画求值时，adapter 必须优先采用新的当前 basis。统一 writeback 在 restart 时清理过 `PoseBone.matrix_basis` 后，adapter 必须从该 RNA basis 重建输入，不得在同一 frame callback 中回读尚未刷新的 `PoseBone.matrix`。
 
 **性能说明：** result stream 不应每帧在 Python 层构造 per-item dict 列表。对于骨骼数量较多的 solver（50+ bones），每帧为每根骨骼创建 Python dict 的开销不可忽视。推荐做法：
 

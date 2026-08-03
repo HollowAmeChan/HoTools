@@ -6,6 +6,7 @@ import bpy
 
 from ...OmniHostEvaluation import (
     get_evaluated_depsgraph,
+    is_frame_evaluation_active,
     update_view_layer_if_allowed,
 )
 
@@ -142,6 +143,8 @@ def ensure_scene_collection(
     for view_layer in view_layers:
         layer_path = _layer_collection_path(view_layer, collection)
         if not layer_path:
+            if is_frame_evaluation_active():
+                continue
             raise ValueError(f"Collection {name}没有进入View Layer {view_layer.name}")
         for layer_collection in layer_path:
             layer_collection.exclude = False
@@ -186,6 +189,8 @@ def link_object_to_scene_collection(
     obj.hide_viewport = False
     for view_layer in view_layers:
         if not view_layer_contains_object(view_layer, obj):
+            if is_frame_evaluation_active():
+                continue
             raise ValueError(
                 f"对象 {obj.name_full}没有进入View Layer {view_layer.name}"
             )

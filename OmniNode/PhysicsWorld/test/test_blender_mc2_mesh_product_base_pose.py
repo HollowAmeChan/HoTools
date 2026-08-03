@@ -246,6 +246,21 @@ def test_custom_object_reuses_public_resources_without_panel_mutation() -> None:
             )
         )
         assert generated == (base_proxy,)
+
+        # 旧版本把进程内 pointer 写进 .blend；模拟重开文件后的失效值，
+        # 持久面板引用必须迁移原缓存，不能创建 *_BasePose.001。
+        source.hotools_mesh_collision.mc2_base_pose_proxy = base_proxy
+        base_proxy[base_pose.CACHE_SOURCE_KEY] = "object:1:data:2"
+        source[base_pose.CACHE_SOURCE_UUID_KEY] = "reload-stable-source"
+        migrated, migrated_count = nodes.physicsMC2MeshCustomObject([source])
+        assert migrated_count == 1
+        assert migrated[0].explicit_properties.mc2_base_pose_proxy is base_proxy
+        assert base_proxy[base_pose.CACHE_SOURCE_KEY] == "uuid:reload-stable-source"
+        assert tuple(
+            item for item in cache_collection.objects
+            if bool(item.get(base_pose.CACHE_OBJECT_FLAG, False))
+        ) == (base_proxy,)
+        source.hotools_mesh_collision.mc2_base_pose_proxy = None
         print("PASS test_custom_object_reuses_public_resources_without_panel_mutation")
     finally:
         _remove_object(base_proxy)

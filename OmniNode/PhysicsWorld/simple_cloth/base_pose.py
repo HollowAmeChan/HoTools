@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import bpy
 import numpy as np
 
@@ -21,6 +23,7 @@ from .topology_identity import mesh_topology_signature_from_arrays
 CACHE_COLLECTION_NAME = "HoPhysicsCache"
 CACHE_OBJECT_FLAG = "hotools_base_pose_cache"
 CACHE_SOURCE_KEY = "hotools_base_pose_source"
+CACHE_SOURCE_UUID_KEY = "hotools_base_pose_source_uuid"
 CACHE_TOPOLOGY_SIGNATURE_KEY = "hotools_base_pose_topology_signature"
 DELTA_ATTRIBUTE_NAME = "mc2_delta"
 DELTA_MODIFIER_NAME = "MC2 后置位移"
@@ -56,10 +59,11 @@ def _is_generated_cache_object(value) -> bool:
 
 
 def _source_cache_key(source_obj: bpy.types.Object) -> str:
-    return (
-        f"object:{int(source_obj.as_pointer())}:"
-        f"data:{int(source_obj.data.as_pointer())}"
-    )
+    source_uuid = str(source_obj.get(CACHE_SOURCE_UUID_KEY, "") or "").strip()
+    if not source_uuid:
+        source_uuid = uuid.uuid4().hex
+        source_obj[CACHE_SOURCE_UUID_KEY] = source_uuid
+    return f"uuid:{source_uuid}"
 
 
 def _generated_source_matches(
@@ -71,11 +75,16 @@ def _generated_source_matches(
     stored = str(base_obj.get(CACHE_SOURCE_KEY, "") or "")
     if stored == _source_cache_key(source_obj):
         return True
-    # 旧版本只保存 name + object pointer；首次发现后升级为新身份。
-    if stored.endswith(f":{int(source_obj.as_pointer())}"):
-        base_obj[CACHE_SOURCE_KEY] = _source_cache_key(source_obj)
-        return True
     return False
+
+
+def _claim_generated_base_pose(
+    source_obj: bpy.types.Object,
+    base_obj: bpy.types.Object,
+) -> None:
+    """由持久 RNA 引用确认旧缓存归属，并升级为跨文件稳定身份。"""
+    if _is_generated_cache_object(base_obj):
+        base_obj[CACHE_SOURCE_KEY] = _source_cache_key(source_obj)
 
 
 def mesh_light_key(obj: bpy.types.Object) -> tuple[int, int, int]:
@@ -272,21 +281,40 @@ def find_generated_base_pose_proxy(
     target_scene = resolve_object_scene(source_obj, scene, purpose="BasePose Source")
     collection = ensure_cache_collection(target_scene)
     source_key = _source_cache_key(source_obj)
-    legacy_suffix = f":{int(source_obj.as_pointer())}"
+
+    # 面板 PointerProperty 是旧文件里唯一可靠的持久所有权来源。旧版本缓存
+    # 只记录进程内 pointer；重开文件后先用该引用迁移，避免误建 *_BasePose.001。
+    properties = getattr(source_obj, "hotools_mesh_collision", None)
+    referenced = getattr(properties, "mc2_base_pose_proxy", None) if properties else None
+    if (
+        _is_generated_cache_object(referenced)
+        and any(item == referenced for item in collection.objects)
+    ):
+        _claim_generated_base_pose(source_obj, referenced)
+        return referenced
+
     for candidate in tuple(collection.objects):
         try:
             candidate_key = str(candidate.get(CACHE_SOURCE_KEY, "") or "")
             if (
                 bool(candidate.get(CACHE_OBJECT_FLAG, False))
-                and (
-                    candidate_key == source_key
-                    or candidate_key.endswith(legacy_suffix)
-                )
+                and candidate_key == source_key
             ):
-                candidate[CACHE_SOURCE_KEY] = source_key
                 return candidate
         except ReferenceError:
             continue
+
+    # 无面板引用的旧自定义对象只能按旧默认名称迁移。只接受唯一候选，避免
+    # 同名或复制对象之间错误认领；迁移一次后即改用 UUID。
+    legacy_name = f"{source_obj.name}_BasePose"
+    legacy_candidates = tuple(
+        candidate
+        for candidate in collection.objects
+        if _is_generated_cache_object(candidate) and candidate.name == legacy_name
+    )
+    if len(legacy_candidates) == 1:
+        _claim_generated_base_pose(source_obj, legacy_candidates[0])
+        return legacy_candidates[0]
     return None
 
 
@@ -368,6 +396,7 @@ def initialize_base_pose_proxy_if_missing(
     if base_obj is not None:
         validate_base_pose_proxy(source_obj, base_obj)
         if _is_generated_cache_object(base_obj):
+            _claim_generated_base_pose(source_obj, base_obj)
             target_scene = resolve_object_scene(source_obj, scene, purpose="BasePose Source")
             link_object_to_scene_collection(
                 base_obj,
@@ -418,6 +447,7 @@ def ensure_base_pose_proxy(
             base_obj,
             expected_mesh_topology_signature,
         )
+        _claim_generated_base_pose(source_obj, base_obj)
     except ReferenceError:
         base_obj = refresh_base_pose_proxy(
             source_obj,
@@ -463,6 +493,7 @@ __all__ = [
     "CACHE_COLLECTION_NAME",
     "CACHE_OBJECT_FLAG",
     "CACHE_SOURCE_KEY",
+    "CACHE_SOURCE_UUID_KEY",
     "CACHE_TOPOLOGY_SIGNATURE_KEY",
     "DELTA_ATTRIBUTE_NAME",
     "DELTA_MODIFIER_NAME",

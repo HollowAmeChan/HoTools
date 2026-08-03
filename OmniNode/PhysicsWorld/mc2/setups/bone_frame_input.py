@@ -194,14 +194,43 @@ def _resolve_mc2_bone_source_basis(world, armature_ptr: int, pose_bone):
     bone_key = (int(armature_ptr), str(pose_bone.name))
     current_basis = pose_bone.matrix_basis.copy()
     entry = bones.get(bone_key)
+    frame_context = getattr(world, "frame_context", None)
+    restart_required = bool(
+        getattr(frame_context, "restart_required", False)
+    )
     if entry is None:
+        bone = getattr(pose_bone, "bone", None)
+        properties = getattr(bone, "hotools_collision", None)
+        preserve_host_input = (
+            getattr(pose_bone, "parent", None) is None
+            or bool(getattr(properties, "pin", False))
+        )
+        source_basis = current_basis
+        if restart_required and not preserve_host_input:
+            # 冷启动没有上一代 feedback 可用。直接用单位局部变换重建，
+            # 不读取本次 frame_change_post 内尚未刷新的旧 PoseBone.matrix。
+            source_basis = mathutils.Matrix.Identity(4)
         bones[bone_key] = {
             "armature": pose_bone.id_data,
             "bone_name": str(pose_bone.name),
-            "source_basis": current_basis,
+            "source_basis": source_basis.copy(),
             "expected_writeback_basis": None,
         }
-        return None
+        return source_basis.copy() if source_basis is not current_basis else None
+
+    if restart_required:
+        # 统一 writeback reset 已经把曾写回的 matrix_basis 清零。Blender 在
+        # 当前 frame_change_post 内不会同步刷新 PoseBone.matrix，因此 restart
+        # 必须从 RNA basis 重建，不能落回下面的旧派生 pose 读取路径。
+        expected_basis = entry.get("expected_writeback_basis")
+        source_basis = current_basis
+        if _matrix_matches(current_basis, expected_basis):
+            saved_source_basis = entry.get("source_basis")
+            if saved_source_basis is not None:
+                source_basis = saved_source_basis
+        entry["source_basis"] = source_basis.copy()
+        entry["expected_writeback_basis"] = None
+        return source_basis.copy()
 
     expected_basis = entry.get("expected_writeback_basis")
     if _matrix_matches(current_basis, expected_basis):
