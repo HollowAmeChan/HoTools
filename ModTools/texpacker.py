@@ -38,6 +38,7 @@ class MaterialTextures:
     normal_node_name: str | None
     normal_image: bpy.types.Image | None
     cell_index: int = 0
+    is_atlas_source: bool = True
 
 
 @dataclass
@@ -235,7 +236,8 @@ def _find_single_image(material, socket, channel_name, required):
 
 def _collect_materials(objects):
     materials = []
-    seen = set()
+    seen_materials = set()
+    atlas_cells = {}
 
     for obj in objects:
         for polygon in obj.data.polygons:
@@ -245,7 +247,7 @@ def _collect_materials(objects):
             if material is None:
                 raise ValueError(f'物体“{obj.name}”存在未指定材质的面')
             pointer = material.as_pointer()
-            if pointer in seen:
+            if pointer in seen_materials:
                 continue
 
             surface = _get_material_surface(material)
@@ -265,20 +267,29 @@ def _collect_materials(objects):
                     surface,
                 )
                 normal_node, normal_image = None, None
+            image_key = (
+                base_image.as_pointer(),
+                normal_image.as_pointer() if normal_image else None,
+            )
+            cell_index = atlas_cells.get(image_key)
+            is_atlas_source = cell_index is None
+            if is_atlas_source:
+                cell_index = len(atlas_cells)
+                atlas_cells[image_key] = cell_index
             materials.append(MaterialTextures(
                 material=material,
                 base_node_name=base_node.name,
                 base_image=base_image,
                 normal_node_name=normal_node.name if normal_node else None,
                 normal_image=normal_image,
+                cell_index=cell_index,
+                is_atlas_source=is_atlas_source,
             ))
-            seen.add(pointer)
+            seen_materials.add(pointer)
 
     if not materials:
         raise ValueError('所选物体没有实际使用的材质')
 
-    for index, item in enumerate(materials):
-        item.cell_index = index
     return materials
 
 
@@ -359,7 +370,7 @@ def _scan_context(context, create_output_dir=False):
         objects=objects,
         materials=materials,
         source_size=source_size,
-        grid_size=math.ceil(math.sqrt(len(materials))),
+        grid_size=math.ceil(math.sqrt(len({item.cell_index for item in materials}))),
         output_dir=output_dir,
         clean_name=clean_name,
         base_path=base_path,
@@ -474,7 +485,7 @@ def _build_atlas(materials, image_attr, output_path, atlas_name, source_size,
 
     for item in materials:
         image = getattr(item, image_attr)
-        if image is None:
+        if image is None or not item.is_atlas_source:
             continue
         source_pixels = _read_image_pixels(image, source_size)
         column = item.cell_index % grid_size
@@ -698,8 +709,10 @@ class HO_OT_pack_texture_atlas(Operator):
 
         atlas_width = scan.source_size[0] * scan.grid_size
         atlas_height = scan.source_size[1] * scan.grid_size
+        unique_cells = len({item.cell_index for item in scan.materials})
         self.expected_summary = (
-            f'{len(scan.materials)} 个材质，{scan.grid_size} x {scan.grid_size} 排列，'
+            f'{len(scan.materials)} 个材质，{unique_cells} 个贴图单元，'
+            f'{scan.grid_size} x {scan.grid_size} 排列，'
             f'单格 {scan.source_size[0]} x {scan.source_size[1]} px，'
             f'图集 {atlas_width} x {atlas_height} px'
         )
