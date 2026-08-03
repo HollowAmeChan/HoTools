@@ -11,8 +11,9 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[2]
+PY_LIB = "py313" if sys.version_info >= (3, 13) else "py311"
 package_dir = Path(
-    os.environ.get("HOTOOLS_NATIVE_TEST_DIR", ROOT / "_Lib" / "py313" / "HotoolsPackage")
+    os.environ.get("HOTOOLS_NATIVE_TEST_DIR", ROOT / "_Lib" / PY_LIB / "HotoolsPackage")
 )
 sys.path.insert(0, str(package_dir))
 
