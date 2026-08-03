@@ -246,6 +246,7 @@ def _flatten_bone_records(topology: MC2TopologySpec) -> tuple[dict, ...]:
                 "head": tuple(position),
                 "tail": tuple(position),
                 "matrix_local": terminal_matrix,
+                "pin": False,
             })
     if len(armatures) != 1:
         raise ValueError("BoneCloth task sources must belong to one Armature")
@@ -393,6 +394,21 @@ def _build_mc2_bone_static(
             tuple(row[3] for row in source_rows),
             dtype=np.float32,
         ).reshape((record_count, 16))
+    if use_snapshots:
+        pin_flags = np.concatenate(tuple(
+            np.concatenate((
+                np.asarray(getattr(snapshot, "pin_flags", ()), dtype=np.bool_),
+                np.zeros(len(snapshot.terminal_names), dtype=np.bool_),
+            ))
+            for snapshot in snapshots
+        )).astype(np.bool_, copy=False)
+    else:
+        pin_flags = np.asarray(
+            tuple(bool(record.get("pin", False)) for record in records),
+            dtype=np.bool_,
+        )
+    if len(pin_flags) != record_count:
+        raise ValueError("BoneCloth pin flag count mismatch")
     if any(not identity for identity in identities):
         raise ValueError("BoneCloth static bone identity cannot be empty")
     transform_values = np.empty((record_count, 4), dtype=np.float64)
@@ -407,7 +423,12 @@ def _build_mc2_bone_static(
         tangent_values,
     )
     roots = np.flatnonzero(parents < 0).astype(np.int32, copy=False)
-    attributes = np.where(parents < 0, 0x01, 0x02).astype(np.uint8, copy=False)
+    # 拓扑根始终固定；Bone.hotools_collision.pin 作为额外固定点写入 native。
+    attributes = np.where(
+        (parents < 0) | pin_flags,
+        0x01,
+        0x02,
+    ).astype(np.uint8, copy=False)
 
     if topology.bone_connection.triangles:
         if topology.connection_model != "hotools_product":

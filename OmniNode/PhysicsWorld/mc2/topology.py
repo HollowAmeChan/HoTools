@@ -171,6 +171,8 @@ class MC2BoneRawSnapshot:
     collision_radii: np.ndarray
     particle_collision_mask_source: str
     collision_masks: np.ndarray
+    # 每个真实 Bone 的固定标记；solver-only terminal 不属于 Blender Bone。
+    pin_flags: np.ndarray
     # BoneCloth simulates segment endpoints.  ``names`` remains the stable
     # Blender PoseBone identity list; terminal names are solver-only points.
     terminal_names: tuple[str, ...] = ()
@@ -767,6 +769,12 @@ def _read_bone_raw_snapshot(
         )
     masks = np.ascontiguousarray(masks, dtype=np.uint32)
     masks.flags.writeable = False
+    pin_flags = np.empty(len(names), dtype=np.bool_)
+    for index, name in enumerate(names):
+        bone = _collection_get(collection, name)
+        properties = getattr(bone, "hotools_collision", None)
+        pin_flags[index] = bool(getattr(properties, "pin", False))
+    pin_flags.flags.writeable = False
     return MC2BoneRawSnapshot(
         armature_pointer=armature_pointer,
         armature_name=str(
@@ -782,6 +790,7 @@ def _read_bone_raw_snapshot(
         collision_radii=radii,
         particle_collision_mask_source=particle_collision_mask_source,
         collision_masks=masks,
+        pin_flags=pin_flags,
         terminal_names=(_bone_terminal_name(names[-1]),) if names else (),
     )
 
@@ -812,6 +821,11 @@ def _bone_input_fingerprint(
         snapshot.particle_collision_mask_source,
         tuple(int(value) for value in snapshot.collision_masks),
     ))
+    result["topology"] = _compact_signature((
+        "mc2_bone_particle_pin_v1",
+        result["topology"],
+        tuple(bool(value) for value in snapshot.pin_flags),
+    ))
     return result
 
 
@@ -835,6 +849,7 @@ def _bone_payload(source) -> dict:
                 "head": _vector3(getattr(bone, "head_local", None)),
                 "tail": _vector3(getattr(bone, "tail_local", None)),
                 "matrix_local": _matrix16(getattr(bone, "matrix_local", None)),
+                "pin": bool(getattr(getattr(bone, "hotools_collision", None), "pin", False)),
             }
         )
     return {
@@ -983,6 +998,7 @@ def _build_compact_bone_source_topology(
         "collision_radii": tuple(float(value) for value in snapshot.collision_radii),
         "particle_collision_mask_source": snapshot.particle_collision_mask_source,
         "collision_masks": tuple(int(value) for value in snapshot.collision_masks),
+        "pin_flags": tuple(bool(value) for value in snapshot.pin_flags),
         "terminal_names": snapshot.terminal_names,
         "terminal_positions": tuple(
             tuple(float(value) for value in snapshot.head_tail[-1, 3:])
@@ -1003,6 +1019,7 @@ def _build_compact_bone_source_topology(
             tuple(float(value) for value in snapshot.collision_radii),
             snapshot.particle_collision_mask_source,
             tuple(int(value) for value in snapshot.collision_masks),
+            tuple(bool(value) for value in snapshot.pin_flags),
         )),
         particle_count=len(snapshot.names) + len(snapshot.terminal_names),
         resolved=snapshot.resolved,

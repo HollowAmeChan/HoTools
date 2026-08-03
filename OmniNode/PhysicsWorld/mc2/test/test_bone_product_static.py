@@ -74,6 +74,9 @@ product_bone_frame = importlib.import_module(
 product_bone_collect = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.product"
 )
+bone_frame_input = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_frame_input"
+)
 product_slot = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.product_slot"
 )
@@ -108,6 +111,7 @@ class Bone:
             offset=(0.0, 0.0, 0.0),
             primary_collision_group=1,
             collided_by_groups=0,
+            pin=False,
         )
 
 
@@ -239,6 +243,58 @@ def test_product_task_builds_multi_chain_topology_and_static_bundle() -> None:
         for triangle in built_static.final_proxy.triangles
     } == set(built_topology.bone_connection.triangles)
     assert built_static.distance.distance_targets
+
+
+def test_product_static_consumes_each_bone_pin_without_pinning_terminal() -> None:
+    armature = _armature()
+    armature.data.bones.get("A0").hotools_collision.pin = True
+    armature.data.bones.get("A2").hotools_collision.pin = True
+    request = _request(armature)
+    partition = request.plan.active_partitions[0]
+    fingerprint, snapshots = topology.prepare_static_inputs_for_partition(partition)
+    built_topology = topology.build_mc2_partition_topology_spec(
+        partition,
+        static_input_fingerprint=fingerprint,
+        static_input_snapshots=snapshots,
+    )
+    built_static = static_build.build_mc2_bone_static_for_partition(
+        partition,
+        built_topology,
+        raw_snapshots=snapshots,
+    )
+    # A0/A2 are fixed Blender bones; A2's solver terminal is an endpoint, not a Bone.
+    assert [int(value) & 0x03 for value in built_static.bone.proxy.vertex_attributes[:4]] == [1, 2, 1, 2]
+
+
+def test_bone_restart_handler_clears_previous_writeback_feedback() -> None:
+    marker = object()
+    world = types.SimpleNamespace(
+        backend_resources={bone_frame_input.MC2_BONE_FRAME_STATE_KEY: marker},
+    )
+    bone_frame_input.clear_mc2_bone_frame_state(world)
+    assert bone_frame_input.MC2_BONE_FRAME_STATE_KEY not in world.backend_resources
+
+
+def test_bone_world_jump_carries_feedback_across_generation() -> None:
+    source_basis = types.SimpleNamespace(copy=lambda: "source")
+    expected_basis = types.SimpleNamespace(copy=lambda: "expected")
+    previous = types.SimpleNamespace(backend_resources={
+        bone_frame_input.MC2_BONE_FRAME_STATE_KEY: {
+            "generation": 7,
+            "bones": {
+                (11, "A0"): {
+                    "source_basis": source_basis,
+                    "expected_writeback_basis": expected_basis,
+                },
+            },
+        },
+    })
+    current = types.SimpleNamespace(generation=1, backend_resources={})
+    bone_frame_input.carry_mc2_bone_frame_state(previous, current, "frame_jump")
+    carried = current.backend_resources[bone_frame_input.MC2_BONE_FRAME_STATE_KEY]
+    assert carried["generation"] == 1
+    assert carried["bones"][(11, "A0")]["source_basis"] == "source"
+    assert carried["bones"][(11, "A0")]["expected_writeback_basis"] == "expected"
 
 
 def test_product_task_rejects_sources_from_multiple_armatures() -> None:

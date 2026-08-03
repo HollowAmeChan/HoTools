@@ -221,6 +221,9 @@ try:
             rig_multi.data.bones[
                 f"Group0_Chain{chain_index}_{depth}"
             ].hotools_collision.collided_by_groups = mask
+            rig_multi.data.bones[
+                f"Group0_Chain{chain_index}_{depth}"
+            ].hotools_collision.pin = chain_index == 0 and depth in (0, 2)
             chain_radii.append(radius)
             expected_panel_masks.append(mask)
         expected_panel_radii.extend((*chain_radii, chain_radii[-1]))
@@ -272,6 +275,10 @@ try:
     np.testing.assert_array_equal(
         panel_slot.data["owner"].compiled.program.particle_external_collision_mask_override,
         np.asarray(expected_panel_masks, dtype=np.uint32),
+    )
+    np.testing.assert_array_equal(
+        panel_slot.data["owner"].compiled.program.particle_attribute_flags & np.uint32(0x03),
+        np.asarray((1, 2, 1, 2, 1, 2, 2, 2), dtype=np.uint32),
     )
 
     cloth_profile = parameters.make_mc2_particle_profile(

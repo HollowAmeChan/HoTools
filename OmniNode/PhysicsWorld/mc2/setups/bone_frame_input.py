@@ -75,8 +75,19 @@ def _copy_state_value(value):
     return value
 
 
-def _clone_mc2_bone_frame_state(state, generation: int) -> dict:
-    if not isinstance(state, dict) or state.get("generation") != generation:
+def _clone_mc2_bone_frame_state(
+    state,
+    generation: int,
+    *,
+    accept_previous_generation: bool = False,
+) -> dict:
+    if (
+        not isinstance(state, dict)
+        or (
+            not accept_previous_generation
+            and state.get("generation") != generation
+        )
+    ):
         return {"generation": generation, "bones": {}}
     bones = {}
     for key, entry in dict(state.get("bones") or {}).items():
@@ -153,6 +164,28 @@ def _mc2_bone_frame_state(world) -> dict:
 
 def clear_mc2_bone_frame_state(world) -> None:
     world.backend_resources.pop(MC2_BONE_FRAME_STATE_KEY, None)
+
+
+def carry_mc2_bone_frame_state(previous_world, world, reason: str = "replace") -> None:
+    """world 替换时保留 BoneCloth 的上一帧输入基准。
+
+    跳帧时 Blender 可能暂时还保留上一帧的 matrix_basis；保留旧的
+    ``source_basis`` 能把这次残留写回与真正的动画输入区分开。若目标帧
+    已经完成动画求值，下一次比较会自动采用新的当前 basis。
+    """
+    if str(reason or "") != "frame_jump":
+        return
+    previous_resources = getattr(previous_world, "backend_resources", {})
+    state = previous_resources.get(MC2_BONE_FRAME_STATE_KEY)
+    if not isinstance(state, dict):
+        return
+    generation = int(getattr(world, "generation", 0) or 0)
+    cloned = _clone_mc2_bone_frame_state(
+        state,
+        generation,
+        accept_previous_generation=True,
+    )
+    world.backend_resources[MC2_BONE_FRAME_STATE_KEY] = cloned
 
 
 def _resolve_mc2_bone_source_basis(world, armature_ptr: int, pose_bone):
@@ -539,6 +572,7 @@ __all__ = [
     "capture_mc2_bone_product_frame_inputs",
     "checkpoint_mc2_bone_frame_state",
     "clear_mc2_bone_frame_state",
+    "carry_mc2_bone_frame_state",
     "prepare_mc2_bone_writeback_expectations",
     "stage_mc2_bone_writeback_expectations",
 ]

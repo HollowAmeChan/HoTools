@@ -114,6 +114,24 @@ def _mc2_bone_line_output_rotations(
     proxy = pack_mc2_proxy_static(fragment.final_proxy)
     finalizer = pack_mc2_proxy_finalizer_static(fragment.finalizer)
     baseline = pack_mc2_baseline_static(fragment.static.baseline)
+    # baseline 只为 baseline_data 中的粒子生成旋转；其它合法粒子使用
+    # 零四元数表示“无 baseline”。native Bone Line 输入仍要求整块数组
+    # 都是单位四元数，因此这里只在上传边界将占位行规范为恒等旋转。
+    baseline_rotations = np.ascontiguousarray(
+        baseline["vertex_local_rotations"],
+        dtype=np.float32,
+    ).copy()
+    rotation_lengths = np.linalg.norm(baseline_rotations, axis=1)
+    inactive = ~np.isclose(
+        rotation_lengths,
+        1.0,
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    )
+    baseline_rotations[inactive] = np.asarray(
+        (0.0, 0.0, 0.0, 1.0),
+        dtype=np.float32,
+    )
     rotations = np.empty((len(logical_indices), 4), dtype=np.float32)
     native_module().mc2_bone_line_output_v1(
         proxy["vertex_attributes"],
@@ -133,7 +151,7 @@ def _mc2_bone_line_output_rotations(
         baseline["baseline_ranges"],
         baseline["baseline_data"],
         baseline["vertex_local_positions"],
-        baseline["vertex_local_rotations"],
+        baseline_rotations,
         proxy["triangles"],
         proxy["uvs"],
         finalizer["vertex_to_triangle_ranges"],

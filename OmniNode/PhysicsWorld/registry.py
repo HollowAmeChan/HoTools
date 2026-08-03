@@ -46,6 +46,7 @@ def _component_descriptor(domain: str) -> dict:
         "blender_properties": None,
         "scope_collectors": (),
         "scope_restart_handlers": (),
+        "world_replace_handlers": (),
         "world_dispose_handlers": (),
         "blender_lifecycle": None,
     }
@@ -129,6 +130,7 @@ def _default_descriptor(domain: str) -> dict:
         "debug_draw_modes": None,
         "scope_collectors": (),
         "scope_restart_handlers": (),
+        "world_replace_handlers": (),
         "world_dispose_handlers": (),
         "blender_lifecycle": None,
     }
@@ -307,6 +309,10 @@ def iter_scope_collectors() -> list[dict]:
 
 def iter_scope_restart_handlers() -> list[dict]:
     return _iter_hooks("scope_restart_handlers")
+
+
+def iter_world_replace_handlers() -> list[dict]:
+    return _iter_hooks("world_replace_handlers")
 
 
 def iter_world_dispose_handlers() -> list[dict]:
@@ -802,6 +808,18 @@ def run_scope_restart_handlers(world, scope) -> int:
             count += 1
         except Exception as exc:
             _record_hook_error(world, entry.get("domain", ""), "scope_restart_handlers", exc)
+    return count
+
+
+def run_world_replace_handlers(previous_world, world, reason: str) -> int:
+    """让各领域在 world owner 替换时转移或丢弃自己的运行时状态。"""
+    count = 0
+    for entry in iter_world_replace_handlers():
+        try:
+            entry["hook"](previous_world, world, str(reason or "replace"))
+            count += 1
+        except Exception as exc:
+            _record_hook_error(world, entry.get("domain", ""), "world_replace_handlers", exc)
     return count
 
 

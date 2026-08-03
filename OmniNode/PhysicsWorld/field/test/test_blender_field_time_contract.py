@@ -45,6 +45,7 @@ sys.modules[mapping_stub.__name__] = mapping_stub
 
 registry_stub = types.ModuleType(f"{PACKAGE_ROOT}.PhysicsWorld.registry")
 registry_stub.run_scope_restart_handlers = lambda world, scope: None
+registry_stub.run_world_replace_handlers = lambda previous_world, world, reason: None
 registry_stub.collect_scope_physics_specs = lambda world, scope: None
 registry_stub.run_world_dispose_handlers = lambda world, reason: None
 sys.modules[registry_stub.__name__] = registry_stub

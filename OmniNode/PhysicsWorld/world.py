@@ -427,12 +427,15 @@ def physicsWorldBegin(
 
     # 脏帧 / 首帧：重建 world，不复用现有状态
     if not world.valid or world.generation == 0:
+        previous_world = None
         if world is raw and isinstance(raw, PhysicsWorldCache):
             # 旧 world 需要被 replace，新建一个
             previous_world = world
             world = PhysicsWorldCache()
             world.copy_implicit_objects_from(previous_world)
         world.generation += 1
+        if jumped and not reset and previous_world is not None:
+            _run_world_replace_handlers(previous_world, world, "frame_jump")
         world.replace_required = True
         world.valid = True
         # 重建时更新 fc 引用
@@ -457,7 +460,7 @@ def physicsWorldBegin(
         world.invalidate_all_slots("reset_requested")
 
     restart_required = bool(reset) or scope_changed or (not continuous and not same_frame) or (previous_frame is None)
-    if restart_required:
+    if restart_required and (not jumped or previous_world is None):
         _run_scope_restart_handlers(world, object_scope)
 
     # Blender 输出 fps/fps_base 是唯一基础时钟。sample_time 只累计已经跨过的
@@ -530,6 +533,19 @@ def _run_scope_restart_handlers(world: PhysicsWorldCache, scope: PhysicsObjectSc
         return
 
     run_scope_restart_handlers(world, scope)
+
+
+def _run_world_replace_handlers(
+    previous_world: PhysicsWorldCache,
+    world: PhysicsWorldCache,
+    reason: str,
+) -> None:
+    try:
+        from .registry import run_world_replace_handlers
+    except Exception:
+        return
+
+    run_world_replace_handlers(previous_world, world, reason)
 
 
 def _collect_scope_physics_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
