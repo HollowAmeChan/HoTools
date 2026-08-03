@@ -151,6 +151,25 @@ def test_bone_cloth_control_groups_become_ordered_partitions_in_one_domain():
     assert "融合 2 个分区" in request.report_text
 
 
+def test_bone_cloth_accepts_flat_parallel_chains_for_product_lateral_links():
+    flat_bones = tuple(_Bone(name) for name in ("A", "B", "C"))
+    armature = _Armature(202, "FlatRig", flat_bones)
+    value = {
+        "armature": armature,
+        "chains": (
+            {"bones": ("A",)},
+            {"bones": ("B",)},
+            {"bones": ("C",)},
+        ),
+    }
+    chains = source_spec.expand_mc2_bone_cloth_control(value)
+    assert tuple(chain.bone_names for chain in chains) == (("A",), ("B",), ("C",))
+    bone_object = object_spec.make_mc2_bone_cloth_custom_object(value)
+    assert tuple(
+        chain.bone_names for chain in bone_object.partition_source.chains
+    ) == (("A",), ("B",), ("C",))
+
+
 def test_bone_cloth_object_domain_collector_builds_complete_partitions():
     a2 = _Bone("A2")
     a1 = _Bone("A1", (a2,))

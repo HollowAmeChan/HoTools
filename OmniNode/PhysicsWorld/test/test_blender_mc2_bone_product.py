@@ -49,6 +49,9 @@ parameters = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.parameters"
 )
 debug = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.debug")
+debug_draw = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.debug_draw"
+)
 bone_frame_input = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_frame_input"
 )
@@ -92,7 +95,7 @@ def _armature(name: str, control_count: int, chain_count: int, chain_length: int
                 bone.head = (x, depth * 0.18, 1.0 + depth * 0.04)
                 bone.tail = (x + depth * 0.01, (depth + 1) * 0.18, 1.04 + depth * 0.04)
                 bone.parent = previous
-                bone.use_connect = depth > 0
+                bone.use_connect = False
                 previous = bone
     bpy.ops.object.mode_set(mode="OBJECT")
     obj.select_set(False)
@@ -322,8 +325,6 @@ try:
     assert cloth_owner.inspect()["fragment_cache"]["schema"] == "mc2_bone_fragment_cache_v1"
     result = cloth_world.result_streams["bone_transform"][0]
     assert result["bone_count"] == 12 and result["component_count"] == 2
-    assert result["rotation_only_connected_count"] == 8
-    assert result["position_rotation_count"] == 4
     assert len(cloth_slot.data["writeback_plan"]["batches"]) == 2
     assert len(
         cloth_world.backend_resources[bone_frame_input.MC2_BONE_FRAME_STATE_KEY]["bones"]
@@ -354,13 +355,37 @@ try:
     snapshot = cloth_slot.data["_debug_draw_snapshot"]
     output = snapshot["output"]
     translation = np.asarray(output["translation_applied"], dtype=np.uint8)
-    assert np.count_nonzero(translation == 0) == 12
-    assert np.count_nonzero(translation == 1) == 4
+    assert np.count_nonzero(translation == 0) == 4
+    assert np.count_nonzero(translation == 1) == 12
     assert snapshot["topology"]["baseline_root_indices"].shape == (16,)
     assert snapshot["motion"]["step_basic_positions"].shape == (16, 3)
     for name in ("distance", "tether", "bending", "angle_restoration", "angle_limit"):
         records = snapshot["constraint_records"][name]
         assert len(records["states"]) > 0
+
+    # 双端固定或接近另一固定端时，基线深度可以沿父级下降；这不是非法深度。
+    depth_batches = []
+    depth_point_batches = []
+    debug_draw._append_depth_batches(
+        depth_batches,
+        depth_point_batches,
+        {
+            "vertex_attributes": np.asarray((0x01, 0x02, 0x02, 0x02), dtype=np.uint8),
+            "baseline_parent_indices": np.asarray((-1, 0, 1, 2), dtype=np.int32),
+            "baseline_root_indices": np.asarray((-1, 0, 0, 0), dtype=np.int32),
+            "baseline_depths": np.asarray((0.0, 0.80, 0.45, 0.10), dtype=np.float32),
+            "edges": np.asarray(((0, 1), (1, 2), (2, 3)), dtype=np.int32),
+        },
+        np.asarray(
+            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0), (3.0, 0.0, 0.0)),
+            dtype=np.float32,
+        ),
+        4,
+    )
+    assert not any(
+        batch[1] == debug_draw._COLORS["depth_inversion"]
+        for batch in (*depth_batches, *depth_point_batches)
+    )
     planned_pose_bones = tuple(
         record["pose_bone"]
         for batch in cloth_slot.data["writeback_plan"]["batches"]

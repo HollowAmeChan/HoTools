@@ -706,6 +706,14 @@ def _read_bone_raw_snapshot(
     particle_collision_mask_source: str = "partition_mask",
 ) -> MC2BoneRawSnapshot:
     armature, collection, requested, explicit_chain, names = _bone_source_selection(source)
+    if collection is not None:
+        for name in names:
+            bone = _collection_get(collection, name)
+            if bone is not None and bool(getattr(bone, "use_connect", False)):
+                raise ValueError(
+                    "MC2 Bone source 不支持 use_connect=True；"
+                    f"请先断开骨骼 {str(name)!r} 的 Connected 属性"
+                )
     name_to_index = {name: index for index, name in enumerate(names)}
     armature_pointer = _pointer(armature)
     cache = armature_rest_snapshots if armature_rest_snapshots is not None else {}

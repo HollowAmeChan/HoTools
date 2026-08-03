@@ -425,7 +425,7 @@ Bone Transform朝向与final proxy顶点朝向是两个不同基底。横向tria
 
 结果先生成全部target pose，再按完整目标集合重算parent-local `matrix_basis` plan；同Armature多个不重叠component合并后一次写回。Solver不直接写PoseBone。
 
-MC2源码的BoneCloth帧顺序是`RestoreTransform -> Animator更新 -> ReadTransform -> Simulation -> WriteTransform`：注册时的局部姿态在早更新恢复，动画随后可覆盖它，晚更新读取动画结果，粒子结果最后才映射并写回Transform。Blender侧不得把上帧MC2物理写回再次当作本帧动画pose，也不得在solver节点执行时倒写场景模拟早更新。MC2 Bone frame adapter私有保存逻辑source basis和按Blender规则规范化的上次输出basis；连接骨会清零Blender不接受的局部平移。当前basis仍匹配该输出时，仅在内存中用source basis重建frame input；当前basis已被本帧关键帧、driver或用户输入覆盖时直接读取当前pose。统一writeback只执行plan，不拥有或回填这份反馈状态；SpringBone不消费它。
+MC2源码的BoneCloth帧顺序是`RestoreTransform -> Animator更新 -> ReadTransform -> Simulation -> WriteTransform`：注册时的局部姿态在早更新恢复，动画随后可覆盖它，晚更新读取动画结果，粒子结果最后才映射并写回Transform。Blender侧不得把上帧MC2物理写回再次当作本帧动画pose，也不得在solver节点执行时倒写场景模拟早更新。MC2 Bone frame adapter私有保存逻辑source basis和按Blender规则规范化的上次输出basis；所有通过注册的骨骼都按完整位置与旋转写回。当前basis仍匹配该输出时，仅在内存中用source basis重建frame input；当前basis已被本帧关键帧、driver或用户输入覆盖时直接读取当前pose。统一writeback只执行plan，不拥有或回填这份反馈状态；SpringBone不消费它。
 
 ### Bone Transform位移语义
 
@@ -433,15 +433,15 @@ Unity蒙皮骨是`SkinnedMeshRenderer`引用的普通`Transform`，父子关系�
 
 Blender Bone结果适配器固定遵守以下产品合同：
 
-BoneCloth的推荐作者语义是让参与模拟的链骨尽量关闭`Bone > Relations > Connected`。断连骨可以写回独立位置与旋转，使PoseBone原点尽量对齐对应粒子；连接骨受Blender固定骨长和父尾子头关系约束，只能使用rotation-only写回，因此真实Bone位置不能保证与独立粒子位置完全重合。保留连接骨是有意提供的兼容模式，不是solver误差；runtime绝不擅自修改骨架连接关系。该限制必须进入BoneCloth对象、自定义对象和域节点的`omni_description`及关键输入tooltip，不能只留在蓝本。
+BoneCloth统一要求参与模拟的骨骼关闭`Bone > Relations > Connected`。注册阶段读取每根实际模拟骨的`use_connect`，发现`True`立即拒绝本次注册；控制骨是否连接不影响模拟，但不会被写回。这样模拟拓扑可以独立表达纵向链、横向开口和跨链连接，不再受Blender父尾子头约束改写。
 
-- `use_connect=True`的子骨使用`rotation_only_connected`。结果plan在进入统一writeback前显式把`matrix_basis`平移归零，子骨head继续由父骨tail决定；禁止依赖Blender写入时静默丢弃平移。
-- `use_connect=False`的骨使用`position_rotation`。粒子位置映射保留在`matrix_basis`平移中，允许父子骨原点间距变化；视觉上可能出现父骨tail与子骨head分离，蒙皮连续性由权重决定。
-- Solver和writeback都不得自动修改`use_connect`。自动断连会改变骨架拓扑、动画与约束含义，必须由作者在建模阶段决定。
+- 所有模拟骨统一使用`position_rotation`：结果先保留最终粒子世界位置与旋转，再反算Armature空间的目标Pose矩阵，最后按父级参考矩阵生成`PoseBone.matrix_basis`。
+- 写回不再清零任何骨骼的局部平移。模拟集合外的父骨矩阵在结果生成时捕获，避免同一批写回过程中被前一个骨骼的实时状态污染。
+- Solver和writeback都不自动修改`use_connect`；连接骨必须在注册前由作者断开，拒绝发生在source/partition构造阶段。
 - B-Bone只负责单根骨内部的分段弯曲/形变，不参与本合同，也不是MC2关节位移的替代实现。
-- BoneCloth与BoneSpring共用该Blender Bone结果边界。每条record必须携带`motion_mode`；plan、公共Bone结果与隐式debug output必须分别给出`rotation_only_connected_count`、`position_rotation_count`和逐骨`writeback_motion_modes`，便于审计实际生效模式。
+- BoneCloth与BoneSpring共用该Blender Bone结果边界。每个Bone结果都必须携带最终世界位置和旋转；不再维护connected/disconnected双重运动模式。
 
-验收必须同时覆盖连接骨平移在plan阶段已归零，以及断连骨的非零粒子平移能够真实保留到`PoseBone.matrix_basis`；只验证旋转或依赖viewport观测不算完成。
+验收必须覆盖非零粒子平移能够真实保留到`PoseBone.matrix_basis`，以及横向平级连接不依赖Blender父子连接；只验证旋转或依赖viewport观测不算完成。
 
 ## 数值顺序不变量
 
@@ -484,7 +484,7 @@ Whole-domain self 在同一 owner 内一次更新 primitive、grid、candidate�
 
 ## Result 与写回
 
-DomainV1 只发布 logical output，不写 Blender。`domain_output.py` 按 output map 生成有序 immutable commands：Mesh 转 object-local offset，Bone 生成 connected/disconnected 运动计划。同 Armature Bone commands 在结果层合并。
+DomainV1 只发布 logical output，不写 Blender。`domain_output.py` 按 output map 生成有序 immutable commands：Mesh 转 object-local offset，Bone 生成完整位置/旋转运动计划。同 Armature Bone commands 在结果层合并。
 
 Physics World writeback 先验证全部 target identity、topology、data pointer 和 command 数量，再快照、提交；任一点失败按逆序恢复并且不发布 receipt。结果事务、slot generation、frame identity 和 debug snapshot 必须一致，旧 topology 的 output map 一律拒绝。
 

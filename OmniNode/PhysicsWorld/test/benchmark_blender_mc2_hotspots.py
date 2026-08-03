@@ -162,7 +162,7 @@ def _armature(name: str, chain_count: int, chain_length: int):
             bone.head = (x, depth * 0.12, 1.0)
             bone.tail = (x, (depth + 1) * 0.12, 1.0)
             bone.parent = previous
-            bone.use_connect = depth > 0
+            bone.use_connect = False
             previous = bone
             chain.append(bone.name)
         chains.append(chain)

@@ -100,7 +100,7 @@ Bone socket / chain descriptor
 | setup | 一个 product domain 的来源 | 稳定限制 |
 |---|---|---|
 | BoneCloth | 同一 Armature component 下的一条或多条中控骨链 | 支持 Line/Seq/SeqLoop；保留横向 triangle、旋转插值、根旋转和 triangle 最终覆盖；单 request 不跨 Armature。 |
-| BoneSpring | 同一 Armature component 下的一条或多条根骨链 | 只允许 Line；外碰只消费 SPHERE；保留 Line 方向和 connected/disconnected 写回；单 request 不跨 Armature。 |
+| BoneSpring | 同一 Armature component 下的一条或多条根骨链 | 只允许 Line；外碰只消费 SPHERE；统一使用完整位置/旋转写回；单 request 不跨 Armature。 |
 | 两者共同 | Armature world pose 与逐骨 pose snapshot | RestoreTransform/ReadTransform 屏障区分动画输入和上一帧写回；负缩放、失效骨、重叠链和 owner 冲突在 backend mutation 前失败。 |
 
 不同 Armature 按首次出现顺序生成多个显式 request。同一 Armature 内的 partition 共享一个 domain；跨 Armature 不伪装成一个 task。
@@ -244,7 +244,7 @@ Teleport是external collision之前完成的partition历史事务。MeshCloth以
 
 backend 只产生 logical output。host 根据 output map 构造 GN object-local offset 或 Bone transform command；全部 target、element count、generation 和有限值在发布前验证。任一 request 或 target 失败时，本批结果零部分发布。
 
-BoneCloth作者应让参与模拟的链骨尽量关闭`Bone > Relations > Connected`。断连骨使用`position_rotation`写回，可以保留对应粒子的独立位置；连接骨受Blender固定骨长和父尾子头关系约束，只能使用`rotation_only_connected`，因此真实PoseBone位置可能无法与模拟粒子位置完全重合。这是故意保留的兼容语义，solver和writeback都不得自动断开骨骼；对象、自定义对象和域节点必须直接向用户暴露该限制。
+BoneCloth注册阶段拒绝任何参与模拟且`use_connect=True`的骨骼。所有通过注册的骨骼统一使用`position_rotation`写回，最终粒子世界位置先反算为Armature空间Pose矩阵，再生成`PoseBone.matrix_basis`；横向平级连接由模拟拓扑表达，不依赖Blender父尾子头关系。solver和writeback都不得自动修改`use_connect`；对象、自定义对象和域节点必须直接向用户暴露该硬性限制。
 
 GPU 初期可以回读统一 logical buffer 后由 host 拆分；成熟实现可以在 device 生成按 target 排列的 output，但必须进入同一个 command envelope 和事务。
 

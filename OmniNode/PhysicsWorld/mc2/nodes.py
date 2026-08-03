@@ -559,10 +559,9 @@ def _task_long_description(setup_label: str, fields: tuple[str, ...]) -> str:
 
 
 _BONE_CLOTH_CHAIN_AUTHORING_NOTICE = (
-    "重要建模语义：建议让BoneCloth模拟链尽量关闭Bone > Relations > Connected。"
-    "Connected骨在Blender中不能接收粒子的独立局部平移，只能按固定骨长和父尾子头关系写回旋转，"
-    "因此真实PoseBone位置可能无法与模拟粒子位置完全重合。"
-    "这是故意保留的rotation-only兼容模式；solver不会自动断开骨骼。"
+    "BoneCloth模拟链不支持Bone > Relations > Connected。"
+    "注册阶段会检查每根实际模拟骨；发现use_connect=True会直接报错。"
+    "请先断开Connected，再由模拟拓扑负责横向或跨链连接。"
 )
 
 
