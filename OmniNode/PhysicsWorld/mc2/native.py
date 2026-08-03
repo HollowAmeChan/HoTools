@@ -12,7 +12,6 @@ MC2_REQUIRED_NATIVE_SYMBOLS = (
     "mc2_mesh_frame_orientations_v1",
     "mc2_bone_frame_orientations_v1",
     "mc2_bone_line_output_v1",
-    "mc2_bone_mesh_output_v1",
     "mc2_domain_cpu_v1_step_tether_partitioned",
     "mc2_domain_cpu_v1_step_angle_partitioned",
     "mc2_domain_cpu_v1_step_motion_partitioned",

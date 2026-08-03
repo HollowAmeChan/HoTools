@@ -19,13 +19,14 @@ from ..utils.math3d import (
     quaternion_conjugate_f64,
     quaternion_multiply_f64,
 )
-from .mesh_baseline import build_mc2_graph_baseline
+from .mesh_baseline import replace_mc2_proxy_attributes
 from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from .setups.mesh_cloth.final_proxy import build_mc2_final_proxy
 from .static_data import MC2BaselineStaticSpec
 from .static_data import MC2ProxyFinalizerStaticSpec
 from .static_data import MC2ProxyStaticSpec
 from .static_data import MC2_STATIC_SCHEMA_VERSION
+from .static_data import make_mc2_baseline_static_spec
 from .static_data import make_mc2_proxy_finalizer_static_spec
 from .static_data import pack_mc2_baseline_static
 from .static_data import pack_mc2_proxy_finalizer_static
@@ -89,6 +90,61 @@ def _validate_parent_forest(parents: tuple[int, ...]) -> None:
                 raise ValueError("parent_indices contains a cycle")
             visited.add(current)
             current = parents[current]
+
+
+def _build_native_transform_baseline(proxy, parents, roots) -> dict:
+    # 深度由最终代理图的无向边和固定粒子生成；父级仅用于骨骼姿态与写回。
+    count = len(parents)
+    child_ranges = np.empty((count, 2), dtype=np.int32)
+    child_data = np.empty(count, dtype=np.int32)
+    baseline_flags = np.empty(count, dtype=np.uint8)
+    baseline_ranges = np.empty((count, 2), dtype=np.int32)
+    baseline_data = np.empty(count, dtype=np.int32)
+    final_attributes = np.empty(count, dtype=np.uint8)
+    pose_roots = np.empty(count, dtype=np.int32)
+    depths = np.empty(count, dtype=np.float64)
+    local_positions = np.empty((count, 3), dtype=np.float64)
+    local_rotations = np.empty((count, 4), dtype=np.float64)
+    from .native import native_module
+
+    counts = native_module().mc2_build_bone_transform_baseline_derived(
+        np.ascontiguousarray(proxy.local_positions, dtype=np.float64),
+        np.ascontiguousarray(proxy.local_normals, dtype=np.float64),
+        np.ascontiguousarray(proxy.local_tangents, dtype=np.float64),
+        np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
+        np.ascontiguousarray(parents, dtype=np.int32),
+        np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),
+        np.ascontiguousarray(roots, dtype=np.int32),
+        child_ranges,
+        child_data,
+        baseline_flags,
+        baseline_ranges,
+        baseline_data,
+        final_attributes,
+        pose_roots,
+        depths,
+        local_positions,
+        local_rotations,
+        False,
+    )
+    child_count = int(counts["child_count"])
+    baseline_count = int(counts["baseline_count"])
+    baseline_data_count = int(counts["baseline_data_count"])
+    return {
+        "child_ranges": tuple(tuple(int(value) for value in row) for row in child_ranges),
+        "child_data": tuple(int(value) for value in child_data[:child_count]),
+        "baseline_flags": tuple(int(value) for value in baseline_flags[:baseline_count]),
+        "baseline_ranges": tuple(
+            tuple(int(value) for value in row)
+            for row in baseline_ranges[:baseline_count]
+        ),
+        "baseline_data": tuple(int(value) for value in baseline_data[:baseline_data_count]),
+        "attributes": tuple(int(value) for value in final_attributes),
+        "roots": tuple(int(value) for value in pose_roots),
+        "depths": tuple(float(value) for value in depths),
+        "local_positions": _tuple_vectors(local_positions),
+        "local_rotations": _tuple_vectors(local_rotations),
+    }
 
 
 def _normal_adjustment(
@@ -291,9 +347,16 @@ def build_mc2_bone_static(
         triangles=triangles,
     )
 
-    # BoneCloth 使用和 MeshCloth 相同的最终 proxy 图基线。Blender 父子树
-    # 只在上游选骨和下游写回时存在，不能参与模拟 parent、深度或 tether。
-    final_proxy, baseline = build_mc2_graph_baseline(raw.proxy)
+    transform_baseline = _build_native_transform_baseline(raw.proxy, parents, roots)
+    child_ranges = transform_baseline["child_ranges"]
+    child_data = transform_baseline["child_data"]
+    baseline_flags = transform_baseline["baseline_flags"]
+    baseline_ranges = transform_baseline["baseline_ranges"]
+    baseline_data = transform_baseline["baseline_data"]
+    final_attributes = transform_baseline["attributes"]
+    local_pose_positions = transform_baseline["local_positions"]
+    local_pose_rotations = transform_baseline["local_rotations"]
+    final_proxy = replace_mc2_proxy_attributes(raw.proxy, final_attributes)
     finalizer = make_mc2_proxy_finalizer_static_spec(
         proxy=final_proxy,
         vertex_to_vertex_ranges=raw.finalizer.vertex_to_vertex_ranges,
@@ -301,6 +364,20 @@ def build_mc2_bone_static(
         vertex_to_triangle_records=raw.finalizer.vertex_to_triangle_records,
         vertex_bind_pose_positions=raw.finalizer.vertex_bind_pose_positions,
         vertex_bind_pose_rotations=raw.finalizer.vertex_bind_pose_rotations,
+    )
+    baseline = make_mc2_baseline_static_spec(
+        proxy_signature=final_proxy.proxy_signature,
+        vertex_count=count,
+        parent_indices=parents,
+        child_ranges=child_ranges,
+        child_data=child_data,
+        baseline_flags=baseline_flags,
+        baseline_ranges=baseline_ranges,
+        baseline_data=baseline_data,
+        root_indices=transform_baseline["roots"],
+        depths=transform_baseline["depths"],
+        vertex_local_positions=local_pose_positions,
+        vertex_local_rotations=local_pose_rotations,
     )
 
     to_transform_values = np.empty((count, 4), dtype=np.float64)

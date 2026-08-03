@@ -12,49 +12,6 @@ from .static_build import MC2BoneClothStaticBuildResult
 from .static_build import build_mc2_bone_static_for_partition
 
 
-def _make_output_endpoint_child_graph(
-    particle_count: int,
-    output_source_elements: np.ndarray,
-    output_endpoint_source_elements: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """把每根骨骼记录的 head/tail 映射编译为 native dense child 图。"""
-
-    count = int(particle_count)
-    heads = np.asarray(output_source_elements, dtype=np.int64)
-    endpoints = np.asarray(output_endpoint_source_elements, dtype=np.int64)
-    if heads.ndim != 1 or endpoints.shape != heads.shape:
-        raise ValueError("Bone output head/tail mapping shape mismatch")
-    if (
-        np.any(heads < 0)
-        or np.any(heads >= count)
-        or np.any(endpoints < 0)
-        or np.any(endpoints >= count)
-    ):
-        raise ValueError(
-            "Bone output head/tail mapping contains an invalid particle"
-        )
-    if len(np.unique(heads)) != len(heads):
-        raise ValueError("Bone output head particles must be unique")
-
-    endpoint_by_head = {
-        int(head): int(endpoint) for head, endpoint in zip(heads, endpoints)
-    }
-    child_ranges = np.empty((count, 2), dtype=np.int32)
-    child_data = np.empty((len(heads),), dtype=np.int32)
-    cursor = 0
-    for particle_index in range(count):
-        endpoint = endpoint_by_head.get(particle_index)
-        child_ranges[particle_index] = (cursor, int(endpoint is not None))
-        if endpoint is not None:
-            child_data[cursor] = endpoint
-            cursor += 1
-    if cursor != len(child_data):
-        raise ValueError("Bone output endpoint child graph is incomplete")
-    child_ranges.flags.writeable = False
-    child_data.flags.writeable = False
-    return child_ranges, child_data
-
-
 @dataclass(frozen=True)
 class _MC2BoneBaselineViewV1:
     final_proxy: object
@@ -76,9 +33,6 @@ class MC2BoneStaticFragmentV1:
     output_bone_identities: tuple[str, ...]
     output_source_elements: np.ndarray
     output_endpoint_source_elements: np.ndarray
-    output_endpoint_child_ranges: np.ndarray
-    output_endpoint_child_data: np.ndarray
-    output_empty_child_ranges: np.ndarray
 
     def __post_init__(self) -> None:
         if not self.snapshot_signature or not self.partition_id or not self.output_target_id:
@@ -106,24 +60,6 @@ class MC2BoneStaticFragmentV1:
                 np.uint32,
                 (len(self.output_bone_identities),),
                 "output_endpoint_source_elements",
-            ),
-            (
-                self.output_endpoint_child_ranges,
-                np.int32,
-                (count, 2),
-                "output_endpoint_child_ranges",
-            ),
-            (
-                self.output_endpoint_child_data,
-                np.int32,
-                (len(self.output_bone_identities),),
-                "output_endpoint_child_data",
-            ),
-            (
-                self.output_empty_child_ranges,
-                np.int32,
-                (count, 2),
-                "output_empty_child_ranges",
             ),
         ):
             if (
@@ -189,21 +125,6 @@ class MC2BoneStaticFragmentV1:
             != self.output_source_elements + np.uint32(1)
         ):
             raise ValueError("Bone output endpoints must follow their head particles")
-        expected_ranges, expected_data = _make_output_endpoint_child_graph(
-            count,
-            self.output_source_elements,
-            self.output_endpoint_source_elements,
-        )
-        if not np.array_equal(self.output_endpoint_child_ranges, expected_ranges):
-            raise ValueError(
-                "output_endpoint_child_ranges does not match head/tail mapping"
-            )
-        if not np.array_equal(self.output_endpoint_child_data, expected_data):
-            raise ValueError(
-                "output_endpoint_child_data does not match head/tail mapping"
-            )
-        if np.any(self.output_empty_child_ranges):
-            raise ValueError("output_empty_child_ranges must contain only zeros")
 
     @property
     def final_proxy(self):
@@ -372,15 +293,6 @@ def build_mc2_bone_static_fragment(
         output_endpoint_source_elements,
         dtype=np.uint32,
     )
-    output_endpoint_child_ranges, output_endpoint_child_data = (
-        _make_output_endpoint_child_graph(
-            count,
-            output_source_elements,
-            output_endpoint_source_elements,
-        )
-    )
-    output_empty_child_ranges = np.zeros((count, 2), dtype=np.int32)
-    output_empty_child_ranges.flags.writeable = False
     radius.flags.writeable = False
     absolute_particle_radii.flags.writeable = False
     particle_external_collision_masks.flags.writeable = False
@@ -401,9 +313,6 @@ def build_mc2_bone_static_fragment(
         output_bone_identities=tuple(output_bone_identities),
         output_source_elements=output_source_elements,
         output_endpoint_source_elements=output_endpoint_source_elements,
-        output_endpoint_child_ranges=output_endpoint_child_ranges,
-        output_endpoint_child_data=output_endpoint_child_data,
-        output_empty_child_ranges=output_empty_child_ranges,
     )
 
 

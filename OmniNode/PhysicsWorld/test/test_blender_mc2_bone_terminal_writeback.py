@@ -133,10 +133,6 @@ try:
         )
         assert fragment.output_source_elements.tolist() == [0, 1, 2]
         assert fragment.output_endpoint_source_elements.tolist() == [1, 2, 3]
-        assert fragment.output_endpoint_child_ranges.tolist() == [
-            [0, 1], [1, 1], [2, 1], [3, 0],
-        ]
-        assert fragment.output_endpoint_child_data.tolist() == [1, 2, 3]
         assert set(fragment.topology.bone_connection.lines) == {
             (0, 1),
             (1, 2),
@@ -186,46 +182,4 @@ finally:
         bpy.data.armatures.remove(data)
 
 
-armature = make_armature()
-world = world_types.PhysicsWorldCache()
-try:
-    objects, count = mc2_nodes.physicsMC2BoneClothCustomObject(
-        [{"armature": armature, "bone": "Control"}]
-    )
-    assert count == 1
-    partitions, _partition_names = mc2_nodes.physicsMC2BoneClothTask(
-        objects,
-        profile=parameters.make_mc2_particle_profile(
-            gravity_direction=(1.0, 0.0, 0.0),
-            stabilization_time_after_reset=0.0,
-        ),
-        connection_mode=0,
-        tail_absorption=False,
-    )
-    assert partitions[0].setup_options.tail_absorption is False
-    requests, _report = mc2_nodes.physicsMC2BoneCollector(partitions)
-
-    for frame in range(1, 4):
-        set_frame(world, frame)
-        returned, ready, status = mc2_nodes.physicsMC2Step(world, list(requests))
-        assert returned is world and ready is True, status
-        slot = world.solver_slots[slot_id(requests[0])]
-        assert (
-            slot.data["collection"].static_inputs[0]
-            .partition.setup_options.tail_absorption
-            is False
-        )
-        fragment = slot.data["owner"].compiled.fragments[0]
-        assert fragment.output_endpoint_child_data.tolist() == [1, 2, 3]
-        world.frame_context.same_frame = True
-        returned, written = physics_nodes.physicsWriteback(world)
-        assert returned is world and written == 3
-finally:
-    world.omni_cache_dispose("MC2 tail absorption disabled regression cleanup")
-    data = armature.data
-    bpy.data.objects.remove(armature, do_unlink=True)
-    if not data.users:
-        bpy.data.armatures.remove(data)
-
-
-print("MC2 Bone terminal/writeback and tail absorption integration: PASS")
+print("MC2 Bone terminal/writeback integration: PASS")

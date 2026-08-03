@@ -12,8 +12,9 @@ import numpy as np
 
 MC2_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PHYSICS_WORLD = os.path.dirname(MC2_ROOT)
-OMNINODE = os.path.dirname(PHYSICS_WORLD)
-FUNCTION = os.path.join(OMNINODE, "Function")
+FUNCTION = os.path.dirname(PHYSICS_WORLD)
+NODETREE = os.path.dirname(FUNCTION)
+OMNINODE = NODETREE
 HOTOOLS = os.path.dirname(OMNINODE)
 
 for package_name, package_path in (
@@ -391,21 +392,6 @@ def test_product_partition_capture_builds_complete_static_contract() -> None:
         0, 1, 2,
         4, 5, 6,
         8, 9, 10,
-    ]
-    assert fragment.output_endpoint_source_elements.tolist() == [
-        1, 2, 3,
-        5, 6, 7,
-        9, 10, 11,
-    ]
-    assert fragment.output_endpoint_child_ranges.tolist() == [
-        [0, 1], [1, 1], [2, 1], [3, 0],
-        [3, 1], [4, 1], [5, 1], [6, 0],
-        [6, 1], [7, 1], [8, 1], [9, 0],
-    ]
-    assert fragment.output_endpoint_child_data.tolist() == [
-        1, 2, 3,
-        5, 6, 7,
-        9, 10, 11,
     ]
     assert {
         table.kind for table in compiled.program.constraint_tables
@@ -797,23 +783,6 @@ def test_bone_product_slots_reuse_owner_and_allow_explicit_collectors() -> None:
     assert len(kernel.disposed) == 2
 
 
-def test_bone_cloth_tail_absorption_is_an_output_setup_option() -> None:
-    enabled = parameters.make_mc2_setup_options("bone_cloth")
-    disabled = parameters.make_mc2_setup_options(
-        "bone_cloth",
-        tail_absorption=False,
-    )
-    mesh = parameters.make_mc2_setup_options(
-        "mesh_cloth",
-        tail_absorption=True,
-    )
-
-    assert enabled.tail_absorption is True
-    assert disabled.tail_absorption is False
-    assert enabled.signature != disabled.signature
-    assert mesh.tail_absorption is False
-
-
 TESTS = (
     (
         "multi-chain product topology and static",
@@ -847,10 +816,6 @@ TESTS = (
     (
         "Bone product slots reuse owner and allow explicit collectors",
         test_bone_product_slots_reuse_owner_and_allow_explicit_collectors,
-    ),
-    (
-        "BoneCloth tail absorption setup option",
-        test_bone_cloth_tail_absorption_is_an_output_setup_option,
     ),
 )
 

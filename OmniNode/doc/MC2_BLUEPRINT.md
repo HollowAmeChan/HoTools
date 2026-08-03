@@ -36,8 +36,6 @@ MC2 BoneSpring 不再是 OmniNode 的长期产品 setup。当前代码中仍存�
 
 MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 
-BoneCloth 的产品语义见 [MC2_BONE_CLOTH_MESH_SEMANTICS.md](MC2_BONE_CLOTH_MESH_SEMANTICS.md)。它是以骨骼为离散粒子的 MeshCloth 超集，不以复刻 MC2 骨链内部实现为目标。
-
 - MeshCloth、BoneCloth、BoneSpring三种setup。
 - 单次公开solver step处理全部显式`MC2ProductRequestV1`，并以一次结果事务发布。
 - 每个显式domain使用由setup与domain signature确定的动态slot；DomainV1一次处理域内全部partition、自碰撞和输出。
@@ -128,7 +126,7 @@ product request
 #### 曲线、深度和参考姿态
 
 - 每个“基础值 + 曲线”输入先相乘，再在归一化区间`0..1`按`i / 15`预采样为16个float32值；没有连接曲线时16项都等于基础值。kernel再按粒子的连续baseline depth插值取值，而不是逐帧求值Blender曲线。
-- MeshCloth 与 BoneCloth 都从最终 proxy 图构造 parent、baseline、tether 根和 depth。BoneCloth 不再读取 Blender 父子树作为模拟基线；父子关系只保留在 source 选取和 PoseBone 写回矩阵反算。两者都沿真实 proxy 边到 Fixed 集合计算多源最短表面距离并归一化，避免同深度粒子因为骨骼层级不同而产生额外偏差。
+- Mesh baseline parent仍从所有Fixed按MC2拓扑层规则扩张：Fixed邻接优先较短边，后续候选parent优先保持与祖父方向连续。源码depth沿parent chain累计真实边长并按task最大root length归一化；OmniMC2再计算沿真实proxy边到Fixed集合的多源最短表面距离并全局归一化，以`4:1`混合`parent depth:Fixed边界距离depth`，最后沿parent顺序做单调保护。该修正只作用于MeshCloth，用于降低非均匀减面导致的横向等深线偏移；BoneCloth/BoneSpring保持链深度。
 - 实际非均匀减面模型已经人工确认该Mesh depth差异能明显抑制横向等高线偏移，并使旋转带动的远端响应更自然。当前`4:1`混合与`1.5`次深度惯性指数因此作为产品默认合同保留；它们暂不暴露socket，避免用户在不了解全部consumer时只针对单一动作过拟合。
 - Depth仍是后续可调设计面，可继续评估混合比例、惯性指数、按root/component归一化、路径代价和显式depth顶点组。任何调整必须同时回归阻尼、半径、Distance/Angle、Motion/Backstop、自碰厚度、Center深度惯性和最终输出，不能把depth当成只控制惯性的独立参数。
 - `阻尼`和`角度恢复刚度`在runtime转换时分别额外乘MC2源码比例`0.2`；其余公开曲线保持输入单位。这个缩放属于源码对齐，不是隐藏的额外迭代次数。
@@ -248,9 +246,9 @@ Teleport判定姿态由task帧适配器按首个Fixed或对象原点统一提供
 | `角度限制`、`限制角度`、`限制角度曲线` | 迭代收紧相邻粒子相对父级传播方向的弯折角 | 与角度恢复共用Angle pass，但目标由父粒子的模拟旋转和StepBasic局部方向逐级传播，不是Restoration target。MC2源码固定投影3次，因此它不是最终几何的硬裁剪；三个setup有效。 |
 | `限制刚度` | 控制超出角度上限后每次投影的修正比例 | Angle kernel只在角度限制启用时消费。刚度1仍保留链式父子共同修正和后续约束造成的有限残差。 |
 
-BoneCloth 横向连接是 final proxy topology 的 producer：所有显式边进入 Distance，横跨骨链的 triangle 另外进入 Bending；三角形不能替代结构边。两者最终并入 `proxy.edges/triangles`，因此 Edge 外碰与 whole-domain self 会注册相应 Edge/Triangle primitive。Point 外碰只消费粒子位置/半径。每个中控骨只在自己的 partition 内生成横向 topology，不与其他 partition 自动生成结构约束。
+BoneCloth横向连接是 final proxy topology 的额外 producer：显式横边进入 Distance，横跨骨链的 triangle 进入 Bending；两者最终并入 `proxy.edges/triangles`，因此 Edge 外碰与 whole-domain self 会注册相应 Edge/Triangle primitive。Point 外碰只消费粒子位置/半径。每个中控骨只在自己的 partition 内生成横向 topology，不与其他 partition 自动生成结构约束。
 
-BoneCloth 输出使用图几何方向写回：每个骨骼的方向由最终 proxy 图中实际子邻接粒子的位置推导，固定子粒子也参与方向计算；末端求解粒子作为骨骼尾点参与模拟但不写回 Blender。`root_rotation` 与 `rotational_interpolation` 不再是 BoneCloth 产品参数，内部 ABI 槽位固定为全量几何跟随；`blend_weight` 仍只负责统一的动画/模拟输出混合。写回只生成一次完整世界位置与旋转，再按 Blender 父级反算 `matrix_basis`。
+Bone输出先执行Line方向写回：`rotational_interpolation`直接调节有子粒子的Move父骨，结果会沿Line输出链传给后代；`root_rotation`只调节Fixed链根；`blend_weight`混合StepBasic与模拟方向。三者只改变最终骨骼旋转，不回写粒子位置或下一帧solver状态。随后参与横向triangle的顶点按最终表面normal/tangent重建proxy rotation并覆盖Line结果。这是MC2的输出顺序。产品保留该语义，节点meta必须明确两个旋转参数只对未被triangle覆盖的Line方向有效，不得在triangle之后追加第二次旋转混合。
 
 #### Motion空间限制
 
