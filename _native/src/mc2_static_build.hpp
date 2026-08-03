@@ -56,6 +56,8 @@ Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
     const std::uint8_t* vertex_attributes,
     const std::int32_t* parent_indices,
     std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
     const std::int32_t* root_indices,
     std::size_t root_count
 );

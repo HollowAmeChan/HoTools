@@ -93,6 +93,7 @@ def _validate_parent_forest(parents: tuple[int, ...]) -> None:
 
 
 def _build_native_transform_baseline(proxy, parents, roots) -> dict:
+    # 深度由最终代理图的无向边和固定粒子生成；父级仅用于骨骼姿态与写回。
     count = len(parents)
     child_ranges = np.empty((count, 2), dtype=np.int32)
     child_data = np.empty(count, dtype=np.int32)
@@ -112,6 +113,7 @@ def _build_native_transform_baseline(proxy, parents, roots) -> dict:
         np.ascontiguousarray(proxy.local_tangents, dtype=np.float64),
         np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
         np.ascontiguousarray(parents, dtype=np.int32),
+        np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),
         np.ascontiguousarray(roots, dtype=np.int32),
         child_ranges,
         child_data,

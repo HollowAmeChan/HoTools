@@ -246,7 +246,8 @@ def _flatten_bone_records(topology: MC2TopologySpec) -> tuple[dict, ...]:
                 "head": tuple(position),
                 "tail": tuple(position),
                 "matrix_local": terminal_matrix,
-                "pin": False,
+                # solver 末端代表最后一根真实骨骼的尾端，继承其固定属性。
+                "pin": bool(records[-1].get("pin", False)) if records else False,
             })
     if len(armatures) != 1:
         raise ValueError("BoneCloth task sources must belong to one Armature")
@@ -398,7 +399,11 @@ def _build_mc2_bone_static(
         pin_flags = np.concatenate(tuple(
             np.concatenate((
                 np.asarray(getattr(snapshot, "pin_flags", ()), dtype=np.bool_),
-                np.zeros(len(snapshot.terminal_names), dtype=np.bool_),
+                np.full(
+                    len(snapshot.terminal_names),
+                    bool(snapshot.pin_flags[-1]) if len(snapshot.pin_flags) else False,
+                    dtype=np.bool_,
+                ),
             ))
             for snapshot in snapshots
         )).astype(np.bool_, copy=False)

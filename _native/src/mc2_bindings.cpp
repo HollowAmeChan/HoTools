@@ -251,6 +251,7 @@ void hotools::bind_mc2(nb::module_& m) {
            cf64_2d local_tangents,
            cu8_1d vertex_attributes,
            ci32_1d parent_indices,
+           ci32_2d edges,
            ci32_1d root_indices,
            i32_2d out_child_ranges,
            i32_1d out_child_data,
@@ -271,6 +272,7 @@ void hotools::bind_mc2(nb::module_& m) {
             check_len(local_normals.shape(0), vertex_count, "local_normals");
             check_len(local_tangents.shape(0), vertex_count, "local_tangents");
             check_len(parent_indices.shape(0), vertex_count, "parent_indices");
+            check_cols(edges, 2, "edges");
             check_cols(out_child_ranges, 2, "out_child_ranges");
             check_len(out_child_ranges.shape(0), vertex_count, "out_child_ranges");
             check_len(out_child_data.shape(0), vertex_count, "out_child_data");
@@ -295,6 +297,8 @@ void hotools::bind_mc2(nb::module_& m) {
                     vertex_attributes.data(),
                     parent_indices.data(),
                     vertex_count,
+                    edges.data(),
+                    edges.shape(0),
                     root_indices.data(),
                     root_indices.shape(0)
                 );
@@ -371,7 +375,8 @@ void hotools::bind_mc2(nb::module_& m) {
             return result;
         },
         nb::arg("positions"), nb::arg("local_normals"), nb::arg("local_tangents"),
-        nb::arg("vertex_attributes"), nb::arg("parent_indices"), nb::arg("root_indices"),
+        nb::arg("vertex_attributes"), nb::arg("parent_indices"), nb::arg("edges"),
+        nb::arg("root_indices"),
         nb::arg("out_child_ranges"), nb::arg("out_child_data"),
         nb::arg("out_baseline_flags"), nb::arg("out_baseline_ranges"),
         nb::arg("out_baseline_data"), nb::arg("out_vertex_attributes"),

@@ -245,7 +245,7 @@ def test_product_task_builds_multi_chain_topology_and_static_bundle() -> None:
     assert built_static.distance.distance_targets
 
 
-def test_product_static_consumes_each_bone_pin_without_pinning_terminal() -> None:
+def test_product_static_inherits_pin_and_depth_from_baseline_graph() -> None:
     armature = _armature()
     armature.data.bones.get("A0").hotools_collision.pin = True
     armature.data.bones.get("A2").hotools_collision.pin = True
@@ -262,8 +262,13 @@ def test_product_static_consumes_each_bone_pin_without_pinning_terminal() -> Non
         built_topology,
         raw_snapshots=snapshots,
     )
-    # A0/A2 are fixed Blender bones; A2's solver terminal is an endpoint, not a Bone.
-    assert [int(value) & 0x03 for value in built_static.bone.proxy.vertex_attributes[:4]] == [1, 2, 1, 2]
+    # A0/A2 are fixed Blender bones; the solver terminal inherits A2's pin.
+    assert [int(value) & 0x03 for value in built_static.bone.proxy.vertex_attributes[:4]] == [1, 2, 1, 1]
+    depths = tuple(float(value) for value in built_static.bone.baseline.depths[:4])
+    assert depths[0] == 0.0
+    assert depths[3] == 0.0
+    assert 0.0 < depths[1] < 1.0
+    assert depths[2] == 0.0
 
 
 def test_bone_restart_handler_clears_previous_writeback_feedback() -> None:

@@ -278,7 +278,7 @@ try:
     )
     np.testing.assert_array_equal(
         panel_slot.data["owner"].compiled.program.particle_attribute_flags & np.uint32(0x03),
-        np.asarray((1, 2, 1, 2, 1, 2, 2, 2), dtype=np.uint32),
+        np.asarray((1, 2, 1, 1, 1, 2, 2, 2), dtype=np.uint32),
     )
 
     cloth_profile = parameters.make_mc2_particle_profile(
