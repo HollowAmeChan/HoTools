@@ -113,6 +113,13 @@ void bind_mesh_xpbd(nb::module_& module) {
         nb::arg("rest_positions").noconvert(),
         nb::arg("inverse_masses").noconvert(),
         nb::arg("collision_radii").noconvert())
+        .def("update_pin_targets", [](
+            mesh_xpbd::Context& context,
+            cf32_2d pin_positions
+        ) {
+            require_float3_rows(pin_positions, "pin_positions");
+            context.update_pin_targets(copy_float_2d(pin_positions));
+        }, nb::arg("pin_positions").noconvert())
         .def("update_parameters", &mesh_xpbd::Context::update_parameters,
             nb::arg("damping"), nb::arg("stretch_compliance"),
             nb::arg("bend_compliance"), nb::arg("iterations"))
@@ -173,6 +180,7 @@ void bind_mesh_xpbd(nb::module_& module) {
             result["reset_count"] = stats.reset_count;
             result["parameter_update_count"] = stats.parameter_update_count;
             result["reference_update_count"] = stats.reference_update_count;
+            result["pin_target_update_count"] = stats.pin_target_update_count;
             result["last_contact_count"] = stats.last_contact_count;
             result["particle_count"] = stats.particle_count;
             result["stretch_constraint_count"] = stats.stretch_constraint_count;

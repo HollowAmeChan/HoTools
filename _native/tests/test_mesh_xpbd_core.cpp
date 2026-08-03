@@ -44,6 +44,14 @@ void test_hard_constraint() {
     require_close(context.positions()[3], 1.0F, "hard distance constraint failed");
 }
 
+void test_moving_pin_target_does_not_change_rest_length() {
+    auto context = make_distance_context(0.0F, 2);
+    context.update_pin_targets({1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F});
+    context.step(1.0F, 1, {0.0F, 0.0F, 0.0F}, 0.0F, {}, 0U);
+    require_close(context.positions()[0], 1.0F, "moving pin target was not applied");
+    require_close(context.positions()[3], 2.0F, "moving pin changed constraint rest length");
+}
+
 void test_sphere_collision() {
     xpbd::Context context(
         {0.5F, 0.0F, 0.0F}, {1.0F}, {}, {}, {0.1F},
@@ -68,8 +76,9 @@ int main() {
     try {
         test_accumulated_lambda();
         test_hard_constraint();
+        test_moving_pin_target_does_not_change_rest_length();
         test_sphere_collision();
-        std::cout << "Mesh XPBD core: 3 passed\n";
+        std::cout << "Mesh XPBD core: 4 passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Mesh XPBD core failure: " << error.what() << '\n';

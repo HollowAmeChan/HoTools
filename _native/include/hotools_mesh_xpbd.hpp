@@ -24,6 +24,7 @@ struct ContextStats {
     std::uint64_t reset_count = 0;
     std::uint64_t parameter_update_count = 0;
     std::uint64_t reference_update_count = 0;
+    std::uint64_t pin_target_update_count = 0;
     std::uint64_t last_contact_count = 0;
     std::size_t particle_count = 0;
     std::size_t stretch_constraint_count = 0;
@@ -61,6 +62,7 @@ public:
         float bend_compliance,
         std::int32_t iterations
     );
+    void update_pin_targets(std::vector<float> pin_positions);
     void reset(const std::vector<float>& positions);
     void step(
         float delta_time,
@@ -105,6 +107,7 @@ private:
 
     bool disposed_ = false;
     std::vector<float> rest_positions_;
+    std::vector<float> pin_positions_;
     std::vector<float> positions_;
     std::vector<float> previous_positions_;
     std::vector<float> inverse_masses_;

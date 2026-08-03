@@ -122,6 +122,12 @@ class MeshXpbdNativeContext:
         )
         self.parameter_signature = spec.parameter_signature
 
+    def update_pin_targets(self, positions) -> None:
+        """只移动 Fixed 粒子目标，不改变 constraint rest。"""
+        self._require_context().update_pin_targets(
+            np.ascontiguousarray(positions, dtype=np.float32)
+        )
+
     def reset(self, reference: MeshXpbdReferenceFrame) -> None:
         self._require_context().reset(
             np.ascontiguousarray(reference.rest_world_positions, dtype=np.float32)

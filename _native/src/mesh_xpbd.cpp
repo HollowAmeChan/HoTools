@@ -117,6 +117,7 @@ Context::Context(
     std::int32_t iterations
 )
     : rest_positions_(std::move(rest_positions)),
+      pin_positions_(rest_positions_),
       positions_(rest_positions_),
       previous_positions_(rest_positions_),
       inverse_masses_(std::move(inverse_masses)),
@@ -215,10 +216,22 @@ void Context::update_reference(
         throw std::invalid_argument("reference update cannot change particle count");
     }
     rest_positions_ = std::move(rest_positions);
+    pin_positions_ = rest_positions_;
     inverse_masses_ = std::move(inverse_masses);
     collision_radii_ = std::move(collision_radii);
     rebuild_constraints();
     ++stats_.reference_update_count;
+}
+
+void Context::update_pin_targets(std::vector<float> pin_positions) {
+    require_live();
+    if (pin_positions.size() != rest_positions_.size()) {
+        throw std::invalid_argument("pin_positions must match particle count");
+    }
+    require_finite_array(pin_positions, "pin_positions");
+    pin_positions_ = std::move(pin_positions);
+    apply_pins();
+    ++stats_.pin_target_update_count;
 }
 
 void Context::update_parameters(
@@ -436,9 +449,9 @@ void Context::apply_pins() {
         if (inverse_masses_[particle] > 0.0F) {
             continue;
         }
-        const auto rest = load3(rest_positions_.data(), particle);
-        store3(positions_, particle, rest);
-        store3(previous_positions_, particle, rest);
+        const auto target = load3(pin_positions_.data(), particle);
+        store3(positions_, particle, target);
+        store3(previous_positions_, particle, target);
     }
 }
 
@@ -572,6 +585,7 @@ void Context::dispose() noexcept {
     }
     disposed_ = true;
     rest_positions_.clear();
+    pin_positions_.clear();
     positions_.clear();
     previous_positions_.clear();
     inverse_masses_.clear();

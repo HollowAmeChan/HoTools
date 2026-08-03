@@ -118,6 +118,33 @@ def test_reference_update_rebuilds_lengths_and_gravity_direction_is_normalized()
     np.testing.assert_allclose(positions[0], (0, 0, -1), atol=1.0e-6)
 
 
+def test_moving_pin_target_preserves_constraint_rest_length_and_counts_updates():
+    context = _context(compliance=0.0, iterations=2)
+
+    context.update_pin_targets(
+        np.asarray(((1, 0, 0), (1, 0, 0)), dtype=F32)
+    )
+    assert context.stats()["pin_target_update_count"] == 1
+    assert context.stats()["reference_update_count"] == 0
+    positions = _step(context)
+    np.testing.assert_allclose(
+        positions,
+        ((1, 0, 0), (2, 0, 0)),
+        atol=1.0e-6,
+    )
+
+    context.update_pin_targets(
+        np.asarray(((2, 0, 0), (2, 0, 0)), dtype=F32)
+    )
+    assert context.stats()["pin_target_update_count"] == 2
+    positions = _step(context)
+    np.testing.assert_allclose(
+        positions,
+        ((2, 0, 0), (3, 0, 0)),
+        atol=1.0e-6,
+    )
+
+
 def _particle_context(position):
     return hotools_native.mesh_xpbd_create_context_v1(
         np.asarray((position,), dtype=F32),
@@ -173,6 +200,7 @@ def test_context_lifecycle_and_strict_array_contract():
         "reset_count": 0,
         "parameter_update_count": 0,
         "reference_update_count": 0,
+        "pin_target_update_count": 0,
         "last_contact_count": 0,
         "particle_count": 2,
         "stretch_constraint_count": 1,
