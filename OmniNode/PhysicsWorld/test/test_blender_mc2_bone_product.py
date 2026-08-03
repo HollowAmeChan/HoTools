@@ -16,7 +16,10 @@ NODETREE = os.path.join(HOTOOLS, "OmniNode")
 FUNCTION = os.path.join(NODETREE, "Function")
 PW_ROOT = os.path.join(NODETREE, "PhysicsWorld")
 PYTHON_ABI = "py313" if sys.version_info >= (3, 13) else "py311"
-NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", PYTHON_ABI, "HotoolsPackage")
+NATIVE_PACKAGE = os.environ.get(
+    "HOTOOLS_NATIVE_TEST_DIR",
+    os.path.join(HOTOOLS, "_Lib", PYTHON_ABI, "HotoolsPackage"),
+)
 
 for module_name in tuple(sys.modules):
     if module_name == "HoTools" or module_name.startswith("HoTools.") or module_name == "hotools_native":

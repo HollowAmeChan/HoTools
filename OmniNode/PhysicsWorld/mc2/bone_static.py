@@ -93,7 +93,7 @@ def _validate_parent_forest(parents: tuple[int, ...]) -> None:
 
 
 def _build_native_transform_baseline(proxy, parents, roots) -> dict:
-    # 深度由最终代理图的无向边和固定粒子生成；父级仅用于骨骼姿态与写回。
+    # 保持经典 Transform baseline；edges 只保留在稳定 ABI 中，不参与 Bone depth。
     count = len(parents)
     child_ranges = np.empty((count, 2), dtype=np.int32)
     child_data = np.empty(count, dtype=np.int32)

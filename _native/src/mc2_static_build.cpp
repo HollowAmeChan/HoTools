@@ -602,22 +602,6 @@ Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
     constexpr std::uint8_t kTriangle = 0x80u;
     constexpr std::uint8_t kIncludeLine = 0x01u;
     std::vector<std::vector<std::int32_t>> children(vertex_count);
-    std::vector<std::vector<std::int32_t>> adjacency(vertex_count);
-    for (std::size_t edge = 0; edge < edge_count; ++edge) {
-        const auto first = edges[edge * 2];
-        const auto second = edges[edge * 2 + 1];
-        if (first < 0 || second < 0 || first == second ||
-            first >= static_cast<std::int32_t>(vertex_count) ||
-            second >= static_cast<std::int32_t>(vertex_count)) {
-            throw std::invalid_argument("bone baseline edges contains an invalid vertex index");
-        }
-        adjacency[static_cast<std::size_t>(first)].push_back(second);
-        adjacency[static_cast<std::size_t>(second)].push_back(first);
-    }
-    for (auto& values : adjacency) {
-        std::sort(values.begin(), values.end());
-        values.erase(std::unique(values.begin(), values.end()), values.end());
-    }
     for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
         const auto parent = parent_indices[vertex];
         if (parent < -1 || parent >= static_cast<std::int32_t>(vertex_count) ||
@@ -630,14 +614,6 @@ Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
     }
     for (auto& values : children) std::reverse(values.begin(), values.end());
 
-    for (std::size_t root_offset = 0; root_offset < root_count; ++root_offset) {
-        const auto root = root_indices[root_offset];
-        if (root < 0 || root >= static_cast<std::int32_t>(vertex_count) ||
-            parent_indices[root] >= 0) {
-            throw std::invalid_argument("root_indices contains an invalid root");
-        }
-    }
-
     Mc2BoneTransformBaselineDerived result;
     result.child_ranges.reserve(vertex_count * 2);
     for (const auto& values : children) {
@@ -645,38 +621,56 @@ Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
         result.child_ranges.push_back(narrow_index(values.size(), "bone children"));
         result.child_data.insert(result.child_data.end(), values.begin(), values.end());
     }
-    for (std::size_t root = 0; root < vertex_count; ++root) {
-        if ((vertex_attributes[root] & kFixed) == 0u) continue;
-        const auto& vertex_children = children[root];
-        const bool has_move_child = std::any_of(
-            vertex_children.begin(), vertex_children.end(),
-            [&](std::int32_t child) {
-                return (vertex_attributes[static_cast<std::size_t>(child)] & kMove) != 0u;
+    for (std::size_t root_offset = 0; root_offset < root_count; ++root_offset) {
+        const auto root = root_indices[root_offset];
+        if (root < 0 || root >= static_cast<std::int32_t>(vertex_count) ||
+            parent_indices[root] >= 0) {
+            throw std::invalid_argument("root_indices contains an invalid root");
+        }
+        std::vector<std::int32_t> root_stack {root};
+        while (!root_stack.empty()) {
+            const auto vertex = root_stack.back();
+            root_stack.pop_back();
+            const auto vertex_index = static_cast<std::size_t>(vertex);
+            if ((vertex_attributes[vertex_index] & kFixed) == 0u) continue;
+            const auto& vertex_children = children[vertex_index];
+            const bool has_move_child = std::any_of(
+                vertex_children.begin(), vertex_children.end(),
+                [&](std::int32_t child) {
+                    return (vertex_attributes[static_cast<std::size_t>(child)] & kMove) != 0u;
+                }
+            );
+            if (!has_move_child) {
+                for (const auto child : vertex_children) {
+                    if ((vertex_attributes[static_cast<std::size_t>(child)] & kFixed) != 0u) {
+                        root_stack.push_back(child);
+                    }
+                }
+                continue;
             }
-        );
-        if (!has_move_child) continue;
-        const auto start = result.baseline_data.size();
-        std::uint8_t line_flag = 0u;
-        std::vector<std::int32_t> stack {static_cast<std::int32_t>(root)};
-        while (!stack.empty()) {
-            const auto current = stack.back();
-            stack.pop_back();
-            const auto current_index = static_cast<std::size_t>(current);
-            result.baseline_data.push_back(current);
-            if ((vertex_attributes[current_index] & kTriangle) == 0u) {
-                line_flag |= kIncludeLine;
-            }
-            for (const auto child : children[current_index]) {
-                if ((vertex_attributes[static_cast<std::size_t>(child)] & kMove) != 0u) {
-                    stack.push_back(child);
+            const auto start = result.baseline_data.size();
+            std::uint8_t line_flag = 0u;
+            std::vector<std::int32_t> stack {vertex};
+            while (!stack.empty()) {
+                const auto current = stack.back();
+                stack.pop_back();
+                const auto current_index = static_cast<std::size_t>(current);
+                result.baseline_data.push_back(current);
+                if ((vertex_attributes[current_index] & kTriangle) == 0u) {
+                    line_flag |= kIncludeLine;
+                }
+                for (const auto child : children[current_index]) {
+                    if ((vertex_attributes[static_cast<std::size_t>(child)] & kMove) != 0u) {
+                        stack.push_back(child);
+                    }
                 }
             }
+            result.baseline_flags.push_back(line_flag);
+            result.baseline_ranges.push_back(narrow_index(start, "bone baseline"));
+            result.baseline_ranges.push_back(
+                narrow_index(result.baseline_data.size() - start, "bone baseline")
+            );
         }
-        result.baseline_flags.push_back(line_flag);
-        result.baseline_ranges.push_back(narrow_index(start, "bone baseline"));
-        result.baseline_ranges.push_back(
-            narrow_index(result.baseline_data.size() - start, "bone baseline")
-        );
     }
     auto pose_depth = mc2_build_baseline_pose_depth_derived(
         positions,
@@ -693,56 +687,6 @@ Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
     result.depths = std::move(pose_depth.depths);
     result.vertex_local_positions = std::move(pose_depth.vertex_local_positions);
     result.vertex_local_rotations = std::move(pose_depth.vertex_local_rotations);
-
-    // 深度沿最终基线图的无向边传播，使平行链和双端固定链共享距离场。
-    constexpr double kDepthEpsilon = 1.0e-8;
-    const double infinity = std::numeric_limits<double>::infinity();
-    std::vector<double> fixed_distances(vertex_count, infinity);
-    using DistanceEntry = std::pair<double, std::int32_t>;
-    std::priority_queue<
-        DistanceEntry,
-        std::vector<DistanceEntry>,
-        std::greater<DistanceEntry>
-    > pending;
-    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
-        if ((result.vertex_attributes[vertex] & kFixed) == 0u) continue;
-        fixed_distances[vertex] = 0.0;
-        pending.emplace(0.0, static_cast<std::int32_t>(vertex));
-    }
-    while (!pending.empty()) {
-        const auto [distance, vertex_value] = pending.top();
-        pending.pop();
-        const auto vertex = static_cast<std::size_t>(vertex_value);
-        if (distance != fixed_distances[vertex]) continue;
-        for (const auto target_value : adjacency[vertex]) {
-            const auto target = static_cast<std::size_t>(target_value);
-            const auto candidate = distance + length(
-                subtract(load_vec3(positions, vertex), load_vec3(positions, target))
-            );
-            if (candidate >= fixed_distances[target]) continue;
-            fixed_distances[target] = candidate;
-            pending.emplace(candidate, target_value);
-        }
-    }
-    double max_fixed_distance = 0.0;
-    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
-        if ((result.vertex_attributes[vertex] & kMove) == 0u) continue;
-        if (std::isfinite(fixed_distances[vertex])) {
-            max_fixed_distance = std::max(max_fixed_distance, fixed_distances[vertex]);
-        }
-    }
-    result.depths.assign(vertex_count, 0.0);
-    if (max_fixed_distance > kDepthEpsilon) {
-        for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
-            if ((result.vertex_attributes[vertex] & kMove) == 0u ||
-                !std::isfinite(fixed_distances[vertex])) {
-                continue;
-            }
-            result.depths[vertex] = std::clamp(
-                fixed_distances[vertex] / max_fixed_distance, 0.0, 1.0
-            );
-        }
-    }
 
     return result;
 }

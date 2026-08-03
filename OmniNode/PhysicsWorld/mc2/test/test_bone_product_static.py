@@ -12,9 +12,8 @@ import numpy as np
 
 MC2_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PHYSICS_WORLD = os.path.dirname(MC2_ROOT)
-FUNCTION = os.path.dirname(PHYSICS_WORLD)
-NODETREE = os.path.dirname(FUNCTION)
-OMNINODE = NODETREE
+OMNINODE = os.path.dirname(PHYSICS_WORLD)
+FUNCTION = os.path.join(OMNINODE, "Function")
 HOTOOLS = os.path.dirname(OMNINODE)
 
 for package_name, package_path in (
@@ -245,7 +244,7 @@ def test_product_task_builds_multi_chain_topology_and_static_bundle() -> None:
     assert built_static.distance.distance_targets
 
 
-def test_product_static_inherits_pin_and_depth_from_baseline_graph() -> None:
+def test_product_static_preserves_terminal_pin_with_classic_baseline() -> None:
     armature = _armature()
     armature.data.bones.get("A0").hotools_collision.pin = True
     armature.data.bones.get("A2").hotools_collision.pin = True
@@ -262,13 +261,18 @@ def test_product_static_inherits_pin_and_depth_from_baseline_graph() -> None:
         built_topology,
         raw_snapshots=snapshots,
     )
-    # A0/A2 are fixed Blender bones; the solver terminal inherits A2's pin.
-    assert [int(value) & 0x03 for value in built_static.bone.proxy.vertex_attributes[:4]] == [1, 2, 1, 1]
-    depths = tuple(float(value) for value in built_static.bone.baseline.depths[:4])
-    assert depths[0] == 0.0
-    assert depths[3] == 0.0
-    assert 0.0 < depths[1] < 1.0
-    assert depths[2] == 0.0
+    # Pin 仍进入真实骨和末端粒子，但 depth/root 继续来自经典父链。
+    assert [
+        int(value) & 0x03
+        for value in built_static.bone.proxy.vertex_attributes[:4]
+    ] == [1, 2, 1, 1]
+    baseline = built_static.bone.baseline
+    assert baseline.parent_indices[:4] == (-1, 0, 1, 2)
+    assert baseline.root_indices[:4] == (-1, 0, -1, -1)
+    assert baseline.depths[0] == 0.0
+    assert 0.0 < baseline.depths[1] <= 1.0
+    assert baseline.depths[2] == 0.0
+    assert baseline.depths[3] == 0.0
 
 
 def test_bone_restart_handler_clears_previous_writeback_feedback() -> None:

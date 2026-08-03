@@ -1,6 +1,6 @@
 # BoneCloth 双端点与双边界链规划
 
-> 状态：调研与设计规划
+> 状态：路线已冻结；MC2 回退完成，Bone XPBD 尚未实现
 >
 > 目标：明确每根骨骼的端点语义，解释双端 fixed 链中段塌软的来源，并确定 MC2、Mesh XPBD 与未来杆链解算路径的边界。
 
@@ -8,7 +8,7 @@
 
 ### 最新路线决策
 
-双端 fixed 骨链不再作为 MC2 BoneCloth 的内部改造目标。MC2 保留当前面向 MeshCloth 和拓扑深度的语义；双端点、双边界和杆链约束放入新的 `bone_xpbd` 领域。这样不会为了一个特殊拓扑破坏 MC2 的主路径，也能让 XPBD 的合规性、累计 lambda 和迭代结构服务于更多软体对象。
+双端 fixed 骨链不再作为 MC2 BoneCloth 的内部改造目标。MC2 已恢复并冻结经典 Transform baseline、单 root/depth、Line 姿态输出和 Connected rotation-only 兼容语义；双端点、双边界和杆链约束放入新的 `bone_xpbd` 领域。这样不会为了一个特殊拓扑破坏 MC2 的主路径，也能让 XPBD 的合规性、累计 lambda 和迭代结构服务于更多软体对象。
 
 `bone_xpbd` 不是临时旁路，而是 PhysicsWorld 下的正式 solver domain：
 
@@ -19,6 +19,8 @@
 - Node 注册、静态编译、帧输入、运行缓存、结果写回和运行中 debug node 与 MC2 保持同一层级的契约。
 
 骨骼的 tail 吸附是 `bone_xpbd` 的输入开关：默认开启，表示骨骼 tail 参与端点姿态吸附；关闭时仍保留 tail 粒子和拓扑，只是不把 tail 的模拟姿态强制吸附回 Blender 骨骼，从而允许用户处理头尾不连续或需要独立尾端的骨链。
+
+MC2 BoneCloth 不提供该开关，也不为双端链增加特殊 depth、tether、写回或端点模式。继续保留的独立修复只有：真实 Bone Pin 进入 Fixed、末骨 Pin 传给 solver 终端粒子，以及回帧/重启时清除旧写回反馈。
 
 当前问题不是单一参数没有调好，而是三个结构同时叠加：
 
@@ -53,11 +55,11 @@
 
 这个共享设计对于严格共点的连续链是节省粒子的，但它隐含了一个危险假设：下一根骨骼的头部就是上一根骨骼真实的尾部。对 `use_connect=False` 的骨骼、非共点骨骼、分支图和未来横向连接，这个假设不能继续作为隐式规则。
 
-### 2.2 当前写回仍必须以端点对为最终几何来源
+### 2.2 当前写回保持经典兼容语义
 
-写回骨骼时，骨骼的世界头部和世界尾部应该直接来自对应模拟端点。Blender 的父子层级只用于把世界姿态反算为 `PoseBone.matrix_basis`，不应再次决定模拟线段的长度、方向或尾端位置。
+MC2 BoneCloth 继续使用 Line baseline 的 child 图和 `rotational_interpolation/root_rotation` 派生姿态。`use_connect=False` 的骨写回位置与旋转；`use_connect=True` 的骨受 Blender 固定骨长和父尾子头关系约束，只写回旋转。该模式不能保证每根骨骼的 head/tail 都精确贴合两个独立模拟端点，这是冻结的兼容限制，不再在 MC2 内修补。
 
-这也解释了过去出现的“尾端突出”“末端上一根骨骼没有旋转吸附”等现象：只要写回过程中重新依赖父链，就会把模拟端点几何重新折叠回 Blender 的层级语义。
+需要以两个最终世界粒子严格反算每根骨骼平移、轴向与 roll 的对象，必须使用 `bone_xpbd` 的显式 `BoneSegment(head_particle, tail_particle)` 输出契约。
 
 ### 2.3 MC2 的深度是结构数据，不只是 UI 曲线
 
@@ -69,7 +71,7 @@
 - integration、inertia、mass、damping、wind 等阶段会读取 depth。
 - distance、angle、bending 的逆质量和摩擦权重也会读取 depth 或其偏移量。
 
-本项目的 native 构造虽然已经改为从最终 proxy 图生成 baseline，并用固定边界的图距离修正 depth，但当前仍保留单 parent、单 root 的运行时结构；并且 parent depth 权重仍然高于固定边界距离。它比原生 Transform baseline 更接近 MeshCloth，但还不是双边界模型。
+本项目的 BoneCloth native 构造保持经典 Transform baseline：parent/root/depth 来自输入骨链父级，proxy edges 在稳定 ABI 中保留，但不参与 BoneCloth depth。终端 fixed 只固定该终端粒子，不会把整条链改写成双固定边界距离场。
 
 ### 2.4 当前求解迭代对长双端链不够强
 
@@ -197,9 +199,9 @@ S0 是分界测试：如果 S0 中段仍然明显偏离 rest pose，优先修几
 
 至少需要三组对照：
 
-- 当前共享端点的 BoneCloth。
-- 显式端点映射但仍使用 MC2 单 root 的 BoneCloth。
-- 相同粒子、边和 fixed 边界的 MeshCloth/未来 XPBD 试验图。
+- 冻结的经典 MC2 BoneCloth，只作为限制基线。
+- 共享端点或 weld 的 `bone_xpbd` 方案。
+- 独立 2N 端点的 `bone_xpbd` 方案，以及相同粒子/边/fixed 边界的 Mesh XPBD 对照。
 
 只有当三组对照的残差、耗时和中段偏移都有记录后，才能判断问题主要来自端点模型、MC2 depth，还是 solver 收敛。
 
@@ -208,6 +210,7 @@ S0 是分界测试：如果 S0 中段仍然明显偏离 rest pose，优先修几
 ### 阶段 A：固定 MC2 边界，建立迁移诊断
 
 - 保持 MC2 的现有 `N 个骨骼头 + 终端粒子` 和单 root 语义，不在 MC2 内引入 2N 端点。
+- 不再修改 MC2 的 baseline、depth、tether、Line 姿态、Connected 写回或公开参数；MC2 只接受回归修复，不接受双端特化。
 - 增加一份只读诊断，记录双端链在 MC2 中的残差和限制，用作 `bone_xpbd` 的对照基线。
 - 固化 S0-S5 的自动测试和一份最小 Blender 工程。
 - 记录当前版本基线，包括帧耗时和各约束修正量。
