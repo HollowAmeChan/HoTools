@@ -348,6 +348,33 @@ def _read_pixels(image, pixel_count):
     return pixels
 
 
+def _prepare_image_preview(image, max_size=96):
+    source_width, source_height = image.size
+    scale = min(1.0, max_size / max(source_width, source_height))
+    preview_width = max(1, round(source_width * scale))
+    preview_height = max(1, round(source_height * scale))
+    source_pixels = image.pixels
+    preview_pixels = []
+
+    for preview_y in range(preview_height):
+        source_y = min(
+            source_height - 1,
+            int((preview_y + 0.5) * source_height / preview_height),
+        )
+        for preview_x in range(preview_width):
+            source_x = min(
+                source_width - 1,
+                int((preview_x + 0.5) * source_width / preview_width),
+            )
+            source_index = (source_y * source_width + source_x) * 4
+            preview_pixels.extend(source_pixels[source_index:source_index + 4])
+
+    preview = image.preview_ensure()
+    preview.image_size = (preview_width, preview_height)
+    preview.image_pixels_float[:] = preview_pixels
+    return preview
+
+
 def _save_atlas(path, name, width, height, pixels, colorspace):
     generated = bpy.data.images.new(
         name=f'{name}_Generating',
@@ -460,6 +487,8 @@ class HO_PG_texture_atlas_image(PropertyGroup):
     colorspace: StringProperty()
     source_info: StringProperty()
     material_name: StringProperty()
+    cell_index: IntProperty()
+    preview_ready: BoolProperty(options={'HIDDEN'})
 
 
 class HO_PG_texture_atlas_object(PropertyGroup):
@@ -517,6 +546,16 @@ class HO_UL_texture_atlas_objects(UIList):
         row.label(text=f'{item.material_count} 材质', icon='MATERIAL')
 
 
+def _update_base_preview(self, context):
+    if self.show_base_preview:
+        self._prepare_atlas_previews('主色')
+
+
+def _update_normal_preview(self, context):
+    if self.show_normal_preview:
+        self._prepare_atlas_previews('法线')
+
+
 def _image_source_info(image):
     if image.packed_file:
         return '已打包到 Blend'
@@ -541,6 +580,19 @@ class HO_OT_pack_texture_atlas(Operator):
     expected_base_path: StringProperty(options={'HIDDEN'})
     expected_normal_path: StringProperty(options={'HIDDEN'})
     expected_has_normal: BoolProperty(options={'HIDDEN'})
+    expected_grid_size: IntProperty(options={'HIDDEN'})
+    show_base_preview: BoolProperty(
+        name='主色图集预览',
+        default=False,
+        options={'SKIP_SAVE'},
+        update=_update_base_preview,
+    )
+    show_normal_preview: BoolProperty(
+        name='法线图集预览',
+        default=False,
+        options={'SKIP_SAVE'},
+        update=_update_normal_preview,
+    )
 
     @classmethod
     def poll(cls, context):
@@ -565,6 +617,8 @@ class HO_OT_pack_texture_atlas(Operator):
                 item.colorspace = image.colorspace_settings.name
                 item.source_info = _image_source_info(image)
                 item.material_name = material_info.material.name
+                item.cell_index = material_info.cell_index
+                item.preview_ready = False
 
         self.scan_objects.clear()
         for obj in scan.objects:
@@ -586,11 +640,70 @@ class HO_OT_pack_texture_atlas(Operator):
         self.expected_base_path = scan.base_path
         self.expected_normal_path = scan.normal_path
         self.expected_has_normal = scan.has_normal
+        self.expected_grid_size = scan.grid_size
+
+    def _prepare_atlas_previews(self, role):
+        for item in self.scan_images:
+            if item.role != role or item.preview_ready:
+                continue
+            image = bpy.data.images.get(item.image_name)
+            if image is None:
+                continue
+            _prepare_image_preview(image)
+            item.preview_ready = True
+
+    def _draw_atlas_preview(self, layout, role, expanded_property):
+        expanded = getattr(self, expanded_property)
+        header = layout.row(align=True)
+        header.prop(
+            self,
+            expanded_property,
+            text=f'{role}图集预览',
+            icon='TRIA_DOWN' if expanded else 'TRIA_RIGHT',
+            emboss=False,
+        )
+        if not expanded:
+            return
+
+        grid_size = max(1, self.expected_grid_size)
+        cells = [None] * (grid_size * grid_size)
+        for item in self.scan_images:
+            if item.role == role and 0 <= item.cell_index < len(cells):
+                cells[item.cell_index] = item
+
+        grid = layout.box().grid_flow(
+            row_major=True,
+            columns=grid_size,
+            even_columns=True,
+            even_rows=True,
+            align=True,
+        )
+        for cell_index, item in enumerate(cells):
+            cell = grid.column(align=True)
+            image = bpy.data.images.get(item.image_name) if item else None
+            if image is not None:
+                tile = cell.box()
+                tile.template_icon(
+                    icon_value=tile.icon(image),
+                    scale=5.0,
+                )
+            else:
+                tile = cell.box()
+                tile.template_icon(icon_value=0, scale=5.0)
+            cell.label(
+                text=(
+                    f'{cell_index + 1}'
+                    if image is not None else f'{cell_index + 1}  空'
+                ),
+                icon='IMAGE_DATA' if image is not None else 'BLANK1',
+            )
 
     def invoke(self, context, event):
         try:
             scan = _scan_context(context)
             self._populate_scan_items(scan)
+            self.show_base_preview = False
+            self.show_normal_preview = False
         except (OSError, RuntimeError, ValueError) as error:
             self.report({'ERROR'}, str(error))
             return {'CANCELLED'}
@@ -635,6 +748,19 @@ class HO_OT_pack_texture_atlas(Operator):
             'scan_image_index',
             rows=min(8, max(2, len(self.scan_images))),
         )
+        preview_column = texture_box.column(align=True)
+        preview_column.separator()
+        self._draw_atlas_preview(
+            preview_column,
+            '主色',
+            'show_base_preview',
+        )
+        if self.expected_has_normal:
+            self._draw_atlas_preview(
+                preview_column,
+                '法线',
+                'show_normal_preview',
+            )
 
         output_box = layout.box()
         output_box.label(text='预计输出', icon='FILE_TICK')
