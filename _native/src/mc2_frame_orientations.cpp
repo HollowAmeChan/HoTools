@@ -502,6 +502,7 @@ bool derive_bone_line_output(
     const float* normal_adjustment_rotations,
     const float* vertex_to_transform_rotations,
     std::size_t vertex_count,
+    bool mesh_semantics,
     float rotational_interpolation,
     float root_rotation,
     float animation_pose_ratio,
@@ -590,7 +591,7 @@ bool derive_bone_line_output(
                         ? Vec3 {}
                         : rotate_vector(rotation, child_local_position);
                     original_sum = add(original_sum, original_vector);
-                    if ((child_attribute & 0x02u) != 0u) {
+                    if (mesh_semantics || (child_attribute & 0x02u) != 0u) {
                         const Vec3 current_vector = sub(
                             load_vector3(positions, child),
                             position
@@ -617,7 +618,9 @@ bool derive_bone_line_output(
                         current_sum = add(current_sum, original_vector);
                     }
                 }
-                const float ratio = (attribute & 0x02u) != 0u
+                const float ratio = mesh_semantics
+                    ? 1.0f
+                    : (attribute & 0x02u) != 0u
                     ? rotational_interpolation
                     : root_rotation;
                 const auto adjustment =
@@ -879,7 +882,7 @@ PyObject* mc2_bone_frame_orientations_v1(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* mc2_bone_line_output_v1(PyObject*, PyObject* args) {
+PyObject* mc2_bone_output_impl(PyObject* args, bool mesh_semantics) {
     using namespace py;
     constexpr Py_ssize_t kArgumentCount = 18;
     if (PyTuple_GET_SIZE(args) != kArgumentCount) {
@@ -1043,6 +1046,7 @@ PyObject* mc2_bone_line_output_v1(PyObject*, PyObject* args) {
             static_cast<const float*>(normal_adjustments.view.buf),
             static_cast<const float*>(vertex_to_transform.view.buf),
             static_cast<std::size_t>(vertex_count),
+            mesh_semantics,
             parameter_values[0],
             parameter_values[1],
             parameter_values[2],
@@ -1052,6 +1056,14 @@ PyObject* mc2_bone_line_output_v1(PyObject*, PyObject* args) {
         return nullptr;
     }
     Py_RETURN_NONE;
+}
+
+PyObject* mc2_bone_line_output_v1(PyObject*, PyObject* args) {
+    return mc2_bone_output_impl(args, false);
+}
+
+PyObject* mc2_bone_mesh_output_v1(PyObject*, PyObject* args) {
+    return mc2_bone_output_impl(args, true);
 }
 
 }  // namespace hotools

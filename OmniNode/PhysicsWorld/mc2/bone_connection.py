@@ -462,6 +462,8 @@ def build_hotools_bone_connection(
                     if angle < 120.0:
                         triangles.add(_triangle(vertex, left, right))
 
+    # 三角形是面约束的补充，不能替代结构边；MeshCloth 的图基线同样消费完整边集。
+    final_lines = tuple(sorted(edges))
     payload = {
         "schema_version": 1,
         "connection_model": "hotools_product",
@@ -471,7 +473,7 @@ def build_hotools_bone_connection(
         "source_vertex_order": flattened,
         "root_indices": vertex_roots,
         "levels": levels,
-        "lines": tuple(sorted(edges)),
+        "lines": final_lines,
         "triangles": tuple(sorted(triangles)),
     }
     return MC2BoneConnectionSpec(
@@ -481,7 +483,7 @@ def build_hotools_bone_connection(
         source_vertex_order=flattened,
         root_indices=tuple(vertex_roots),
         levels=tuple(levels),
-        lines=payload["lines"],
+        lines=final_lines,
         triangles=payload["triangles"],
         topology_signature=_signature(payload),
         connection_model="hotools_product",

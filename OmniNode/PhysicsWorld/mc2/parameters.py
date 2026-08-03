@@ -600,13 +600,22 @@ def make_mc2_setup_options(
         # Unity MeshCloth 不消费该字段；BoneSpring 强制 Line。
         connection_mode = 0
         connection_model = "mc2_source"
+    # BoneCloth 的姿态来自最终 proxy 图，不再有根骨/父骨旋转插值参数。
+    # 字段仍留在内部 ABI 中供 BoneSpring 使用，BoneCloth 固定为全量几何跟随。
+    bone_cloth_rotation = setup_type == MC2_SETUP_BONE_CLOTH
     return MC2SetupOptionsSpec(
         setup_type=setup_type,
         connection_mode=connection_mode,
         connection_model=connection_model,
         self_collision_radius_model=self_collision_radius_model,
-        rotational_interpolation=_clamp(rotational_interpolation, "rotational_interpolation", 0.0, 1.0),
-        root_rotation=_clamp(root_rotation, "root_rotation", 0.0, 1.0),
+        rotational_interpolation=(
+            1.0 if bone_cloth_rotation else
+            _clamp(rotational_interpolation, "rotational_interpolation", 0.0, 1.0)
+        ),
+        root_rotation=(
+            1.0 if bone_cloth_rotation else
+            _clamp(root_rotation, "root_rotation", 0.0, 1.0)
+        ),
         collided_by_groups=max(0, min(0xFFFF, int(collided_by_groups))),
     )
 

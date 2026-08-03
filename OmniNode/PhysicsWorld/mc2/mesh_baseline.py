@@ -120,6 +120,37 @@ def _build_native_baseline(proxy: MC2ProxyStaticSpec) -> dict:
     }
 
 
+def build_mc2_graph_baseline(
+    proxy: MC2ProxyStaticSpec,
+) -> tuple[MC2ProxyStaticSpec, MC2BaselineStaticSpec]:
+    """从最终 proxy 图构造 MeshCloth 风格的基线。
+
+    这个辅助入口有意不限制 setup_type。BoneCloth 也把骨骼粒子当作
+    离散 mesh 顶点使用，因此它必须共享同一套图父级、tether 根和深度
+    推导，而不能再次读取 Blender 的骨骼父子树。
+    """
+
+    if not isinstance(proxy, MC2ProxyStaticSpec):
+        raise TypeError("proxy must be an MC2ProxyStaticSpec")
+    derived = _build_native_baseline(proxy)
+    final_proxy = replace_mc2_proxy_attributes(proxy, derived["attributes"])
+    baseline = make_mc2_baseline_static_spec(
+        proxy_signature=final_proxy.proxy_signature,
+        vertex_count=final_proxy.vertex_count,
+        parent_indices=derived["parents"],
+        child_ranges=derived["child_ranges"],
+        child_data=derived["child_data"],
+        baseline_flags=derived["baseline_flags"],
+        baseline_ranges=derived["baseline_ranges"],
+        baseline_data=derived["baseline_data"],
+        root_indices=derived["roots"],
+        depths=derived["depths"],
+        vertex_local_positions=derived["local_positions"],
+        vertex_local_rotations=derived["local_rotations"],
+    )
+    return final_proxy, baseline
+
+
 def _build_native_baseline_pose_depth(
     proxy: MC2ProxyStaticSpec,
     parents: tuple[int, ...],
@@ -166,22 +197,7 @@ def build_mc2_mesh_baseline(
     if proxy.setup_type != "mesh_cloth":
         raise ValueError("Mesh baseline builder only accepts mesh_cloth")
 
-    derived = _build_native_baseline(proxy)
-    final_proxy = replace_mc2_proxy_attributes(proxy, derived["attributes"])
-    baseline = make_mc2_baseline_static_spec(
-        proxy_signature=final_proxy.proxy_signature,
-        vertex_count=final_proxy.vertex_count,
-        parent_indices=derived["parents"],
-        child_ranges=derived["child_ranges"],
-        child_data=derived["child_data"],
-        baseline_flags=derived["baseline_flags"],
-        baseline_ranges=derived["baseline_ranges"],
-        baseline_data=derived["baseline_data"],
-        root_indices=derived["roots"],
-        depths=derived["depths"],
-        vertex_local_positions=derived["local_positions"],
-        vertex_local_rotations=derived["local_rotations"],
-    )
+    final_proxy, baseline = build_mc2_graph_baseline(proxy)
     return MC2MeshBaselineBuildResult(final_proxy=final_proxy, baseline=baseline)
 
 
@@ -192,6 +208,7 @@ __all__ = [
     "MC2_VERTEX_TRIANGLE",
     "MC2_VERTEX_ZERO_DISTANCE",
     "MC2MeshBaselineBuildResult",
+    "build_mc2_graph_baseline",
     "build_mc2_mesh_baseline",
     "replace_mc2_proxy_attributes",
 ]

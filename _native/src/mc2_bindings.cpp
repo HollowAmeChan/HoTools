@@ -150,6 +150,8 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_bone_frame_orientations_v1, a); });
     m.def("mc2_bone_line_output_v1",
         [](nb::args a) { call_pyobject_api(hotools::mc2_bone_line_output_v1, a); });
+    m.def("mc2_bone_mesh_output_v1",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_bone_mesh_output_v1, a); });
     m.def("mc2_mesh_static_fingerprint_v1",
         [](nb::args a) { return steal_or_throw(hotools::mc2_mesh_static_fingerprint_v1(nullptr, a.ptr())); });
     m.def("mc2_bone_static_fingerprint_v1",

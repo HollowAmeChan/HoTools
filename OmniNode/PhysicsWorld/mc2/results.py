@@ -37,7 +37,7 @@ def _mc2_bone_writeback_basis(
     return basis
 
 
-def _mc2_bone_line_output_rotations(
+def _mc2_bone_mesh_output_rotations(
     *,
     compiled,
     frame_packet,
@@ -66,18 +66,13 @@ def _mc2_bone_line_output_rotations(
             "Bone compiled output map is missing a solver particle"
         ) from exc
     if len(logical_indices) != fragment.final_proxy.vertex_count:
-        raise ValueError("Bone Line output particle mapping is incomplete")
+        raise ValueError("BoneCloth mesh output particle mapping is incomplete")
 
     parameter_table = compiled.parameters.partition_parameters
     field_indices = {
         name: index for index, name in enumerate(parameter_table.fields)
     }
-    parameter_names = (
-        "rotational_interpolation",
-        "root_rotation",
-        "animation_pose_ratio",
-        "blend_weight",
-    )
+    parameter_names = ("animation_pose_ratio", "blend_weight")
     try:
         rotation_parameters = np.ascontiguousarray(
             tuple(
@@ -88,14 +83,14 @@ def _mc2_bone_line_output_rotations(
         )
     except KeyError as exc:
         raise ValueError(
-            f"Bone Line output is missing runtime parameter {exc.args[0]!r}"
+            f"BoneCloth mesh output is missing runtime parameter {exc.args[0]!r}"
         ) from exc
 
     proxy = pack_mc2_proxy_static(fragment.final_proxy)
     finalizer = pack_mc2_proxy_finalizer_static(fragment.finalizer)
     baseline = pack_mc2_baseline_static(fragment.static.baseline)
     # baseline 只为 baseline_data 中的粒子生成旋转；其它合法粒子使用
-    # 零四元数表示“无 baseline”。native Bone Line 输入仍要求整块数组
+    # 零四元数表示“无 baseline”。native BoneCloth mesh 输入仍要求整块数组
     # 都是单位四元数，因此这里只在上传边界将占位行规范为恒等旋转。
     baseline_rotations = np.ascontiguousarray(
         baseline["vertex_local_rotations"],
@@ -113,7 +108,10 @@ def _mc2_bone_line_output_rotations(
         dtype=np.float32,
     )
     rotations = np.empty((len(logical_indices), 4), dtype=np.float32)
-    native_module().mc2_bone_line_output_v1(
+    # BoneCloth 是离散 mesh：姿态只根据最终 proxy 图的实际粒子位置
+    # 派生，固定点也参与几何方向。旧的 root_rotation/rotational_interpolation
+    # 只保留在内部 ABI 中，不再参与 BoneCloth 写回。
+    native_module().mc2_bone_mesh_output_v1(
         proxy["vertex_attributes"],
         np.ascontiguousarray(
             output.world_positions[logical_indices], dtype=np.float32
@@ -141,7 +139,10 @@ def _mc2_bone_line_output_rotations(
             dtype=np.float32,
         ),
         fragment.vertex_to_transform_rotations,
-        rotation_parameters,
+        np.ascontiguousarray(
+            (1.0, 1.0, rotation_parameters[0], rotation_parameters[1]),
+            dtype=np.float32,
+        ),
         rotations,
     )
     if not np.isfinite(rotations).all() or not np.allclose(
@@ -150,7 +151,7 @@ def _mc2_bone_line_output_rotations(
         rtol=1.0e-5,
         atol=1.0e-6,
     ):
-        raise ValueError("native Bone Line output returned invalid rotations")
+        raise ValueError("native BoneCloth mesh output returned invalid rotations")
     rotations.flags.writeable = False
     return rotations
 
@@ -458,7 +459,7 @@ def make_mc2_bone_domain_results(
         identities = tuple(fragment.output_bone_identities)
         if len(logical_indices) != len(identities):
             raise ValueError("Bone writeback identities do not match output particles")
-        bone_output_rotations = _mc2_bone_line_output_rotations(
+        bone_output_rotations = _mc2_bone_mesh_output_rotations(
             compiled=compiled,
             frame_packet=frame_packet,
             output=output,

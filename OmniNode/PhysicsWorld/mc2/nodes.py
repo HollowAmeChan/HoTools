@@ -849,7 +849,7 @@ def physicsMC2BoneCollector(
     _INPUT_NAME=[
         "BoneCloth对象", "粒子配置", "Anchor",
         *(_TASK_PARAMETER_LABELS[name] for name in _TASK_CLOTH_PARAMETER_FIELDS),
-        "连接模式", "旋转插值", "根旋转",
+        "连接模式",
     ],
     input_init={
         "bone_objects": {
@@ -865,16 +865,6 @@ def physicsMC2BoneCollector(
             "min_value": 0,
             "max_value": 2,
             "description": "横连：0 Line / 1 Seq / 2 SeqLoop",
-        },
-        "rotational_interpolation": {
-            "min_value": 0.0,
-            "max_value": 1.0,
-            "description": "Move父骨方向比例\nTriangle会覆盖",
-        },
-        "root_rotation": {
-            "min_value": 0.0,
-            "max_value": 1.0,
-            "description": "Fixed根骨方向比例\nTriangle会覆盖",
         },
     },
     omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
@@ -904,8 +894,6 @@ def physicsMC2BoneClothTask(
     teleport_distance: float = 0.5,
     teleport_rotation: float = 90.0,
     connection_mode: int = 1,
-    rotational_interpolation: float = 1.0,
-    root_rotation: float = 1.0,
 ) -> tuple[list[typing.Any], str]:
     task_parameters = _make_task_parameters(locals())
     setup_options = make_mc2_setup_options(
@@ -913,8 +901,6 @@ def physicsMC2BoneClothTask(
         connection_mode=connection_mode,
         connection_model="hotools_product",
         self_collision_radius_model="derived_radius",
-        rotational_interpolation=rotational_interpolation,
-        root_rotation=root_rotation,
     )
     partitions = make_mc2_bone_cloth_domain_partitions(
         bone_objects,
