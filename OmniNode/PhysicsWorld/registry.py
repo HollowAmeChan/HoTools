@@ -14,7 +14,13 @@ from copy import deepcopy
 from typing import Callable
 
 
-_BUILTIN_SOLVER_DOMAINS = ("spring_vrm", "rigid", "mc2", "mesh_xpbd")
+_BUILTIN_SOLVER_DOMAINS = (
+    "spring_vrm",
+    "rigid",
+    "mc2",
+    "mesh_xpbd",
+    "bone_xpbd",
+)
 _BUILTIN_COMPONENT_DOMAINS = ("collision", "field", "simple_cloth")
 _RUNTIME_SOLVER_MODULES: dict[str, dict] = {}
 _REGISTERED_COMPONENT_PROPERTY_DOMAINS: list[str] = []

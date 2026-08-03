@@ -98,6 +98,8 @@ def build_mesh_xpbd_collider_frame(
     snapshot,
     source_object,
     collided_by_groups: int,
+    *,
+    excluded_bone_names=(),
 ) -> MeshXpbdColliderFrame:
     source_ptr = _pointer(source_object)
     if source_ptr <= 0:
@@ -114,11 +116,18 @@ def build_mesh_xpbd_collider_frame(
     segments_b = []
     radii = []
     keys = []
+    excluded_bones = {str(name or "") for name in excluded_bone_names if str(name or "")}
 
     if mask:
         for collider in data.get("colliders") or ():
-            if not isinstance(collider, dict) or _pointer(collider.get("owner")) == source_ptr:
+            if not isinstance(collider, dict):
                 continue
+            same_owner = _pointer(collider.get("owner")) == source_ptr
+            if same_owner:
+                is_bone = str(collider.get("owner_type") or "") == "BONE"
+                bone_name = str(collider.get("bone") or "")
+                if not excluded_bones or not is_bone or bone_name in excluded_bones:
+                    continue
             type_name = str(collider.get("type", "") or "").upper()
             type_code = _TYPE_CODES.get(type_name)
             if type_code is None:

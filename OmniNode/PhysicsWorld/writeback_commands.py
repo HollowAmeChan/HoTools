@@ -70,15 +70,16 @@ def make_bone_transform_batch_writeback(
     bone_count: int,
     backend: str = "",
     plan_schema: str = "",
+    transaction_id: str = "",
+    transaction_index: int = -1,
+    transaction_size: int = 0,
 ) -> dict:
-    """Build one result-stream envelope for a pre-resolved bone writeback plan.
+    """为 slot 中的骨骼计划构造公共 result envelope。
 
-    The batch keeps live matrices and PoseBone targets in the solver slot. Normal
-    playback can therefore write them without constructing one serialized dict
-    per bone. Consumers that require snapshots use ``iter_bone_transform_writebacks``
-    and get the legacy per-bone shape on demand.
+    ``transaction_id`` 相同的多个 envelope 必须在公共写回层完整预检后
+    一次提交；缺项或任一目标失效时整组不写。
     """
-    return {
+    result = {
         "channel": BONE_TRANSFORM_CHANNEL,
         "writeback_type": "bone_transform_batch",
         "solver": str(solver or "unknown"),
@@ -91,6 +92,14 @@ def make_bone_transform_batch_writeback(
         "bone_count": max(0, int(bone_count)),
         "plan_schema": str(plan_schema or ""),
     }
+    stable_transaction_id = str(transaction_id or "")
+    if stable_transaction_id:
+        result.update({
+            "transaction_id": stable_transaction_id,
+            "transaction_index": int(transaction_index),
+            "transaction_size": int(transaction_size),
+        })
+    return result
 
 
 def publish_bone_transform_batch_writeback(world, **kwargs) -> dict | None:

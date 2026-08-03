@@ -20,6 +20,7 @@ physicsWorld.writeback — 物理写回算法
 
 from __future__ import annotations
 
+import math
 import mathutils
 import numpy as np
 
@@ -46,6 +47,9 @@ _TOUCHED_OBJECTS_KEY     = "_writeback_touched_objects"
 _TOUCHED_POSE_BONES_KEY  = "_writeback_touched_pose_bones"
 _TOUCHED_GN_OBJECTS_KEY  = "_writeback_touched_gn_objects"
 _CLEANUP_RESOURCE_KEY    = "_writeback_cleanup"
+_BONE_DIAGNOSTICS_KEY    = "_writeback_bone_diagnostics"
+_BONE_RECEIPTS_KEY       = "_writeback_bone_receipts"
+_BONE_RECEIPT_SERIAL_KEY = "_writeback_bone_receipt_serial"
 _GN_DIAGNOSTICS_KEY      = "_writeback_gn_diagnostics"
 _GN_RECEIPT_SERIAL_KEY   = "_writeback_gn_receipt_serial"
 _EULER_ORDERS = {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"}
@@ -129,7 +133,21 @@ def _reset_pose_bones(touched) -> None:
     values = list(touched.values()) if isinstance(touched, dict) else list(touched)
     for item in values:
         try:
-            armature, bone_name = item
+            if len(item) == 3:
+                armature_ptr, armature_data_ptr, bone_name = item
+                armature = _find_armature_by_pointer(
+                    armature_ptr,
+                    armature_data_ptr,
+                )
+            else:
+                # 兼容刷新前已经存在的旧 cache；新写回不再生成活引用记录。
+                legacy_armature, bone_name = item
+                armature = _find_armature_by_pointer(
+                    legacy_armature.as_pointer(),
+                    legacy_armature.data.as_pointer(),
+                )
+            if armature is None:
+                continue
             pose = getattr(armature, "pose", None)
             pose_bone = pose.bones.get(str(bone_name or "")) if pose is not None else None
             if pose_bone is None:
@@ -312,6 +330,19 @@ def writeback_bone_transforms(world) -> int:
     written = 0
     touched_pose_bones = _get_touched_pose_bones(world)
     _ensure_cleanup_resource(world)
+    diagnostics = {
+        "schema": "bone_writeback_diagnostics_v1",
+        "frame": frame,
+        "generation": generation,
+        "transaction_count": 0,
+        "committed_transaction_count": 0,
+        "failed_transaction_count": 0,
+        "written_count": 0,
+        "errors": [],
+        "receipt_errors": [],
+        "receipts": [],
+    }
+    world.backend_resources[_BONE_DIAGNOSTICS_KEY] = diagnostics
 
     results = iter_bone_transform_writebacks(
         world,
@@ -319,43 +350,65 @@ def writeback_bone_transforms(world) -> int:
         generation=generation,
         expand_batches=False,
     )
-    for result in results:
-        slot = _slot_for_writeback_result(world, result)
+    groups = []
+    grouped = {}
+    for sequence, result in enumerate(results):
+        transaction_id = str(result.get("transaction_id") or "")
+        key = (
+            ("transaction", str(result.get("solver") or ""), transaction_id)
+            if transaction_id
+            else ("single", sequence)
+        )
+        group = grouped.get(key)
+        if group is None:
+            group = []
+            grouped[key] = group
+            groups.append(group)
+        group.append(result)
+    diagnostics["transaction_count"] = len(groups)
+
+    for group in groups:
+        slots = [_slot_for_writeback_result(world, result) for result in group]
         try:
-            if result.get("writeback_type") == "bone_transform_batch":
-                armature, batch_written = _writeback_bone_transform_batch(
-                    result,
-                    slot,
+            _validate_bone_transaction(group)
+            if all(
+                result.get("writeback_type") == "bone_transform_batch"
+                for result in group
+            ):
+                armature, batch_written = _writeback_bone_transform_transaction(
+                    group,
+                    slots,
                     touched_pose_bones,
                 )
-                if armature is not None and batch_written:
-                    updated_armatures.add(armature)
-                    written += batch_written
+            elif len(group) == 1:
+                armature, batch_written = _writeback_single_bone_transform(
+                    group[0],
+                    slots[0],
+                    touched_pose_bones,
+                )
+            else:
+                raise ValueError("公共 Bone 事务只能包含 batch 写回")
+            if armature is not None and batch_written:
+                updated_armatures.add(armature)
+                written += batch_written
+            for result in group:
+                _append_bone_writeback_receipt(world, diagnostics, result)
+            diagnostics["committed_transaction_count"] += 1
+            for slot in slots:
                 if slot is not None:
                     slot.data.pop("_writeback_error", None)
-                continue
-
-            armature = _armature_for_bone_writeback(world, result, slot)
-            pose = getattr(armature, "pose", None)
-            if pose is None:
-                continue
-
-            bone_name = str(result.get("bone_name") or "")
-            pose_bone = pose.bones.get(bone_name)
-            if pose_bone is None:
-                continue
-            pose_bone.matrix_basis = matrix_from_16(result.get("matrix_basis"))
-            try:
-                touched_pose_bones[(int(armature.as_pointer()), bone_name)] = (armature, bone_name)
-            except Exception:
-                pass
-            updated_armatures.add(armature)
-            written += 1
-            if slot is not None:
-                slot.data.pop("_writeback_error", None)
         except Exception as exc:
-            if slot is not None:
-                slot.data["_writeback_error"] = str(exc)
+            diagnostics["failed_transaction_count"] += 1
+            for result in group:
+                diagnostics["errors"].append({
+                    "solver": str(result.get("solver") or ""),
+                    "slot_id": str(result.get("slot_id") or ""),
+                    "transaction_id": str(result.get("transaction_id") or ""),
+                    "message": str(exc),
+                })
+            for slot in slots:
+                if slot is not None:
+                    slot.data["_writeback_error"] = str(exc)
 
     for armature in updated_armatures:
         try:
@@ -363,82 +416,307 @@ def writeback_bone_transforms(world) -> int:
         except Exception:
             pass
 
+    diagnostics["written_count"] = written
     return written
 
 
-def _writeback_bone_transform_batch(result, slot, touched_pose_bones) -> tuple[object | None, int]:
-    plan = slot.data.get("writeback_plan") if slot is not None else None
-    armature = plan.get("armature") if isinstance(plan, dict) else None
-    if not _armature_matches_writeback(armature, result):
-        armature = _armature_for_bone_writeback(None, result, slot)
+def get_bone_writeback_diagnostics(world) -> dict:
+    source = getattr(world, "backend_resources", {}).get(
+        _BONE_DIAGNOSTICS_KEY,
+        {},
+    )
+    if not isinstance(source, dict):
+        return {}
+    snapshot = dict(source)
+    snapshot["errors"] = [dict(item) for item in source.get("errors", ())]
+    snapshot["receipt_errors"] = [
+        dict(item) for item in source.get("receipt_errors", ())
+    ]
+    snapshot["receipts"] = [dict(item) for item in source.get("receipts", ())]
+    return snapshot
+
+
+def get_bone_writeback_receipts(world) -> tuple[dict, ...]:
+    """返回本 world 最近一次成功写入各 Bone result 的纯值 receipt。"""
+
+    store = getattr(world, "runtime_caches", {}).get(_BONE_RECEIPTS_KEY, {})
+    if not isinstance(store, dict):
+        return ()
+    values = [dict(item) for item in store.values() if isinstance(item, dict)]
+    values.sort(key=lambda item: int(item.get("serial", 0)))
+    return tuple(values)
+
+
+def _append_bone_writeback_receipt(world, diagnostics: dict, result) -> None:
+    try:
+        serial = int(world.runtime_caches.get(_BONE_RECEIPT_SERIAL_KEY, 0) or 0) + 1
+        world.runtime_caches[_BONE_RECEIPT_SERIAL_KEY] = serial
+        receipt = {
+            "schema": "bone_writeback_receipt_v1",
+            "serial": serial,
+            "frame": int(result.get("frame", diagnostics["frame"])),
+            "generation": int(result.get("generation", diagnostics["generation"])),
+            "solver": str(result.get("solver") or ""),
+            "slot_id": str(result.get("slot_id") or ""),
+            "transaction_id": str(result.get("transaction_id") or ""),
+            "transaction_index": int(result.get("transaction_index", -1)),
+            "transaction_size": int(result.get("transaction_size", 0)),
+            "publication_id": int(result.get("publication_id", 0)),
+            "armature_ptr": int(result.get("armature_ptr", 0) or 0),
+            "armature_data_ptr": int(result.get("armature_data_ptr", 0) or 0),
+            "bone_count": int(result.get("bone_count", 0) or 0),
+        }
+        diagnostics["receipts"].append(dict(receipt))
+        store = world.runtime_caches.setdefault(_BONE_RECEIPTS_KEY, {})
+        store[(receipt["solver"], receipt["slot_id"])] = receipt
+    except Exception as exc:
+        # Blender 已完成原子提交后不能再因诊断记录失败伪装成写回失败。
+        diagnostics.setdefault("receipt_errors", []).append({
+            "solver": str(result.get("solver") or ""),
+            "slot_id": str(result.get("slot_id") or ""),
+            "message": str(exc),
+        })
+
+
+def _validate_bone_transaction(results) -> None:
+    transaction_id = str(results[0].get("transaction_id") or "") if results else ""
+    if not transaction_id:
+        if len(results) != 1:
+            raise ValueError("无 transaction_id 的公共 Bone 写回不能跨 result 聚合")
+        return
+    sizes = {int(result.get("transaction_size", -1)) for result in results}
+    indices = [int(result.get("transaction_index", -1)) for result in results]
+    solvers = {str(result.get("solver") or "") for result in results}
+    identities = {
+        (
+            int(result.get("armature_ptr", 0) or 0),
+            int(result.get("armature_data_ptr", 0) or 0),
+        )
+        for result in results
+    }
+    if (
+        len(sizes) != 1
+        or next(iter(sizes), -1) != len(results)
+        or sorted(indices) != list(range(len(results)))
+        or len(solvers) != 1
+        or len(identities) != 1
+        or any(result.get("writeback_type") != "bone_transform_batch" for result in results)
+    ):
+        raise ValueError("公共 Bone 多 result 事务不完整或元数据不一致")
+
+
+def _writeback_single_bone_transform(result, slot, touched_pose_bones):
+    armature = _armature_for_bone_writeback(None, result, slot)
+    if armature is None:
+        raise ReferenceError("公共 Bone 写回目标 Armature 不存在或 data identity 已变化")
     pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
     if pose_bones is None:
-        return armature, 0
+        raise ReferenceError("公共 Bone 写回目标缺少 PoseBone 集合")
+    bone_name = str(result.get("bone_name") or "")
+    pose_bone = pose_bones.get(bone_name)
+    if pose_bone is None:
+        raise ReferenceError(f"公共 Bone 写回目标已失效: {bone_name!r}")
+    matrix_basis = _validated_basis_matrix(result.get("matrix_basis"), bone_name)
+    previous = pose_bone.matrix_basis.copy()
+    try:
+        pose_bone.matrix_basis = matrix_basis
+    except Exception:
+        try:
+            pose_bone.matrix_basis = previous
+        except Exception:
+            pass
+        raise
+    _remember_touched_pose_bone(touched_pose_bones, result, bone_name)
+    return armature, 1
 
-    buffer_size = len(pose_bones) * 16
-    basis_values = plan.get("basis_values") if isinstance(plan, dict) else None
-    if not isinstance(basis_values, list) or len(basis_values) != buffer_size:
-        basis_values = [0.0] * buffer_size
-        if isinstance(plan, dict):
-            plan["basis_values"] = basis_values
+
+def _writeback_bone_transform_batch(result, slot, touched_pose_bones):
+    """兼容旧调用者；单 result 也走完整预检与原子提交。"""
+
+    return _writeback_bone_transform_transaction(
+        [result],
+        [slot],
+        touched_pose_bones,
+    )
+
+
+def _writeback_bone_transform_transaction(
+    results,
+    slots,
+    touched_pose_bones,
+) -> tuple[object, int]:
+    first = results[0]
+    armature = _armature_for_bone_writeback(None, first, slots[0])
+    if armature is None:
+        raise ReferenceError("公共 Bone 写回目标 Armature 不存在或 data identity 已变化")
+    pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
+    if pose_bones is None:
+        raise ReferenceError("公共 Bone 写回目标缺少 PoseBone 集合")
 
     updates = []
-    for batch in (plan.get("batches") or ()) if isinstance(plan, dict) else ():
-        if not isinstance(batch, dict):
-            continue
-        records = batch.get("records") or ()
-        matrix_bases = batch.get("matrix_bases") or ()
-        for index, record in enumerate(records):
-            if not isinstance(record, dict) or index >= len(matrix_bases):
-                continue
-            basis_matrix = matrix_bases[index]
-            pose_bone = record.get("pose_bone")
-            pose_index = int(record.get("pose_index", -1))
-            if basis_matrix is None or pose_bone is None or pose_index < 0:
-                continue
-            updates.append((pose_bone, pose_index, basis_matrix, str(record.get("bone_name") or "")))
+    seen_bones = set()
+    for result, slot in zip(results, slots):
+        updates.extend(_preflight_bone_batch_result(
+            result,
+            slot,
+            armature,
+            pose_bones,
+            seen_bones,
+        ))
 
+    basis_values = _bone_basis_buffer(pose_bones, slots)
     _apply_bone_basis_updates(pose_bones, updates, basis_values)
-
-    try:
-        armature_ptr = int(armature.as_pointer())
-    except Exception:
-        armature_ptr = 0
     for _pose_bone, _pose_index, _basis_matrix, bone_name in updates:
-        if armature_ptr and bone_name:
-            touched_pose_bones[(armature_ptr, bone_name)] = (armature, bone_name)
+        _remember_touched_pose_bone(touched_pose_bones, first, bone_name)
     return armature, len(updates)
 
 
-def _apply_bone_basis_updates(pose_bones, updates, basis_values) -> None:
+def _preflight_bone_batch_result(result, slot, armature, pose_bones, seen_bones):
+    if slot is None:
+        raise ReferenceError(
+            f"公共 Bone 写回 slot 已失效: {str(result.get('slot_id') or '')!r}"
+        )
+    if not _armature_matches_writeback(armature, result):
+        raise ReferenceError("公共 Bone 写回事务混入了其它 Armature identity")
+    plan = slot.data.get("writeback_plan")
+    if not isinstance(plan, dict):
+        raise ValueError("公共 Bone batch 缺少 writeback_plan")
+    plan_schema = str(result.get("plan_schema") or "")
+    stored_schema = str(plan.get("schema") or "")
+    if plan_schema and stored_schema and stored_schema != plan_schema:
+        raise ValueError("公共 Bone result 与 writeback_plan schema 不一致")
+    for name in ("armature_ptr", "armature_data_ptr"):
+        plan_pointer = int(plan.get(name, 0) or 0)
+        result_pointer = int(result.get(name, 0) or 0)
+        if plan_pointer and plan_pointer != result_pointer:
+            raise ReferenceError(f"公共 Bone writeback_plan 的 {name} 已失配")
+
+    updates = []
+    for batch in plan.get("batches") or ():
+        if not isinstance(batch, dict):
+            raise TypeError("公共 Bone writeback batch 必须是 dict")
+        records = tuple(batch.get("records") or ())
+        matrix_bases = tuple(batch.get("matrix_bases") or ())
+        if len(records) != len(matrix_bases):
+            raise ValueError("公共 Bone record 与 matrix_basis 数量不一致")
+        for record, basis_value in zip(records, matrix_bases):
+            if not isinstance(record, dict):
+                raise TypeError("公共 Bone writeback record 必须是 dict")
+            bone_name = str(record.get("bone_name") or "")
+            if not bone_name or bone_name in seen_bones:
+                raise ValueError(f"公共 Bone 写回目标为空或重复: {bone_name!r}")
+            pose_bone = pose_bones.get(bone_name)
+            if pose_bone is None:
+                raise ReferenceError(f"公共 Bone 写回目标已失效: {bone_name!r}")
+            pose_index = int(pose_bones.find(bone_name))
+            if pose_index < 0:
+                raise ReferenceError(f"公共 Bone 写回无法解析当前 pose index: {bone_name!r}")
+            matrix_basis = _validated_basis_matrix(basis_value, bone_name)
+            seen_bones.add(bone_name)
+            updates.append((pose_bone, pose_index, matrix_basis, bone_name))
+
+    result_count = int(result.get("bone_count", -1))
+    plan_count = int(plan.get("bone_count", len(updates)))
+    if result_count != len(updates) or plan_count != len(updates):
+        raise ValueError(
+            f"公共 Bone batch 数量不一致: result={result_count}, "
+            f"plan={plan_count}, records={len(updates)}"
+        )
+    return updates
+
+
+def _bone_basis_buffer(pose_bones, slots) -> list[float]:
+    """复用纯数值 foreach 缓冲；不得把 Armature/PoseBone 放回持久计划。"""
+
+    buffer_size = len(pose_bones) * 16
+    plans = []
+    basis_values = None
+    for slot in slots:
+        plan = slot.data.get("writeback_plan") if slot is not None else None
+        if not isinstance(plan, dict):
+            continue
+        plans.append(plan)
+        candidate = plan.get("basis_values")
+        if isinstance(candidate, list) and len(candidate) == buffer_size:
+            basis_values = candidate
+    if basis_values is None:
+        basis_values = [0.0] * buffer_size
+    for plan in plans:
+        plan["basis_values"] = basis_values
+    return basis_values
+
+
+def _validated_basis_matrix(value, bone_name: str):
+    try:
+        matrix = matrix_from_16(value)
+        if not all(
+            math.isfinite(float(matrix[row][column]))
+            for row in range(4)
+            for column in range(4)
+        ):
+            raise ValueError
+    except Exception:
+        raise ValueError(f"公共 Bone matrix_basis 非法: {bone_name!r}") from None
+    return matrix
+
+
+def _remember_touched_pose_bone(touched_pose_bones, result, bone_name: str) -> None:
+    identity = (
+        int(result.get("armature_ptr", 0) or 0),
+        int(result.get("armature_data_ptr", 0) or 0),
+        str(bone_name or ""),
+    )
+    if identity[0] > 0 and identity[1] > 0 and identity[2]:
+        touched_pose_bones[identity] = identity
+
+
+def _apply_bone_basis_updates(pose_bones, updates, basis_values=None) -> None:
     if not updates:
         return
     previous = tuple(
         (pose_bone, pose_bone.matrix_basis.copy())
         for pose_bone, _pose_index, _basis_matrix, _bone_name in updates
     )
-    can_foreach_set = False
-    try:
-        pose_bones.foreach_get("matrix_basis", basis_values)
-        for _pose_bone, pose_index, basis_matrix, _bone_name in updates:
-            _write_matrix_to_foreach_buffer(basis_values, pose_index * 16, basis_matrix)
-        pose_bones.foreach_set("matrix_basis", basis_values)
-        can_foreach_set = True
-    except Exception:
-        can_foreach_set = False
 
-    if can_foreach_set:
-        return
+    if isinstance(basis_values, list):
+        candidate_values = basis_values
+    else:
+        try:
+            buffer_size = len(pose_bones) * 16
+        except Exception:
+            buffer_size = (
+                max(pose_index for _bone, pose_index, _matrix, _name in updates)
+                + 1
+            ) * 16
+        candidate_values = [0.0] * buffer_size
+    try:
+        pose_bones.foreach_get("matrix_basis", candidate_values)
+        for _pose_bone, pose_index, basis_matrix, _bone_name in updates:
+            _write_matrix_to_foreach_buffer(
+                candidate_values,
+                pose_index * 16,
+                basis_matrix,
+            )
+    except Exception:
+        candidate_values = None
+
+    if candidate_values is not None:
+        try:
+            pose_bones.foreach_set("matrix_basis", candidate_values)
+            return
+        except Exception as foreach_error:
+            rollback_errors = _restore_bone_basis_updates(previous)
+            if rollback_errors:
+                raise RuntimeError(
+                    f"bone batch foreach_set failed ({foreach_error}); rollback failed: "
+                    + "; ".join(rollback_errors)
+                ) from foreach_error
+
     try:
         for pose_bone, _pose_index, basis_matrix, _bone_name in updates:
             pose_bone.matrix_basis = basis_matrix
     except Exception as write_error:
-        rollback_errors = []
-        for pose_bone, old_basis in previous:
-            try:
-                pose_bone.matrix_basis = old_basis
-            except Exception as rollback_error:
-                rollback_errors.append(str(rollback_error))
+        rollback_errors = _restore_bone_basis_updates(previous)
         if rollback_errors:
             raise RuntimeError(
                 f"bone writeback failed ({write_error}); rollback failed: "
@@ -447,8 +725,18 @@ def _apply_bone_basis_updates(pose_bones, updates, basis_values) -> None:
         raise
 
 
+def _restore_bone_basis_updates(previous) -> list[str]:
+    errors = []
+    for pose_bone, old_basis in previous:
+        try:
+            pose_bone.matrix_basis = old_basis
+        except Exception as rollback_error:
+            errors.append(str(rollback_error))
+    return errors
+
+
 def _write_matrix_to_foreach_buffer(values: list[float], offset: int, matrix) -> None:
-    """Blender's matrix foreach layout is column-major."""
+    """Blender 的 matrix foreach 布局为 column-major。"""
     values[offset + 0] = float(matrix[0][0])
     values[offset + 1] = float(matrix[1][0])
     values[offset + 2] = float(matrix[2][0])
@@ -474,16 +762,11 @@ def _slot_for_writeback_result(world, result):
     return getattr(world, "solver_slots", {}).get(slot_id)
 
 
-def _armature_for_bone_writeback(world, result, slot):
-    spec = slot.data.get("spec") if slot is not None else None
-    armature = getattr(spec, "armature", None)
-    if _armature_matches_writeback(armature, result):
-        return armature
-
-    armature = _find_armature_by_pointer(result.get("armature_ptr"))
-    if armature is not None:
-        return armature
-    return None
+def _armature_for_bone_writeback(_world, result, _slot):
+    return _find_armature_by_pointer(
+        result.get("armature_ptr"),
+        result.get("armature_data_ptr"),
+    )
 
 
 def _armature_matches_writeback(armature, result) -> bool:
@@ -491,35 +774,30 @@ def _armature_matches_writeback(armature, result) -> bool:
         return False
     try:
         armature_ptr = int(result.get("armature_ptr", 0) or 0)
-        if armature_ptr and int(armature.as_pointer()) != armature_ptr:
-            return False
         data_ptr = int(result.get("armature_data_ptr", 0) or 0)
         data = getattr(armature, "data", None)
-        if data_ptr and (data is None or int(data.as_pointer()) != data_ptr):
-            return False
+        return (
+            armature_ptr > 0
+            and data_ptr > 0
+            and int(armature.as_pointer()) == armature_ptr
+            and data is not None
+            and int(data.as_pointer()) == data_ptr
+        )
     except Exception:
         return False
-    return True
 
 
-def _find_armature_by_pointer(armature_ptr):
+def _find_armature_by_pointer(armature_ptr, armature_data_ptr=0):
     try:
-        target = int(armature_ptr or 0)
+        from ..OmniReferenceGuard import resolve_bpy_object_reference
+
+        return resolve_bpy_object_reference(
+            int(armature_ptr or 0),
+            int(armature_data_ptr or 0),
+            object_type="ARMATURE",
+        )
     except Exception:
         return None
-    if not target:
-        return None
-    try:
-        import bpy
-    except Exception:
-        return None
-    for obj in getattr(bpy.data, "objects", ()):
-        try:
-            if int(obj.as_pointer()) == target:
-                return obj
-        except Exception:
-            continue
-    return None
 
 
 # ---------------------------------------------------------------------------

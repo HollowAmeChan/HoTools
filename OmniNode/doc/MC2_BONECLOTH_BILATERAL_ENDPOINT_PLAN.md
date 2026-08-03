@@ -1,6 +1,6 @@
 # BoneCloth 双端点与双边界链规划
 
-> 状态：路线已冻结；MC2 源码回退完成，py311 发布运行库待部署；Bone XPBD 尚未实现
+> 状态：MC2 边界与源码回退已冻结，py313 已更新、py311 发布库因运行中 Blender 文件锁待覆盖；Bone XPBD 实验性 vertical slice 与统一 XPBD 调度入口已落地；Field、multiscale chord/rod 与生产冻结仍待完成
 >
 > 目标：明确每根骨骼的端点语义，解释双端 fixed 链中段塌软的来源，并确定 MC2、Mesh XPBD 与未来杆链解算路径的边界。
 
@@ -13,10 +13,11 @@
 `bone_xpbd` 不是临时旁路，而是 PhysicsWorld 下的正式 solver domain：
 
 - 与普通 Mesh XPBD 共享 XPBD 数值核心和生命周期。
-- 一个模拟步可以消费多个 XPBD 域任务，并在同一 PhysicsWorld cache 中统一提交和输出。
-- 场通过 PhysicsWorld 的统一 field registry 进入 XPBD frame packet；Mesh XPBD 和 Bone XPBD 都消费同一份场采样结果。
+- 现有 `XPBD模拟步`可以消费多个强类型 Mesh/Bone XPBD 域任务，并在同一 PhysicsWorld cache 中统一提交和输出；每个 task 仍持有独立 slot/native context，不表示已建立融合粒子域。
+- 场接入路线已冻结为 PhysicsWorld 公共 native runtime；当前 Mesh XPBD/Bone XPBD 尚未消费 Field，后续必须在 native XPBD 子步从当前粒子位置采样，不能恢复 Python sampler。
 - 显式碰撞体和隐式碰撞体都走 PhysicsWorld 的对象注册，不在 solver 内部偷偷读取 Blender 对象。
 - Node 注册、静态编译、帧输入、运行缓存、结果写回和运行中 debug node 与 MC2 保持同一层级的契约。
+- Python 不提供备用粒子求解器；它只负责 Blender 边界、任务分流、生命周期、结果发布与调试，数值推进只发生在共享 native XPBD context。
 
 骨骼的 tail 吸附是 `bone_xpbd` 的输入开关：默认开启，表示骨骼 tail 参与端点姿态吸附；关闭时仍保留 tail 粒子和拓扑，只是不把 tail 的模拟姿态强制吸附回 Blender 骨骼，从而允许用户处理头尾不连续或需要独立尾端的骨链。
 
@@ -133,23 +134,23 @@ BoneSegment {
 }
 ```
 
-`head_particle` 和 `tail_particle` 可以在严格共点时指向同一物理点，也可以指向两个独立物理点；这个选择必须由拓扑构造显式决定，不能由 Blender 的 parent/use_connect 隐式决定。
+每个有效骨段的 `head_particle` 和 `tail_particle` 是两个显式端点；不同骨段的端点在 rest 几何严格共点时可以指向同一物理粒子。共享关系必须由拓扑构造显式决定，不能由 Blender 的 parent/use_connect 隐式决定。
 
 ### 4.2 共点策略需要显式化
 
-未来有两种合法实现，先通过测试选择，不在当前代码中偷偷混用：
+当前产品已经选择第一种实现；第二种只保留为未来独立约束扩展，不能在当前代码中偷偷混用：
 
-1. **规范化共点**：真实几何完全共点时复用一个粒子，另加 segment/joint 元数据保证两根骨骼的端点关系。
-2. **独立端点 + weld 约束**：每根骨骼拥有独立 head/tail 粒子，再用显式 weld 或 joint 约束保持共点。
+1. **当前：规范化共点**。真实 rest 几何在容差内共点时直接复用一个粒子；每根骨仍保留显式 segment 端点索引。
+2. **未来候选：独立端点 + weld 约束**。每根骨骼拥有独立 head/tail 粒子，再用显式 weld 或 joint 约束保持共点；当前 native 尚无该约束族。
 
-对 `use_connect=False`，默认不能因为父子关系就合并端点。只有 rest pose 几何和拓扑规则明确要求共点时才允许复用。MC2 不为此增加新的端点模式。
+Bone XPBD 只接受 `use_connect=False`。任一输入骨 `use_connect=True` 都在注册阶段报错，因为 Blender 的 Connected 位置约束与显式 head/tail 世界姿态写回不兼容；不会为它提供 rotation-only 特判或静默断开。对合法输入，父子关系本身不会合并端点，只有 rest pose 几何和拓扑规则明确要求共点时才允许复用。MC2 不为此增加新的端点模式。
 
 ### 4.3 pin 语义
 
 骨骼 pin 是端点属性：
 
 - pin 的骨骼默认同时固定其 head 和 tail。
-- 末端补充粒子继承末端骨骼 pin。
+- 末端无需“补充粒子继承”特判：末骨 tail 本来就是显式端点，随该骨 Pin 一起固定。
 - 如果未来允许只固定一端，必须在端点层面表达，而不是复用一个 bone-level bool。
 
 ### 4.4 写回语义
@@ -225,18 +226,27 @@ S0 是分界测试：如果 S0 中段仍然明显偏离 rest pose，优先修几
 - 明确独立端点、共点 weld、pin 继承以及删除/重建生命周期。
 - 用非共点、分支和双端 fixed 工程验证父子层级不再改变 `bone_xpbd` 模拟几何。
 
-### 阶段 C：实现 `bone_xpbd` 基础领域
+### 阶段 C：实现 `bone_xpbd` 基础领域（实验纵切面已落地）
 
-推荐顺序：
+当前已经完成：
 
-1. 在 Mesh XPBD 生命周期上增加 `bone_xpbd` setup adapter、static fragment、frame packet 和 output target。
-2. 每根骨骼注册显式 head/tail 粒子；拓扑使用 segment stretch、二阶 bend、pin 和可选 weld。
-3. 将 `tail 吸附`作为写回和姿态输入语义，而不是 solver 内部的隐式父子关系。
-4. 一个 XPBD 模拟步支持多个 mesh/bone 域任务，统一生成 field sampling batch、collision object batch 和 output cache。
-5. 所有显式/隐式碰撞对象统一走 PhysicsWorld registry；Python 只负责注册与调度，采样和约束在 native 侧执行。
-6. 增加运行中 `Bone XPBD Debug` node，显示真实端点、stretch/bend 残差、pin/weld 状态、tail 吸附状态和场采样贡献。
+1. 独立 `bone_xpbd` domain 与四个 Bone 节点：面板对象、自定义对象、任务、可视化调试。Bone task 接入现有共享 `XPBD模拟步`，不另设 Bone solver 节点。
+2. 每根骨显式 `head_particle/tail_particle`；rest 几何共点直接共享粒子，segment stretch 与共享关节两侧的二阶 distance bend 均为无向约束，不生成 depth/root/父到子方向。
+3. 公共 Bone Pin 或自定义对象 socket Pin 同时固定该骨的两个端点；共享 Mesh XPBD native context 增加独立 moving Pin target，不改变 constraint rest length；`use_connect=True` 在注册阶段严格拒绝。
+4. `Tail吸附`默认开启且可关闭，只控制 head->tail 输出旋转；同一 Armature 的全部目标先合并，再由公共 Bone batch writeback 反算 basis。
+5. 每个任务拥有 PhysicsWorld slot/context，已覆盖 staged replacement、same-frame、暂停、restart、task prune、失败丢弃和上一帧写回反馈隔离；共享 `XPBD模拟步`可强类型分流并推进多个独立 Mesh/Bone task。
+6. 公共 collider snapshot 的四类外碰和请求驱动的真实运行端点/Fixed/segment/bend 调试已接通。
 
-这些改动属于 XPBD domain 的图和约束扩展，不是 Python 侧补丁；运行中的采样和缓存仍必须由 C++ 持有。
+当前仍未完成：
+
+- 几何共点目前是直接合并粒子，不是独立 `2N + weld`；native 没有第三类 weld/joint constraint。
+- 外碰半径和 16-bit mask 仍是 task 统一值，不是逐骨/逐粒子 mask。
+- Mesh XPBD 与 Bone XPBD 已共用一个用户可见模拟步，但没有组成跨类型融合 native domain，也没有跨 task 约束或自碰。
+- Field Wind 尚未接入 XPBD native 子步，调试也没有场贡献。
+- MC2、SpringBone 与 Bone XPBD 同时目标同一 PoseBone 时，公共 owner 仲裁尚未定义；当前必须由图作者避免重复目标，不能把 result 发布顺序覆盖当成正式能力。
+- 当前只有局部 stretch 与二阶 distance bend，不等价于 rod/shape matching。13 点双端 fixed 探针在 4 substeps、64 iterations、120 帧后仍有约 `0.146` 中点下垂，最大相邻长度误差约 `0.001`；后续先固化 fixture，再决定 multiscale chord 或正式 rod 约束。
+
+当前实现与后续验收的权威细节转入 `BONE_XPBD_BLUEPRINT.md`。这些能力必须继续属于 XPBD domain 的 native 图和约束扩展，不能回到 MC2 depth 特化或 Python 逐帧修形。
 
 ### 阶段 D：XPBD 与 MC2/场的统一能力
 
@@ -248,7 +258,7 @@ S0 是分界测试：如果 S0 中段仍然明显偏离 rest pose，优先修几
 - 输入：统一 field sample、显式/隐式 object registry、多任务 batch。
 - 输出：同一套 `BoneSegment` 端点写回契约。
 
-Mesh XPBD 目前是 Mesh 输入的独立 vertical slice，没有 Bone adapter，不能直接替换当前 BoneCloth。它的 XPBD compliance/lambda、迭代结构和场输入契约将作为 `bone_xpbd` 的数值基础。
+Mesh XPBD 与 Bone XPBD 当前共享 `XPBD模拟步`和底层 XPBD distance context，但仍是两类强类型任务和独立 slot/context。这个统一入口不能直接替换 MC2 BoneCloth，也不表示两者已经拥有跨 task 约束或融合粒子域。
 
 Jolt 仍保持刚体/关节领域，不作为该软体链问题的直接替代。
 
@@ -256,12 +266,11 @@ Jolt 仍保持刚体/关节领域，不作为该软体链问题的直接替代�
 
 以下问题在没有 S0-S5 数据前不应提前定案：
 
-- 每根骨骼是否应使用独立的 2 个粒子，还是严格共点处复用粒子并用 weld 约束。
+- 独立 `2N + weld` 是否值得新增第三类约束族；当前产品已冻结为严格共点处直接共享粒子。
 - 双端 fixed 的 tether 是“两个固定边界的距离上限”，还是只保留结构边和弯曲约束而不使用 tether。
-- depth 是否只作为可视化/高级材料 profile，还是允许用户显式启用 solver mass weighting。
 - 骨骼扭转是否需要第三类方向参考；单纯 head/tail 两点只能确定轴向，不能唯一确定绕轴 roll。
 - 两端固定链的“中间软”有多少是物理材料表现，多少是约束迭代不足；两者必须通过零重力和残差读数区分。
-- 同一 graph component 内多个 fixed 岛屿的 root、tether 和写回所有权如何定义。
+- 跨 solver 同一 PoseBone 的目标所有权如何由 Physics World 公共仲裁。该合同必须同时覆盖 owner identity、冲突策略、调试、Bake/Record 与生命周期，不在 Bone XPBD 内私自实现。
 
 ## 8. 验收标准
 
@@ -270,11 +279,11 @@ Jolt 仍保持刚体/关节领域，不作为该软体链问题的直接替代�
 端点和求解器扩展完成后，至少满足：
 
 - 每根骨骼都有稳定、可序列化的 `head_particle/tail_particle` 映射。
-- 端点 pin 的语义不依赖 Blender 父子级，末端粒子继承正确。
-- 改变 Blender 父子组织但保持最终 proxy 图不变时，模拟结果不变，只有局部矩阵反算路径可以变化。
+- 端点 Pin 的语义不依赖 Blender 父子级，末骨 tail 作为显式端点随该骨一起固定。
+- 所有输入骨均为 `use_connect=False`；改变 Blender 父子组织但保持最终 proxy 图不变时，模拟结果不变，只有局部矩阵反算路径可以变化。
 - S0 中 rest pose 不自发塌陷；S2 的下垂由明确的 bend/compliance 参数解释，而不是隐藏 depth 权重。
 - 双端 fixed 链的左右边界影响对称；调试数据能显示每个粒子到两侧边界的贡献。
-- 关闭 depth profile 曲线不会继续隐式改变 BoneCloth 的 solver mass/constraint weighting，除非用户显式开启高级选项。
+- Bone XPBD 不产生或消费 depth；MC2 的 depth 行为只作为冻结对照，不得迁移进 Bone XPBD 参数。
 - 运行时所有数据来自 PhysicsWorld cache/native readback，Python 只负责注册、调度和显式调试显示。
 - 需要更强杆链语义时，有清晰的独立 XPBD/rod 迁移边界，不把 Jolt、MC2 和 Mesh XPBD 的所有权混在一起。
 

@@ -37,6 +37,7 @@ MESH_XPBD_SOLVER_DECLARATION = {
         "simple_cloth公共对象快照中的XPBD字段子集",
         "XPBD网格对象.object_specs",
         "XPBD网格任务.task_specs",
+        "Bone XPBD任务.task_specs（共享XPBD模拟步调度）",
     ],
     "produces": [
         f'world.result_streams["{GN_ATTRIBUTE_CHANNEL}"]',
@@ -63,7 +64,7 @@ MESH_XPBD_SOLVER_DECLARATION = {
     "same_frame_policy": "republish_cached_result_without_time_step",
     "update_policy": {
         "authoring": "panel_or_socket_object_snapshot_then_task_parameters",
-        "task_input": "validated_object_specs_to_task_list_then_prune_stale_slots",
+        "task_input": "single_step_splits_mesh_and_bone_tasks_then_prunes_both_domains",
         "topology": "staged_replace_on_mesh_connectivity_or_reference_change",
         "params": "refresh_context_parameters_without_topology_rebuild",
         "colliders": "consume_common_snapshot_lazily_by_source_key_and_mask",

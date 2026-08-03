@@ -75,13 +75,13 @@ def test_node_socket_annotations_are_resolved():
         nodes.physicsMeshXpbdSolver
     )
     assert solver_inputs["world"]["type"] == "OmniNodeSocketAny"
-    assert solver_inputs["mesh_tasks"]["type"] == "OmniNodeSocketAny"
-    assert solver_inputs["mesh_tasks"]["use_multi_input"] is True
+    assert solver_inputs["xpbd_tasks"]["type"] == "OmniNodeSocketAny"
+    assert solver_inputs["xpbd_tasks"]["use_multi_input"] is True
     assert solver_inputs["debug_capture"]["type"] == "NodeSocketBool"
     assert solver_outputs["_OUTPUT0"]["type"] == "OmniNodeSocketAny"
     assert solver_outputs["_OUTPUT1"]["type"] == "NodeSocketInt"
     assert solver_outputs["_OUTPUT2"]["type"] == "NodeSocketFloat"
-    assert solver_multi["mesh_tasks"] is True
+    assert solver_multi["xpbd_tasks"] is True
 
     _, debug_inputs, debug_outputs, _, _, _ = node_core.CheckMetaInfo(
         nodes.physicsMeshXpbdDebugDraw

@@ -104,7 +104,7 @@ print("MC2_PROPERTY_REGISTRY_SOURCE", mc2_nodes.__file__)
 print("MC2_PROPERTY_REGISTRY_NATIVE", mc2_native_loader.native_module().__file__)
 EXPECTED_PROPERTY_CONTRACTS = {
     "PG_Hotools_BoneCollision": {
-        "sha256": "f371091c0921050a34a5aa3386614119da1420aa1208af03b252c09dcb6eae7c",
+        "sha256": "7c87e52d26f60ee547d463eb94c8327acf85cda42e2ad2f78c5731303216bfde",
         "fields": (
             "pin", "collision_type", "radius", "length", "offset",
             "primary_collision_group", "collided_by_groups",
@@ -118,7 +118,7 @@ EXPECTED_PROPERTY_CONTRACTS = {
         ),
     },
     "PG_Hotools_MeshCollision": {
-        "sha256": "94b71434d79763c2c4ba2c5e38ffb89560b6f9afdb18da4ea4896d1bbba8f652",
+        "sha256": "ce6e1d4b195eac21274a6c9e6ce05bbab2eae01aeb1573dbb86c57d629719caf",
         "fields": (
             "enabled", "mc2_base_pose_proxy", "radius_vertex_group",
             "pin_enabled", "pin_vertex_group",
@@ -317,12 +317,14 @@ def test_solver_node_modules_are_grouped_by_manifest_menu_name():
         "rigid_jolt",
         "mc2",
         "mesh_xpbd",
+        "bone_xpbd",
     )
     assert tuple(group["menu_name"] for group in groups) == (
         "VRM SpringBone",
         "Jolt刚体",
         "MC2",
         "Mesh XPBD",
+        "Bone XPBD",
     )
     assert all(group["modules"] for group in groups)
     assert all(
@@ -351,6 +353,7 @@ def test_solver_node_add_menu_uses_manifest_submenus():
         ("rigid_jolt", "Jolt刚体", "NODE_MT_OMNINODE_SOLVER_RIGID_JOLT"),
         ("mc2", "MC2", "NODE_MT_OMNINODE_SOLVER_MC2"),
         ("mesh_xpbd", "Mesh XPBD", "NODE_MT_OMNINODE_SOLVER_MESH_XPBD"),
+        ("bone_xpbd", "Bone XPBD", "NODE_MT_OMNINODE_SOLVER_BONE_XPBD"),
     )
     physics_extension = next(
         extension
@@ -414,6 +417,7 @@ def test_solver_registry_separates_owned_shared_and_planned_result_channels():
     assert baseline["valid"], baseline["problems"]
     assert world_names.BONE_TRANSFORM_CHANNEL not in baseline["result_channels"]
     assert set(baseline["shared_result_channels"][world_names.BONE_TRANSFORM_CHANNEL]) == {
+        "bone_xpbd",
         "mc2",
         "spring_vrm",
     }
@@ -445,6 +449,7 @@ def test_solver_registry_separates_owned_shared_and_planned_result_channels():
         shared = solver_registry.validate_solver_registry()
         assert shared["valid"], shared["problems"]
         assert set(shared["shared_result_channels"][world_names.BONE_TRANSFORM_CHANNEL]) == {
+            "bone_xpbd",
             "mc2",
             "spring_vrm",
             shared_domain,

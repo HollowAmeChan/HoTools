@@ -157,6 +157,10 @@ required_node_ids = {
     "HO_OmniNode_physicsMeshXpbdTask",
     "HO_OmniNode_physicsMeshXpbdSolver",
     "HO_OmniNode_physicsMeshXpbdDebugDraw",
+    "HO_OmniNode_physicsBoneXpbdObject",
+    "HO_OmniNode_physicsBoneXpbdCustomObject",
+    "HO_OmniNode_physicsBoneXpbdTask",
+    "HO_OmniNode_physicsBoneXpbdDebugDraw",
     "HO_OmniNode_customExampleScale",
 }
 current_node_ids = {

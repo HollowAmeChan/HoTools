@@ -43,6 +43,8 @@ _LAZY_EXPORTS = {
     "build_mesh_xpbd_collider_frame": ".colliders",
     "MeshXpbdNativeContext": ".native",
     "step_mesh_xpbd": ".solver",
+    "split_xpbd_tasks": ".family_solver",
+    "step_xpbd_tasks": ".family_solver",
     "get_mesh_xpbd_stats_result": ".results",
     "request_mesh_xpbd_debug_capture": ".debug",
     "clear_mesh_xpbd_debug_draw_store": ".debug_draw",

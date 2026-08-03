@@ -204,15 +204,67 @@ def test_common_snapshot_packs_all_shapes_and_zero_mask_is_empty():
     assert packed.collider_radii[3] == 3.0
 
 
+def test_armature_source_excludes_only_simulated_bone_colliders():
+    armature = _Object()
+    other = _collider_owner(501)
+
+    def sphere(key, owner, *, owner_type="OBJECT", bone=""):
+        return {
+            "key": key,
+            "owner": owner,
+            "owner_type": owner_type,
+            "bone": bone,
+            "type": "SPHERE",
+            "center": (0, 0, 0),
+            "radius": 1,
+            "primary_group": 1,
+        }
+
+    snapshot = {
+        "frame": 9,
+        "colliders": [
+            sphere("simulated", armature, owner_type="BONE", bone="A"),
+            sphere("other_bone", armature, owner_type="BONE", bone="B"),
+            sphere("same_object", armature),
+            sphere("external", other),
+        ],
+    }
+    mesh_frame = colliders.build_mesh_xpbd_collider_frame(snapshot, armature, 1)
+    assert mesh_frame.collider_keys == ("external",)
+
+    bone_frame = colliders.build_mesh_xpbd_collider_frame(
+        snapshot,
+        armature,
+        1,
+        excluded_bone_names=("A",),
+    )
+    assert bone_frame.collider_keys == ("other_bone", "external")
+
+
 def test_native_owner_rebuild_update_reset_step_and_dispose():
     assert native.is_available()
     source = _Object()
-    task = specs.MeshXpbdTaskSpec(source, gravity_power=0.0)
+    source.vertex_groups["Pin"] = _Value(index=2)
+    source.data.vertices[0].groups = [_Value(group=2, weight=1.0)]
+    task = specs.MeshXpbdTaskSpec(
+        source,
+        pin_enabled=True,
+        pin_vertex_group="Pin",
+        gravity_power=0.0,
+    )
     topology = topology_module.build_mesh_xpbd_topology(task)
     reference = topology_module.build_mesh_xpbd_reference_frame(topology, source)
     collider_frame = colliders.build_mesh_xpbd_collider_frame({}, source, 0)
     owner = native.MeshXpbdNativeContext()
     owner.rebuild(topology, reference, task)
+
+    pin_targets = np.asarray(reference.rest_world_positions, dtype=np.float64)
+    pin_targets[0, 0] += 0.25
+    owner.update_pin_targets(pin_targets)
+    np.testing.assert_allclose(owner.read_positions()[0], pin_targets[0])
+    assert owner.stats()["pin_target_update_count"] == 1
+
+    owner.update_reference(topology, reference)
     owner.reset(reference)
     positions = owner.step(
         delta_time=1.0 / 24.0,
@@ -225,7 +277,6 @@ def test_native_owner_rebuild_update_reset_step_and_dispose():
     np.testing.assert_allclose(positions, reference.rest_world_positions)
     assert owner.stats()["particle_count"] == 4
     owner.update_parameters(specs.MeshXpbdTaskSpec(source, iterations=4))
-    owner.update_reference(topology, reference)
     owner.dispose()
     assert owner.ready is False
 

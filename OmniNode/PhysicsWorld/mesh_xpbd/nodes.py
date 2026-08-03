@@ -19,7 +19,7 @@ from .object_spec import (
     make_mesh_xpbd_custom_objects,
     read_mesh_xpbd_panel_objects,
 )
-from .solver import step_mesh_xpbd
+from .family_solver import step_xpbd_tasks
 
 
 @omni(
@@ -161,41 +161,43 @@ def physicsMeshXpbdTask(
     bl_label="XPBD模拟步",
     base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "XPBD网格任务", "调试快照"],
+    _INPUT_NAME=["物理世界", "XPBD域任务", "调试快照"],
     input_init={
-        "mesh_tasks": {"description": "一个或多个XPBD网格任务"},
+        "xpbd_tasks": {
+            "description": "混合输入一个或多个XPBD网格任务、Bone XPBD任务",
+        },
         "debug_capture": {
             "description": "请求本帧positions、constraints与collider数组进入solver slot调试快照",
         },
     },
-    _OUTPUT_NAME=["物理世界", "写回对象数量", "耗时ms"],
+    _OUTPUT_NAME=["物理世界", "写回任务数量", "耗时ms"],
     mute_passthrough={"_OUTPUT0": "world"},
     omni_description="""
-    Physics World 基础 Mesh XPBD 模拟步。子步数、dt、暂停、同帧和重启只读取公共 frame context。
+    Physics World 统一 XPBD 模拟步。一个节点显式消费Mesh与Bone两种域任务；
+    子步数、dt、暂停、同帧和重启只读取公共frame context。
 
-    solver 使用纯 nanobind RAII context，逐 substep 累计 stretch/bend lambda；
-    不扫描 Scene、不直接写 Mesh/Basis/GN，也没有 Python 数值 fallback。
-    结果发布到公共 GN offset channel，由下游“物理写回”统一应用。
-    多个任务先完整验证并以同一事务发布，任何目标写回失败都会由公共写回回滚整批。
+    两种域共享纯nanobind RAII距离约束context，各自持有独立slot和写回结果；
+    不扫描Scene、不直接写Mesh或PoseBone，也没有Python数值fallback。
+    任一域失败会清除两种XPBD写回并释放本族slot，下次从公共输入冷建。
     """,
 )
 def physicsMeshXpbdSolver(
     world: object,
-    mesh_tasks: list[object],
+    xpbd_tasks: list[object],
     debug_capture: bool = False,
 ) -> tuple[object, int, float]:
     if not isinstance(world, PhysicsWorldCache):
         return world, 0, 0.0
     if (
-        isinstance(mesh_tasks, list)
-        and len(mesh_tasks) == 1
-        and type(mesh_tasks[0]) is float
-        and mesh_tasks[0] == 0.0
+        isinstance(xpbd_tasks, list)
+        and len(xpbd_tasks) == 1
+        and type(xpbd_tasks[0]) is float
+        and xpbd_tasks[0] == 0.0
     ):
-        mesh_tasks = []
-    writeback_count, elapsed_ms = step_mesh_xpbd(
+        xpbd_tasks = []
+    writeback_count, elapsed_ms = step_xpbd_tasks(
         world,
-        mesh_tasks,
+        xpbd_tasks,
         debug_capture=bool(debug_capture),
     )
     return world, int(writeback_count), float(elapsed_ms)

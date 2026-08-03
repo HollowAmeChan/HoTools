@@ -6,7 +6,7 @@
 
 - **应该写**：所有solver共同遵守的阶段职责、数据所有权、生命周期、声明协议、dirty/update语义、exchange/result/writeback和native context公共约束。
 - **不应该写**：某个solver当前完成度、专属算法顺序/公式、fixture数量、产品输入限制、下一交付或迁移流水。
-- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；Field/Volume/Wind 的产品与实施合同写`PHYSICS_FIELD_VOLUME_BLUEPRINT.md`；MC2稳定产品合同写`MC2_BLUEPRINT.md`，GPU后端专项写`MC2_GPU_BACKEND_DESIGN.md`；基础 Mesh XPBD 的数值、冻结范围和迁移写`MESH_XPBD_BLUEPRINT.md`；通用Bake、关键帧与外部几何缓存写`PHYSICS_BAKE_NODE_BLUEPRINT.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
+- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；Field/Volume/Wind 的产品与实施合同写`PHYSICS_FIELD_VOLUME_BLUEPRINT.md`；MC2稳定产品合同写`MC2_BLUEPRINT.md`，GPU后端专项写`MC2_GPU_BACKEND_DESIGN.md`；基础 Mesh XPBD 的数值、冻结范围和迁移写`MESH_XPBD_BLUEPRINT.md`；显式端点 Bone XPBD 的拓扑、Pin、写回和约束扩展写`BONE_XPBD_BLUEPRINT.md`；通用Bake、关键帧与外部几何缓存写`PHYSICS_BAKE_NODE_BLUEPRINT.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
 - **准入原则**：一条规则只有被两个以上domain共享，或明确属于Physics World公共边界，才进入本文；solver私有规则留在该domain。
 
 ## 文档路由
@@ -16,6 +16,7 @@
 - **`PHYSICS_FIELD_VOLUME_BLUEPRINT.md`（Field/Volume 蓝本）**：公共 Field 的 Volume、Wind、采样、作用域、可视化、Blender 创作与阶段闸门；不承诺具体 solver 的消费实现。
 - **`MC2_BLUEPRINT.md`（MC2 实现蓝本）**：MC2当前产品决策、支持域、数据流、Python/C++职责、数值边界和debug的稳定入口；E6实现只路由到`MC2_GPU_BACKEND_DESIGN.md`。
 - **`MESH_XPBD_BLUEPRINT.md`（基础 Mesh XPBD 蓝本）**：独立基础网格 solver 的严格 XPBD 数值合同、冻结能力、native 边界、生产验收和旧路径删除顺序。
+- **`BONE_XPBD_BLUEPRINT.md`（基础 Bone XPBD 蓝本）**：显式 BoneSegment 端点图、共点共享、Pin/Tail 写回、共享 XPBD native 边界、数值限制与后续约束路线。
 - **`PHYSICS_BAKE_NODE_BLUEPRINT.md`（通用 Bake 蓝图）**：Physics World结果到Bone/Object关键帧、Mesh外部缓存、跳帧清理、播放代理和Finalize的产品与实施合同。
 - **`../ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
 
@@ -343,6 +344,7 @@ slot.data["frame_state"]
 - 不直接调用 Cache Write。
 - 不创建不可清理的 native 全局状态。
 - 一个solver step可以一次接收多个规范化task；公开step粒度不要求与对象、component或native context一一对应。具体component到task/spec的映射由domain声明并在专项验收中冻结。
+- 一个用户可见的 family step 可以接收多种已声明的强类型 task，但必须先完整验证类型并按 domain 分流，禁止靠字段形状猜测、隐式转换或把不同 task 拼成无声明的融合 payload。共享 step 只统一调度、失败边界和结果提交；除非另有明确的融合域合同，每个 task 仍拥有自己的稳定 slot/native context。当前 `XPBD模拟步`对 Mesh XPBD 与 Bone XPBD 采用此模式，具体节点和数值边界路由到对应蓝本。
 - 聚合多 task 时，domain 可以按已冻结的专项合同逐 request prepare/stage/solve，也可以先完成全批只读 prepare；持久状态仍由稳定 task slot/context 分别拥有。无论执行顺序如何，全部 request 的 output/feedback/writeback plan 验证成功前都不得发布公共结果，任一失败不得发布已经成功的前缀。
 - 接收多个显式 product request 时，每个 request 必须对应可观察的 domain identity 和独立稳定 slot；全部 request 求解及 output/feedback/writeback plan 校验成功后，才允许一次发布公共结果。这里的“事务”只覆盖公共发布，不承诺 solver/native state 的数值回滚。任一 request 失败时，domain 必须摘除并 dispose 本批全部 attempted slots，清除本 solver 的 partial result，并恢复本批已暂存的跨帧 feedback；未实现并验证 checkpoint/restore 的 domain 不得复用可能已经发生 mutation 的失败 owner，后续求值必须冷重建。
 - collector可以把同一输出owner的多个显式request留到结果层合并，但合并规则、顺序和冲突域必须由domain专项合同冻结；不得在solver内部把source列表静默展开为hidden task。
@@ -570,9 +572,15 @@ channel。domain 自有 stats、event、query channel 仍应登记为独占。�
 共享 channel 只表示多个生产者使用同一 payload schema，不自动规定目标合成策略：
 
 - `bone_transform` 按 result 发布时间顺序执行；同一 PoseBone 的后发布结果覆盖先发布
-  结果。图作者负责避免让多个 solver 重复解算同一骨骼。
+  结果。这只是当前兼容行为，不是目标所有权仲裁；图作者负责避免让多个 solver 重复解算同一骨骼。
 - `gn_attribute` 表示每个 Mesh 的单一最终 offset；其中间分量仍先经 `world.exchange`
   归并，最终 writer 冲突策略见下节。
+
+#### Bone 目标所有权仲裁（后续公共契约）
+
+MC2、SpringBone、Bone XPBD 或未来 Bone writer 同时目标同一 PoseBone 时，必须由 Physics World 定义一套公共 owner 合同。该合同至少需要覆盖稳定 target identity、writer/owner identity、冲突是报错还是显式优先级、作用域与生命周期、运行调试、Bake/Record 语义以及整批失败边界。
+
+该仲裁当前尚未实现。各 solver 只能保证自己内部的重叠检测和事务，不能在私有模块内抢占、静默混合或通过发布顺序宣称取得所有权；公共合同落地前，产品图必须避免跨 solver 重复目标。后续实现必须让所有 Bone writer 同时迁移，不能只为某一个 solver 增加例外。
 
 #### Simple Cloth GN 顶点 offset 契约
 
@@ -1127,6 +1135,8 @@ C++ native context:
 solver step 应产生统一 result stream，而不是直接写 Blender。
 
 当solver下一帧会从同一个Blender owner重新采集frame input时，必须定义输出反馈屏障：能够区分“上帧物理写回仍残留”和“本帧动画/driver已经覆盖”。该屏障及其持久状态由solver frame adapter拥有；统一writeback只应用结果plan，不替solver决定动画输入、不记录solver私有反馈状态，也不默认清零PoseBone。若蓝本在动画求值前恢复初始Transform、动画求值后再读取，Blender适配器必须在内存中表达等价输入时序，不得在solver执行期倒写场景来伪造早更新。
+
+需要以“真实写入成功”排除自身输出反馈的 Bone solver 必须把 result publication 与 writeback confirmation 分开：发布阶段只能暂存 pending 指纹；公共 Bone 写回只有在整组 transaction 完整预检并成功提交后，才为每个 result envelope 产生一条 `bone_writeback_receipt_v1`。receipt 只含递增 serial、frame/generation、solver/slot、transaction/publication 与 Armature object/data identity 等纯值字段，不持有 Blender RNA、plan 或 matrix；失败、回滚或不完整 transaction 不得产生 receipt。solver adapter 只能用匹配 receipt 提升自己的 confirmed 指纹，不能把“计划过”“当前值碰巧相等”当成写入事实；同帧重复发布必须有不同 publication identity，旧 receipt 不得确认新结果。
 
 当 Physics World owner 因跳帧而替换时，通用 registry 提供 `world_replace_handlers(previous_world, world, reason)` 生命周期。solver 可以在该边界转移自己拥有的轻量 frame feedback，但不得复制 solver slot、native handle 或结果流；显式 reset/scope restart 仍通过 `scope_restart_handlers` 清理反馈。MC2 BoneCloth 在跳帧时携带上一帧的 source/expected basis，以识别 Blender 暂存的旧 PoseBone 写回；目标帧已经完成动画求值时，adapter 必须优先采用新的当前 basis。统一 writeback 在 restart 时清理过 `PoseBone.matrix_basis` 后，adapter 必须从该 RNA basis 重建输入，不得在同一 frame callback 中回读尚未刷新的 `PoseBone.matrix`。
 
