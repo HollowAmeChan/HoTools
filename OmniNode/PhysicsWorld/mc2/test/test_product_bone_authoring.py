@@ -327,6 +327,8 @@ def test_bone_plan_builds_same_domain_draft_and_spring_filters_colliders():
                     "key": "self",
                     "type": "SPHERE",
                     "owner": armature,
+                    "owner_type": "BONE",
+                    "bone": "Hair",
                     "primary_group": 1,
                     "center": (0, 0, 0),
                     "radius": 1,

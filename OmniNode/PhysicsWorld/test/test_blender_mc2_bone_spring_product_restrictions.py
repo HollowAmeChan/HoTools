@@ -189,7 +189,12 @@ def _run(*, hostile: bool, run_index: int):
                 assert self_debug["edge_primitive_count"] == 0
                 assert self_debug["triangle_primitive_count"] == 0
                 assert not np.asarray(self_debug["contact_types"]).size
-            assert writeback.writeback_bone_transforms(world) == len(positions)
+            expected_bones = sum(
+                int(result["bone_count"])
+                for result in world.result_streams.get("bone_transform", ())
+            )
+            assert expected_bones == 6
+            assert writeback.writeback_bone_transforms(world) == expected_bones
             bpy.context.view_layer.update()
 
         assert owner is not None and effective is not None

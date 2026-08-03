@@ -60,8 +60,10 @@ def test_bone_product_second_domain_failure_is_atomic_and_retryable():
         slots = tuple(world.solver_slots[slot_id] for slot_id in slot_ids)
         owners = tuple(slot.data["owner"] for slot in slots)
         expected_bones = sum(
-            owner.compiled.program.particle_count for owner in owners
+            int(result["bone_count"])
+            for result in world.result_streams.get("bone_transform", ())
         )
+        assert expected_bones == 12
         assert writeback.writeback_bone_transforms(world) == expected_bones
         bpy.context.view_layer.update()
         feedback_key = bone_frame_input.MC2_BONE_FRAME_STATE_KEY
