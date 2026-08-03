@@ -4,7 +4,13 @@ import bpy
 from mathutils import Vector
 from bpy.types import Operator
 from bpy.types import UILayout, Context
-from bpy.props import StringProperty, FloatProperty, IntProperty, PointerProperty
+from bpy.props import (
+    StringProperty,
+    FloatProperty,
+    IntProperty,
+    PointerProperty,
+    EnumProperty,
+)
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight, OP_SimpleDissolveBone
 from Utils import bone_utils
@@ -503,15 +509,70 @@ class OP_SelectTransformedPoseBones(Operator):
 
 
 class OP_Fix_EmptyRotate_Bone(Operator):
+    # 保存父骨骼名称，用于根据打开弹窗时选中的编辑骨骼生成选项。
+    target_parent_name: StringProperty(options={'HIDDEN'})  # type: ignore
+
+    def _target_child_items(self, context):
+        obj = context.object if context is not None else None
+        if obj is None or obj.type != 'ARMATURE' or obj.mode != 'EDIT':
+            return []
+
+        parent = obj.data.edit_bones.get(self.target_parent_name)
+        if parent is None:
+            return []
+        children = [
+            child for child in obj.data.edit_bones if child.parent == parent
+        ]
+        return [
+            (child.name, child.name, "将父骨骼的尾部吸附到该子骨骼的头部")
+            for child in children
+        ]
+
+    target_child_name: EnumProperty(
+        name="吸附到的子骨骼",
+        description="选择将父骨骼尾部吸附到哪个子骨骼的头部",
+        items=_target_child_items,
+    )  # type: ignore
+
     bl_idname = "ho.fix_empty_rotate_bone"
     bl_label = "修复空旋转的骨骼"
-    bl_description = """另选中中骨骼的tail位置设定为子级骨骼的head位置(若有多个子级则设置为平均位置)
+    bl_description = """另选中中骨骼的tail位置设定为子级骨骼的head位置(若有多个子级可在弹窗中选择目标骨骼，默认第一个)
                         若没有子级则将tail位置设置在自己的父级与自己连线的延长线上(保持自己的骨骼长度)"""
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         return context.mode == 'EDIT_ARMATURE' and context.active_bone is not None
+
+    def _ambiguous_bones(self, context):
+        obj = context.object
+        selected_bones = bone_utils.selected_bones(context, obj)
+        return [bone for bone in selected_bones if len(bone.children) > 1]
+
+    def invoke(self, context, event):
+        obj = context.object
+        ambiguous_bones = self._ambiguous_bones(context)
+        if not ambiguous_bones:
+            return self.execute(context)
+
+        active_name = context.active_bone.name if context.active_bone else None
+        target = next(
+            (bone for bone in ambiguous_bones if bone.name == active_name),
+            ambiguous_bones[0],
+        )
+        self.target_parent_name = target.name
+        # 弹窗打开时显式将排列中的第一个子骨骼设为默认值。
+        children = [
+            child for child in obj.data.edit_bones if child.parent == target
+        ]
+        self.target_child_name = children[0].name
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        parent = context.object.data.edit_bones.get(self.target_parent_name)
+        if parent is None or len(parent.children) < 2:
+            return
+        self.layout.prop(self, "target_child_name", text=parent.name)
 
     def execute(self, context):
         obj = context.object
@@ -524,12 +585,18 @@ class OP_Fix_EmptyRotate_Bone(Operator):
             children = [b for b in armature.edit_bones if b.parent == bone]
             
             if children:
-                # 有子骨骼：取子骨骼 head 的平均值
-                avg_head = Vector()
-                for child in children:
-                    avg_head += child.head
-                avg_head /= len(children)
-                bone.tail = avg_head
+                # 有子骨骼：单子级直接吸附，多子级使用弹窗选择的子级。
+                if len(children) == 1:
+                    target_child = children[0]
+                else:
+                    target_child = children[0]
+                    if bone.name == self.target_parent_name:
+                        selected_child = armature.edit_bones.get(
+                            self.target_child_name
+                        )
+                        if selected_child in children:
+                            target_child = selected_child
+                bone.tail = target_child.head
             elif bone.parent:
                 # 没有子骨骼，有父骨骼：保持长度，延长方向
                 direction = (bone.head - bone.parent.head).normalized()
