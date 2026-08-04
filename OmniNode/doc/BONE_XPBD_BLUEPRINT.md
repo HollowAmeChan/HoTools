@@ -212,7 +212,7 @@ solver 先放入同一 Armature 上所有 Pin 骨的完整最终 Pose，再生�
 
 当前严格合同要求每根写回骨的 Pose 祖先链只使用有限、非零、均匀 scale；叶骨自身的有限非奇异 L/R/S 不属于这条早期禁令。即使 `inherit_scale` 理论上能够隔离部分父缩放，首版也不建立例外。对象注册和每帧 feedback 准备都会检查祖先链，注册后被动画改成非法值也会在 native step 前显式报错。
 
-最终目标表完成后，每根骨先反算 `matrix_basis`，再分解并重建 Blender 实际可保存的 canonical L/R/S basis，最后用同一份完整父目标表正向重建 Pose。round-trip 最大矩阵误差超过数值容差时，prepare 必须以“需要 shear、超出 Blender L/R/S 可表示范围”拒绝整批写回，不能发布近似 basis。这样未选祖先、继承模式或其它 evaluated 变换造成的不可表示 shear 也不能静默破坏 Pin；工具层矩阵换算能够往返某个输入，不等于 Bone XPBD 注册合同承诺接受该输入。
+最终目标表完成后，每根骨先反算 `matrix_basis`，再分解并重建 Blender 实际可保存的 canonical L/R/S basis，最后用同一份完整父目标表正向重建 Pose。round-trip 最大矩阵误差超过数值容差时，写回计划预检必须以“需要 shear、超出 Blender L/R/S 可表示范围”拒绝整批写回，不能发布近似 basis。这样未选祖先、继承模式或其它 evaluated 变换造成的不可表示 shear 也不能静默破坏 Pin；工具层矩阵换算能够往返某个输入，不等于 Bone XPBD 注册合同承诺接受该输入。
 
 ### 6.4 跨 solver 同骨目标所有权
 
