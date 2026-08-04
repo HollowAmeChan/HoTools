@@ -163,6 +163,7 @@ class BoneXpbdTopology:
     endpoint_particles: np.ndarray
     stretch_indices: np.ndarray
     bend_indices: np.ndarray
+    segment_pins: np.ndarray
     inverse_masses: np.ndarray
     local_collision_radii: np.ndarray
     topology_signature: str
@@ -180,6 +181,8 @@ class BoneXpbdTopology:
             "segment_count": len(self.segments),
             "stretch_constraint_count": int(self.stretch_indices.shape[0]),
             "bend_constraint_count": int(self.bend_indices.shape[0]),
+            "pinned_segment_count": int(np.count_nonzero(self.segment_pins)),
+            "segment_pins": tuple(bool(value) for value in self.segment_pins),
             "shared_endpoint_count": self.shared_endpoint_count,
             "joint_constraint_count": self.joint_constraint_count,
             "topology_signature": self.topology_signature,
@@ -291,6 +294,7 @@ def build_bone_xpbd_topology(
                 bend_pairs.append((first_opposite, second_opposite))
 
     inverse_masses = np.ones((particle_count,), dtype=np.float32)
+    segment_pins = np.zeros((len(segments),), dtype=np.uint8)
     for index, segment in enumerate(segments):
         pin_override = spec.object_spec.pin_overrides[index]
         pinned = (
@@ -299,6 +303,7 @@ def build_bone_xpbd_topology(
             else pin_override
         )
         if pinned:
+            segment_pins[index] = 1
             inverse_masses[segment.head_particle] = 0.0
             inverse_masses[segment.tail_particle] = 0.0
     radii = np.zeros((particle_count,), dtype=np.float32)
@@ -309,6 +314,7 @@ def build_bone_xpbd_topology(
     endpoint_particles = _readonly(endpoint_particles, np.int32, (-1, 2))
     stretch_indices = _readonly(_canonical_pairs(stretch_pairs), np.int32, (-1, 2))
     bend_indices = _readonly(_canonical_pairs(bend_pairs), np.int32, (-1, 2))
+    segment_pins = _readonly(segment_pins, np.uint8, (len(segments),))
     inverse_masses = _readonly(inverse_masses, np.float32, (particle_count,))
     radii = _readonly(radii, np.float32, (particle_count,))
     topology_signature = _digest(
@@ -322,7 +328,7 @@ def build_bone_xpbd_topology(
     )
     static_signature = _digest(
         "bone_xpbd_static_v1",
-        (inverse_masses, radii),
+        (segment_pins, inverse_masses, radii),
         (topology_signature, spec.static_signature),
     )
     return BoneXpbdTopology(
@@ -335,6 +341,7 @@ def build_bone_xpbd_topology(
         endpoint_particles,
         stretch_indices,
         bend_indices,
+        segment_pins,
         inverse_masses,
         radii,
         topology_signature,

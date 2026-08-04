@@ -64,6 +64,7 @@ class _PoseBone:
         self.name = bone.name
         self.bone = bone
         self.parent = parent
+        self.scale = (1.0, 1.0, 1.0)
 
 
 class _Collection(dict):
@@ -132,6 +133,7 @@ def test_custom_object_uses_socket_pin_without_reading_panel_pin():
     assert custom.property_origin == "socket"
     assert custom.pin_overrides == (True, True)
     graph = topology.build_bone_xpbd_topology(specs.BoneXpbdTaskSpec(custom))
+    assert graph.segment_pins.tolist() == [1, 1]
     assert graph.inverse_masses.tolist() == [0.0, 0.0, 0.0]
 
 
@@ -161,8 +163,28 @@ def test_rest_geometry_builds_shared_endpoint_graph_without_depth():
     assert graph.endpoint_particles.tolist() == [[0, 1], [1, 2], [2, 3], [3, 4]]
     assert graph.stretch_indices.tolist() == [[0, 1], [1, 2], [2, 3], [3, 4]]
     assert graph.bend_indices.tolist() == [[0, 2], [1, 3], [2, 4]]
+    assert graph.segment_pins.tolist() == [1, 0, 0, 1]
     assert graph.inverse_masses.tolist() == [0.0, 0.0, 1.0, 0.0, 0.0]
     assert "depth" not in graph.debug_dict()
+
+
+def test_bone_pin_identity_participates_in_static_signature():
+    armature = _Armature(
+        ((0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)),
+        pins=(0, 2),
+    )
+    names = ("B0", "B1", "B2")
+    obj = object_spec.read_bone_xpbd_panel_objects(_source(armature, names))[0]
+    first = topology.build_bone_xpbd_topology(specs.BoneXpbdTaskSpec(obj))
+    armature.data.bones["B1"].hotools_collision.pin = True
+    second = topology.build_bone_xpbd_topology(specs.BoneXpbdTaskSpec(obj))
+
+    # 两端 Pin 已让全部共享粒子 fixed；骨级 Pin 身份仍必须触发静态更新，
+    # 否则输出阶段无法知道中段是否应锁定完整最终 Pose。
+    assert first.inverse_masses.tolist() == second.inverse_masses.tolist()
+    assert first.segment_pins.tolist() == [1, 0, 1]
+    assert second.segment_pins.tolist() == [1, 1, 1]
+    assert first.static_signature != second.static_signature
 
 
 def test_parent_relation_does_not_connect_noncoincident_endpoints():

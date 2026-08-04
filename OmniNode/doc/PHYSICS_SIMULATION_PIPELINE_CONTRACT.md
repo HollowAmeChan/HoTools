@@ -1117,6 +1117,7 @@ C++ native context:
 **关键约束：**
 
 - 阶段 3（dynamic sync）和阶段 4（step）必须分开，不能合并成"传入参数同时 step"的单次调用，否则无法区分"动画数据更新"和"模拟推进"的性能开销。
+- 会移动的 kinematic target（例如 Pin、anchor）必须区分“上一次成功 step 已消费的目标”和“当前 dynamic sync 待消费的目标”。dynamic sync 可以立即同步只读/暂停显示，但不得前移已消费历史；真实 step 应按自己的实际 substep 数从旧目标连续推进到新目标，并只在整次 step 成功后提交历史。same-frame、零 `dt`、失败 step 和纯重发结果都不得消费这段轨迹；reset/reference replacement 必须显式同步两端历史。
 - `read_results` 写入调用方预分配的 Python buffer（`np.ndarray`），不创建新 numpy 数组。
 - C++ context 不得是隐藏全局单例。
 - C++ context 必须由 Python owner 持有并可释放（存入 solver slot 的 native_context 字段，slot dispose 时触发 free）。
@@ -1139,6 +1140,19 @@ solver step 应产生统一 result stream，而不是直接写 Blender。
 需要以“真实写入成功”排除自身输出反馈的 Bone solver 必须把 result publication 与 writeback confirmation 分开：发布阶段只能暂存 pending 指纹；公共 Bone 写回只有在整组 transaction 完整预检并成功提交后，才为每个 result envelope 产生一条 `bone_writeback_receipt_v1`。receipt 只含递增 serial、frame/generation、solver/slot、transaction/publication 与 Armature object/data identity 等纯值字段，不持有 Blender RNA、plan 或 matrix；失败、回滚或不完整 transaction 不得产生 receipt。solver adapter 只能用匹配 receipt 提升自己的 confirmed 指纹，不能把“计划过”“当前值碰巧相等”当成写入事实；同帧重复发布必须有不同 publication identity，旧 receipt 不得确认新结果。
 
 当 Physics World owner 因跳帧而替换时，通用 registry 提供 `world_replace_handlers(previous_world, world, reason)` 生命周期。solver 可以在该边界转移自己拥有的轻量 frame feedback，但不得复制 solver slot、native handle 或结果流；显式 reset/scope restart 仍通过 `scope_restart_handlers` 清理反馈。MC2 BoneCloth 在跳帧时携带上一帧的 source/expected basis，以识别 Blender 暂存的旧 PoseBone 写回；目标帧已经完成动画求值时，adapter 必须优先采用新的当前 basis。统一 writeback 在 restart 时清理过 `PoseBone.matrix_basis` 后，adapter 必须从该 RNA basis 重建输入，不得在同一 frame callback 中回读尚未刷新的 `PoseBone.matrix`。
+
+### Bone 运动学最终目标所有权合同
+
+任何把模拟结果写回 PoseBone、同时又允许 Pin/anchor 等运动学硬目标的 solver，都必须复用以下顺序与所有权边界：
+
+- 硬目标身份必须来自显式、稳定且可进入 static signature 的声明，不能由 inverse mass、两个端点恰好 Fixed 或当前矩阵值反推。身份切换必须 staged replacement；除非专项蓝本另有完整状态迁移合同，否则不保证旧速度与约束历史无缝延续。
+- 每类硬目标必须声明保存空间及外层对象变换。以 Armature Pose 空间保存的硬目标独立于同批父骨求解结果，但 `Armature.matrix_world` 仍在转换到场景世界时逐帧作用；父骨结果不能在没有目标自身输入变化时悄悄改写锚点。
+- adapter 必须先解析本批全部硬目标的完整最终 Pose，再生成自由/模拟目标；所有最终目标合并完成后，才可使用同一份完整父目标图统一反算全部本地 `matrix_basis`，最后原子提交。禁止逐骨写 Blender、回读父骨、再继续计算子骨。
+- 反算结果必须按宿主真正可保存的通道规范化并做正向 round-trip 验证。对 PoseBone 而言，应把 basis 分解重建为 canonical L/R/S，再结合本批完整父目标图重建最终 Pose；若误差超过领域声明的数值容差，说明目标需要 shear 或其它不可表示自由度，整批必须在发布前失败，不能写入近似局部矩阵。
+- 一个共享粒子或同一写回自由度存在硬目标与普通目标时，硬目标优先；多个硬目标只有在其声明的浮点精度内一致时才能合并，否则必须在 prepare/预检阶段报冲突。作者侧焊接容差和运行时平均都不是合法冲突消解方式。
+- restart、seek 或 writeback 清理后的重建只能从 adapter 声明拥有的新鲜输入通道和本批完整父目标图递归完成，不能读取同一回调中尚未依赖图刷新的 `PoseBone.matrix`。若 adapter 只消费直接 L/R/S 通道，就必须显式拒绝所选 PoseBone 的 Constraint/IK 依赖，不能静默忽略或借 evaluated matrix 绕开反馈合同。
+
+Bone XPBD 的当前具体映射是：`segment_pins` 提供硬目标身份，Pin 保存独立 Armature Pose 空间最终 Pose，仅自身 L/R/S 外部修改刷新；共享端点 Pin 优先且冲突显式报错，非 Pin 才允许从粒子线段和 `tail_follow` 重建。领域的采集细节、数值容差与能力限制继续由 `BONE_XPBD_BLUEPRINT.md` 冻结。
 
 **性能说明：** result stream 不应每帧在 Python 层构造 per-item dict 列表。对于骨骼数量较多的 solver（50+ bones），每帧为每根骨骼创建 Python dict 的开销不可忽视。推荐做法：
 

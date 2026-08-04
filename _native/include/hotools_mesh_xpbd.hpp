@@ -103,10 +103,11 @@ private:
         const ColliderView& colliders,
         std::uint32_t collided_by_groups
     );
-    void apply_pins();
+    void apply_pins(float target_ratio = 1.0F);
 
     bool disposed_ = false;
     std::vector<float> rest_positions_;
+    std::vector<float> last_step_pin_positions_;
     std::vector<float> pin_positions_;
     std::vector<float> positions_;
     std::vector<float> previous_positions_;

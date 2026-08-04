@@ -145,6 +145,88 @@ def test_moving_pin_target_preserves_constraint_rest_length_and_counts_updates()
     )
 
 
+def test_fast_moving_pin_target_is_interpolated_across_substeps():
+    context = _context(compliance=1.0, iterations=1)
+    context.update_pin_targets(
+        np.asarray(((10, 0, 0), (1, 0, 0)), dtype=F32)
+    )
+    np.testing.assert_allclose(
+        context.read_positions()[0], (10, 0, 0), atol=1.0e-6
+    )
+    positions = context.step(
+        1.0,
+        2,
+        np.zeros((3,), dtype=F32),
+        0.0,
+        *_empty_colliders(),
+        0,
+    )
+    np.testing.assert_allclose(positions[0], (10, 0, 0), atol=1.0e-6)
+    np.testing.assert_allclose(positions[1], (3.56, 0, 0), atol=1.0e-6)
+
+
+def test_same_frame_pin_updates_do_not_advance_last_step_target():
+    context = _context(compliance=1.0, iterations=1)
+    context.update_pin_targets(
+        np.asarray(((5, 0, 0), (1, 0, 0)), dtype=F32)
+    )
+    context.update_pin_targets(
+        np.asarray(((10, 0, 0), (1, 0, 0)), dtype=F32)
+    )
+    positions = context.step(
+        1.0,
+        2,
+        np.zeros((3,), dtype=F32),
+        0.0,
+        *_empty_colliders(),
+        0,
+    )
+    np.testing.assert_allclose(positions[1], (3.56, 0, 0), atol=1.0e-6)
+
+
+def test_reset_synchronizes_moving_pin_history_with_cold_context():
+    reset_context = _context(compliance=1.0, iterations=1)
+    reset_context.update_pin_targets(
+        np.asarray(((10, 0, 0), (1, 0, 0)), dtype=F32)
+    )
+    reset_context.reset(np.asarray(((3, 0, 0), (4, 0, 0)), dtype=F32))
+    reset_context.update_pin_targets(
+        np.asarray(((7, 0, 0), (4, 0, 0)), dtype=F32)
+    )
+    reset_positions = reset_context.step(
+        1.0,
+        2,
+        np.zeros((3,), dtype=F32),
+        0.0,
+        *_empty_colliders(),
+        0,
+    )
+
+    cold_context = hotools_native.mesh_xpbd_create_context_v1(
+        np.asarray(((3, 0, 0), (4, 0, 0)), dtype=F32),
+        np.asarray((0, 1), dtype=F32),
+        np.asarray(((0, 1),), dtype=I32),
+        np.empty((0, 2), dtype=I32),
+        np.zeros((2,), dtype=F32),
+        0.0,
+        1.0,
+        0.0,
+        1,
+    )
+    cold_context.update_pin_targets(
+        np.asarray(((7, 0, 0), (4, 0, 0)), dtype=F32)
+    )
+    cold_positions = cold_context.step(
+        1.0,
+        2,
+        np.zeros((3,), dtype=F32),
+        0.0,
+        *_empty_colliders(),
+        0,
+    )
+    np.testing.assert_allclose(reset_positions, cold_positions, atol=1.0e-6)
+
+
 def _particle_context(position):
     return hotools_native.mesh_xpbd_create_context_v1(
         np.asarray((position,), dtype=F32),

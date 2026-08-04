@@ -227,6 +227,14 @@ set_source_files_properties(
         "${CMAKE_CURRENT_LIST_DIR}/src/field_runtime.hpp;${CMAKE_CURRENT_LIST_DIR}/src/field_runtime_bindings.hpp"
 )
 
+# Context 类布局由公共头文件定义；实现与 nanobind 必须作为同一 ABI 批次重编译。
+set_source_files_properties(
+    src/mesh_xpbd.cpp
+    src/mesh_xpbd_bindings.cpp
+    PROPERTIES OBJECT_DEPENDS
+        "${CMAKE_CURRENT_LIST_DIR}/include/hotools_mesh_xpbd.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mesh_xpbd_bindings.hpp"
+)
+
 target_include_directories(hotools_native PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/include"
 )

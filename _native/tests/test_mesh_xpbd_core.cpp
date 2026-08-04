@@ -52,6 +52,59 @@ void test_moving_pin_target_does_not_change_rest_length() {
     require_close(context.positions()[3], 2.0F, "moving pin changed constraint rest length");
 }
 
+void test_fast_moving_pin_uses_substep_trajectory() {
+    auto context = make_distance_context(1.0F, 1);
+    context.update_pin_targets({10.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F});
+    require_close(context.positions()[0], 10.0F, "same-frame pin sync missed its target");
+    context.step(1.0F, 2, {0.0F, 0.0F, 0.0F}, 0.0F, {}, 0U);
+    require_close(context.positions()[0], 10.0F, "moving pin missed its final target");
+    require_close(
+        context.positions()[3], 3.56F,
+        "moving pin target was not interpolated across substeps"
+    );
+}
+
+void test_same_frame_pin_updates_do_not_advance_step_history() {
+    auto context = make_distance_context(1.0F, 1);
+    context.update_pin_targets({5.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F});
+    context.update_pin_targets({10.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F});
+    context.step(1.0F, 2, {0.0F, 0.0F, 0.0F}, 0.0F, {}, 0U);
+    require_close(
+        context.positions()[3], 3.56F,
+        "same-frame pin sync advanced the last consumed target"
+    );
+}
+
+void test_reset_synchronizes_moving_pin_history() {
+    auto reset_context = make_distance_context(1.0F, 1);
+    reset_context.update_pin_targets({10.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F});
+    reset_context.reset({3.0F, 0.0F, 0.0F, 4.0F, 0.0F, 0.0F});
+    reset_context.update_pin_targets({7.0F, 0.0F, 0.0F, 4.0F, 0.0F, 0.0F});
+    reset_context.step(1.0F, 2, {0.0F, 0.0F, 0.0F}, 0.0F, {}, 0U);
+
+    xpbd::Context cold_context(
+        {3.0F, 0.0F, 0.0F, 4.0F, 0.0F, 0.0F},
+        {0.0F, 1.0F},
+        {0, 1},
+        {},
+        {0.0F, 0.0F},
+        0.0F,
+        1.0F,
+        0.0F,
+        1
+    );
+    cold_context.update_pin_targets({7.0F, 0.0F, 0.0F, 4.0F, 0.0F, 0.0F});
+    cold_context.step(1.0F, 2, {0.0F, 0.0F, 0.0F}, 0.0F, {}, 0U);
+
+    for (std::size_t index = 0; index < reset_context.positions().size(); ++index) {
+        require_close(
+            reset_context.positions()[index],
+            cold_context.positions()[index],
+            "reset did not synchronize moving Pin history"
+        );
+    }
+}
+
 void test_sphere_collision() {
     xpbd::Context context(
         {0.5F, 0.0F, 0.0F}, {1.0F}, {}, {}, {0.1F},
@@ -77,8 +130,11 @@ int main() {
         test_accumulated_lambda();
         test_hard_constraint();
         test_moving_pin_target_does_not_change_rest_length();
+        test_fast_moving_pin_uses_substep_trajectory();
+        test_same_frame_pin_updates_do_not_advance_step_history();
+        test_reset_synchronizes_moving_pin_history();
         test_sphere_collision();
-        std::cout << "Mesh XPBD core: 4 passed\n";
+        std::cout << "Mesh XPBD core: 7 passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Mesh XPBD core failure: " << error.what() << '\n';

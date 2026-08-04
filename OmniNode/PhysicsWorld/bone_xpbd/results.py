@@ -2,10 +2,75 @@
 
 from __future__ import annotations
 
+import math
+
 from ..names import BONE_TRANSFORM_CHANNEL
-from ..utils.writeback_pose import matrix_basis_from_pose_matrix
+from ..utils.writeback_pose import (
+    matrix_basis_from_pose_matrix,
+    pose_matrix_from_matrix_basis,
+)
 from ..writeback_commands import make_bone_transform_batch_writeback
 from .names import BONE_XPBD_SOLVER_ID, BONE_XPBD_STATS_CHANNEL
+
+
+_POSE_ROUND_TRIP_ABS_TOLERANCE = 2.0e-5
+_POSE_ROUND_TRIP_REL_TOLERANCE = 2.0e-6
+
+
+def _canonical_basis_for_pose_target(
+    pose_bone,
+    target,
+    all_target_pose_matrices,
+):
+    """按 Blender 真正可保存的 L/R/S 验证最终 Pose 可表示性。"""
+
+    import mathutils
+
+    basis = matrix_basis_from_pose_matrix(
+        pose_bone,
+        target,
+        all_target_pose_matrices,
+    )
+    try:
+        location, rotation, scale = basis.decompose()
+        canonical = mathutils.Matrix.LocRotScale(location, rotation, scale)
+        realized = pose_matrix_from_matrix_basis(
+            pose_bone,
+            canonical,
+            all_target_pose_matrices,
+        )
+        target_values = tuple(
+            float(target[row][column])
+            for row in range(4)
+            for column in range(4)
+        )
+        realized_values = tuple(
+            float(realized[row][column])
+            for row in range(4)
+            for column in range(4)
+        )
+    except Exception:
+        raise ValueError(
+            f"Bone XPBD 最终 Pose 无法转换为 Blender L/R/S: {pose_bone.name!r}"
+        ) from None
+    if not all(math.isfinite(value) for value in (*target_values, *realized_values)):
+        raise ValueError(f"Bone XPBD 最终 Pose 含非有限值: {pose_bone.name!r}")
+    magnitude = max(1.0, *(abs(value) for value in target_values))
+    tolerance = (
+        _POSE_ROUND_TRIP_ABS_TOLERANCE
+        + _POSE_ROUND_TRIP_REL_TOLERANCE * magnitude
+    )
+    error = max(
+        abs(actual - expected)
+        for actual, expected in zip(realized_values, target_values)
+    )
+    if error > tolerance:
+        raise ValueError(
+            "Bone XPBD 最终 Pose 超出 Blender L/R/S 可表示范围；"
+            "完整父目标反算需要 shear，已拒绝整批写回: "
+            f"bone={pose_bone.name!r}, error={error:.6g}, tolerance={tolerance:.6g}"
+        )
+    return canonical
 
 
 def make_bone_xpbd_writeback_plan(
@@ -28,7 +93,7 @@ def make_bone_xpbd_writeback_plan(
     bases = []
     targets = []
     tails = []
-    for segment in topology.segments:
+    for segment_index, segment in enumerate(topology.segments):
         pose_bone = pose_bones.get(segment.bone_name)
         if pose_bone is None:
             raise ValueError(f"Bone XPBD 写回目标已失效: {segment.bone_name!r}")
@@ -40,9 +105,10 @@ def make_bone_xpbd_writeback_plan(
             "parent_name": segment.parent_name,
             "head_particle": segment.head_particle,
             "tail_particle": segment.tail_particle,
+            "pinned": bool(topology.segment_pins[segment_index]),
             "tail_follow": spec.tail_follow,
         })
-        bases.append(matrix_basis_from_pose_matrix(
+        bases.append(_canonical_basis_for_pose_target(
             pose_bone,
             target,
             all_target_pose_matrices,
@@ -86,6 +152,7 @@ def freeze_bone_xpbd_writeback_plan(plan: dict) -> dict:
                 "parent_name": str(record.get("parent_name") or ""),
                 "head_particle": int(record.get("head_particle", -1)),
                 "tail_particle": int(record.get("tail_particle", -1)),
+                "pinned": bool(record.get("pinned", False)),
                 "tail_follow": bool(record.get("tail_follow", True)),
             })
         matrix_bases = tuple(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..utils.writeback_pose import pose_matrix_from_matrix_basis
+from .object_spec import validate_bone_xpbd_pose_scale_contract
 
 
 BONE_XPBD_FRAME_STATE_KEY = "bone_xpbd.frame_state"
@@ -30,6 +31,39 @@ def _matrix_matches(left, right) -> bool:
         return False
 
 
+def _pose_channel_basis(pose_bone):
+    """从独立变换通道构造可持久比较的本地 basis。
+
+    ``PoseBone.matrix_basis`` 可以暂时保留 shear；父级含非均匀 scale 时，
+    Blender 的依赖图会重新解释这份矩阵，即使骨骼自身的 location/rotation/
+    scale 通道没有变化，矩阵值也可能漂移。反馈身份必须比较真正可创作、可动画
+    的独立通道，不能把这种宿主重解释误判成新的外部输入。
+    """
+
+    import mathutils
+
+    mode = str(getattr(pose_bone, "rotation_mode", "QUATERNION") or "QUATERNION")
+    if mode == "QUATERNION":
+        rotation = pose_bone.rotation_quaternion.copy()
+    elif mode == "AXIS_ANGLE":
+        angle, axis_x, axis_y, axis_z = (
+            float(value) for value in pose_bone.rotation_axis_angle
+        )
+        axis = mathutils.Vector((axis_x, axis_y, axis_z))
+        rotation = (
+            mathutils.Quaternion(axis.normalized(), angle)
+            if axis.length_squared > 1.0e-16
+            else mathutils.Quaternion((1.0, 0.0, 0.0, 0.0))
+        )
+    else:
+        rotation = pose_bone.rotation_euler.to_quaternion()
+    return mathutils.Matrix.LocRotScale(
+        pose_bone.location.copy(),
+        rotation,
+        pose_bone.scale.copy(),
+    )
+
+
 def _clone_state(
     state,
     generation: int,
@@ -53,6 +87,7 @@ def _clone_state(
         cloned.pop("armature", None)
         cloned.pop("pose_bone", None)
         cloned["source_basis"] = _copy(entry.get("source_basis"))
+        cloned["source_pose_matrix"] = _copy(entry.get("source_pose_matrix"))
         for name in (
             "confirmed_writeback_basis",
             "pending_writeback_basis",
@@ -206,7 +241,9 @@ class BoneXpbdFeedbackStage:
                     )
                     entry = bones.setdefault(key, {
                         "bone_name": name,
-                        "source_basis": pose_bone.matrix_basis.copy(),
+                        "source_basis": _pose_channel_basis(pose_bone),
+                        "source_pose_matrix": None,
+                        "pinned": bool(record.get("pinned", False)),
                         "confirmed_writeback_basis": None,
                         "confirmed_receipt_key": None,
                         "pending_writeback_basis": None,
@@ -235,21 +272,28 @@ def _resolved_pose_matrices(
     data_ptr: int,
     *,
     restart_required: bool,
+    pinned_names=(),
 ):
     pose_bones = armature.pose.bones
     selected = set(names)
+    pinned_names = frozenset(str(name) for name in pinned_names)
     logical_bases = {}
+    hard_pose_matrices = {}
+    pending_hard_pose_names = set()
     for name in names:
         pose_bone = pose_bones.get(name)
         if pose_bone is None:
             raise ValueError(f"Bone XPBD PoseBone 已失效: {name!r}")
         key = (armature_ptr, data_ptr, name)
-        current = pose_bone.matrix_basis.copy()
+        current = _pose_channel_basis(pose_bone)
+        pinned = name in pinned_names
         entry = state_bones.get(key)
         if entry is None:
             entry = {
                 "bone_name": name,
                 "source_basis": current.copy(),
+                "source_pose_matrix": None,
+                "pinned": pinned,
                 "confirmed_writeback_basis": None,
                 "confirmed_receipt_key": None,
                 "pending_writeback_basis": None,
@@ -257,6 +301,8 @@ def _resolved_pose_matrices(
             }
             state_bones[key] = entry
             logical_bases[name] = current
+            if pinned:
+                pending_hard_pose_names.add(name)
             continue
         expected = entry.get("confirmed_writeback_basis")
         restore_saved = (
@@ -266,19 +312,41 @@ def _resolved_pose_matrices(
         if restore_saved:
             saved_source = _copy(entry.get("source_basis"))
             logical_bases[name] = current if saved_source is None else saved_source
+            if pinned:
+                saved_pose = (
+                    _copy(entry.get("source_pose_matrix"))
+                    if bool(entry.get("pinned", False))
+                    else None
+                )
+                if saved_pose is None:
+                    # 从旧状态或 Move 切换为 Pin 时，稍后从独立通道和完整父目标
+                    # 重建最终 Pose；帧回调内不能回读可能尚未刷新的 PoseBone.matrix。
+                    pending_hard_pose_names.add(name)
+                else:
+                    hard_pose_matrices[name] = saved_pose
         else:
             entry["source_basis"] = current.copy()
+            entry["source_pose_matrix"] = None
             entry["confirmed_writeback_basis"] = None
             entry["confirmed_receipt_key"] = None
             entry["pending_writeback_basis"] = None
             entry["pending_receipt_key"] = None
             logical_bases[name] = current
+            if pinned:
+                pending_hard_pose_names.add(name)
+        entry["pinned"] = pinned
+        if not pinned:
+            entry["source_pose_matrix"] = None
 
     resolved = {}
     resolving = set()
 
     def resolve(name: str):
         if name in resolved:
+            return resolved[name]
+        hard_pose = hard_pose_matrices.get(name)
+        if hard_pose is not None:
+            resolved[name] = hard_pose.copy()
             return resolved[name]
         if name in resolving:
             raise ValueError("Bone XPBD 骨架父级包含循环")
@@ -298,6 +366,11 @@ def _resolved_pose_matrices(
             basis,
             target_parents,
         )
+        if name in pending_hard_pose_names:
+            hard_pose_matrices[name] = pose_matrix.copy()
+            state_bones[(armature_ptr, data_ptr, name)][
+                "source_pose_matrix"
+            ] = pose_matrix.copy()
         resolving.remove(name)
         resolved[name] = pose_matrix
         return pose_matrix
@@ -307,7 +380,12 @@ def _resolved_pose_matrices(
     return resolved
 
 
-def prepare_bone_xpbd_feedback(world, specs) -> BoneXpbdFeedbackStage:
+def prepare_bone_xpbd_feedback(
+    world,
+    specs,
+    *,
+    pinned_bone_keys=(),
+) -> BoneXpbdFeedbackStage:
     generation = int(getattr(world, "generation", 0) or 0)
     resources = world.backend_resources
     base_present = BONE_XPBD_FRAME_STATE_KEY in resources
@@ -324,6 +402,10 @@ def prepare_bone_xpbd_feedback(world, specs) -> BoneXpbdFeedbackStage:
     )
     groups: dict[tuple[int, int], dict] = {}
     active_bones = set()
+    pinned_bone_keys = frozenset(
+        (int(key[0]), int(key[1]), str(key[2]))
+        for key in pinned_bone_keys
+    )
     for spec in specs:
         key = _identity_key(spec.armature)
         expected_key = (
@@ -338,6 +420,7 @@ def prepare_bone_xpbd_feedback(world, specs) -> BoneXpbdFeedbackStage:
             "armature": spec.armature,
             "names": [],
             "seen": set(),
+            "pinned_names": set(),
         })
         for name in spec.bone_names:
             if name not in group["seen"]:
@@ -348,6 +431,8 @@ def prepare_bone_xpbd_feedback(world, specs) -> BoneXpbdFeedbackStage:
                 key[1],
                 name,
             ))
+            if (key[0], key[1], name) in pinned_bone_keys:
+                group["pinned_names"].add(name)
     state["bones"] = {
         key: entry
         for key, entry in state["bones"].items()
@@ -355,6 +440,11 @@ def prepare_bone_xpbd_feedback(world, specs) -> BoneXpbdFeedbackStage:
     }
     logical = {}
     for (armature_ptr, _data_ptr), group in groups.items():
+        # 对象可能跨帧复用；动画在注册后改坏 scale 时也必须在进入目标图前失败。
+        validate_bone_xpbd_pose_scale_contract(
+            group["armature"],
+            tuple(group["names"]),
+        )
         resolved = _resolved_pose_matrices(
             group["armature"],
             tuple(group["names"]),
@@ -362,6 +452,7 @@ def prepare_bone_xpbd_feedback(world, specs) -> BoneXpbdFeedbackStage:
             armature_ptr,
             _data_ptr,
             restart_required=restart_required,
+            pinned_names=group["pinned_names"],
         )
         logical.update(
             ((armature_ptr, name), matrix)

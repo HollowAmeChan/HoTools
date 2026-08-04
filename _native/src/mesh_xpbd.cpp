@@ -117,6 +117,7 @@ Context::Context(
     std::int32_t iterations
 )
     : rest_positions_(std::move(rest_positions)),
+      last_step_pin_positions_(rest_positions_),
       pin_positions_(rest_positions_),
       positions_(rest_positions_),
       previous_positions_(rest_positions_),
@@ -216,6 +217,7 @@ void Context::update_reference(
         throw std::invalid_argument("reference update cannot change particle count");
     }
     rest_positions_ = std::move(rest_positions);
+    last_step_pin_positions_ = rest_positions_;
     pin_positions_ = rest_positions_;
     inverse_masses_ = std::move(inverse_masses);
     collision_radii_ = std::move(collision_radii);
@@ -257,6 +259,8 @@ void Context::reset(const std::vector<float>& positions) {
     require_finite_array(positions, "positions");
     positions_ = positions;
     previous_positions_ = positions;
+    pin_positions_ = positions;
+    last_step_pin_positions_ = positions;
     std::fill(stretch_lambdas_.begin(), stretch_lambdas_.end(), 0.0F);
     std::fill(bend_lambdas_.begin(), bend_lambdas_.end(), 0.0F);
     apply_pins();
@@ -444,12 +448,20 @@ std::uint64_t Context::solve_collisions(
     return contacts;
 }
 
-void Context::apply_pins() {
+void Context::apply_pins(float target_ratio) {
+    const float ratio = std::clamp(target_ratio, 0.0F, 1.0F);
     for (std::size_t particle = 0; particle < inverse_masses_.size(); ++particle) {
         if (inverse_masses_[particle] > 0.0F) {
             continue;
         }
-        const auto target = load3(pin_positions_.data(), particle);
+        const auto previous_target = load3(last_step_pin_positions_.data(), particle);
+        const auto target = add3(
+            previous_target,
+            multiply3(
+                subtract3(load3(pin_positions_.data(), particle), previous_target),
+                ratio
+            )
+        );
         store3(positions_, particle, target);
         store3(previous_positions_, particle, target);
     }
@@ -556,7 +568,9 @@ void Context::step(
                 )
             );
         }
-        apply_pins();
+        const float pin_target_ratio = static_cast<float>(substep + 1) /
+            static_cast<float>(substeps);
+        apply_pins(pin_target_ratio);
         std::fill(stretch_lambdas_.begin(), stretch_lambdas_.end(), 0.0F);
         std::fill(bend_lambdas_.begin(), bend_lambdas_.end(), 0.0F);
         for (std::int32_t iteration = 0; iteration < iterations_; ++iteration) {
@@ -569,12 +583,13 @@ void Context::step(
                 substep_delta_time
             );
             contacts += solve_collisions(colliders, collided_by_groups);
-            apply_pins();
+            apply_pins(pin_target_ratio);
         }
     }
     if (!std::all_of(positions_.begin(), positions_.end(), finite)) {
         throw std::runtime_error("Mesh XPBD produced non-finite positions");
     }
+    last_step_pin_positions_ = pin_positions_;
     ++stats_.step_count;
     stats_.last_contact_count = contacts;
 }
@@ -585,6 +600,7 @@ void Context::dispose() noexcept {
     }
     disposed_ = true;
     rest_positions_.clear();
+    last_step_pin_positions_.clear();
     pin_positions_.clear();
     positions_.clear();
     previous_positions_.clear();

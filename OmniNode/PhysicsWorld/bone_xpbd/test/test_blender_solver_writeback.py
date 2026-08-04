@@ -52,6 +52,9 @@ family_solver = importlib.import_module(
 topology = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.bone_xpbd.topology"
 )
+pose = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.bone_xpbd.pose"
+)
 world_names = importlib.import_module("HoTools.OmniNode.PhysicsWorld.names")
 world_types = importlib.import_module("HoTools.OmniNode.PhysicsWorld.types")
 writeback = importlib.import_module("HoTools.OmniNode.PhysicsWorld.writeback")
@@ -245,6 +248,112 @@ def _matrix_values(matrix) -> np.ndarray:
     return np.asarray(matrix, dtype=np.float64)
 
 
+def test_bone_xpbd_pinned_pose_is_a_hard_target_before_writeback():
+    added_binding, registered_class = _ensure_bone_collision_property()
+    armature = None
+    try:
+        armature, bone_names, _rest_points = _make_explicit_chain()
+        task = _make_task(armature, bone_names, tail_follow=True)
+        graph = topology.build_bone_xpbd_topology(task)
+        frame = pose.build_bone_xpbd_pose_frame(graph, task)
+        displaced = frame.world_positions.copy()
+        displaced += np.asarray((7.0, -3.0, 2.0), dtype=np.float32)
+
+        targets = pose.target_pose_matrices_from_particles(
+            graph,
+            frame,
+            displaced,
+            tail_follow=True,
+        )
+        for index in (0, len(bone_names) - 1):
+            np.testing.assert_allclose(
+                _matrix_values(targets[bone_names[index]]),
+                _matrix_values(frame.source_pose_matrices[index]),
+                rtol=0.0,
+                atol=1.0e-7,
+            )
+        assert not np.allclose(
+            _matrix_values(targets[bone_names[1]]),
+            _matrix_values(frame.source_pose_matrices[1]),
+            rtol=0.0,
+            atol=1.0e-4,
+        )
+    finally:
+        if armature is not None:
+            data = armature.data
+            bpy.data.objects.remove(armature, do_unlink=True)
+            if not data.users:
+                bpy.data.armatures.remove(data)
+        _remove_bone_collision_property(added_binding, registered_class)
+
+
+def test_bone_xpbd_shared_fixed_particle_uses_only_pin_endpoint_target():
+    added_binding, registered_class = _ensure_bone_collision_property()
+    armature = None
+    try:
+        armature, bone_names, _rest_points = _make_explicit_chain()
+        task = _make_task(armature, bone_names, tail_follow=True)
+        graph = topology.build_bone_xpbd_topology(task)
+        logical = {
+            (graph.armature_ptr, name): armature.pose.bones[name].matrix.copy()
+            for name in bone_names
+        }
+        # 末端 Pin 的 head 与上一段 Move 的 tail 共享粒子。故意让 Move source
+        # 偏离，验证它不能再把 fixed target 平均拉走。
+        moved = logical[(graph.armature_ptr, bone_names[-2])].copy()
+        moved.translation.x += 6.0
+        logical[(graph.armature_ptr, bone_names[-2])] = moved
+        frame = pose.build_bone_xpbd_pose_frame(graph, task, logical)
+        terminal = graph.segments[-1]
+        terminal_source = logical[(graph.armature_ptr, terminal.bone_name)]
+        expected = armature.matrix_world @ terminal_source.translation
+        np.testing.assert_allclose(
+            frame.world_positions[terminal.head_particle],
+            tuple(expected),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+    finally:
+        if armature is not None:
+            data = armature.data
+            bpy.data.objects.remove(armature, do_unlink=True)
+            if not data.users:
+                bpy.data.armatures.remove(data)
+        _remove_bone_collision_property(added_binding, registered_class)
+
+
+def test_bone_xpbd_rejects_conflicting_pin_targets_on_shared_particle():
+    added_binding, registered_class = _ensure_bone_collision_property()
+    armature = None
+    try:
+        armature, bone_names, _rest_points = _make_explicit_chain()
+        armature.data.bones[bone_names[-2]].hotools_collision.pin = True
+        task = _make_task(armature, bone_names, tail_follow=True)
+        graph = topology.build_bone_xpbd_topology(task)
+        logical = {
+            (graph.armature_ptr, name): armature.pose.bones[name].matrix.copy()
+            for name in bone_names
+        }
+        moved = logical[(graph.armature_ptr, bone_names[-2])].copy()
+        # 即使差异仍小于 authoring weld tolerance，也不能静默平均两个硬锚。
+        moved.translation.x += 5.0e-6
+        logical[(graph.armature_ptr, bone_names[-2])] = moved
+        try:
+            pose.build_bone_xpbd_pose_frame(graph, task, logical)
+        except ValueError as exc:
+            assert "Pin 端点" in str(exc)
+            assert "互相冲突" in str(exc)
+        else:
+            raise AssertionError("Bone XPBD 静默平均了互相冲突的 Pin 世界目标")
+    finally:
+        if armature is not None:
+            data = armature.data
+            bpy.data.objects.remove(armature, do_unlink=True)
+            if not data.users:
+                bpy.data.armatures.remove(data)
+        _remove_bone_collision_property(added_binding, registered_class)
+
+
 def test_bone_xpbd_explicit_chain_step_reset_same_frame_and_tail_follow():
     added_binding, registered_class = _ensure_bone_collision_property()
     armature = None
@@ -265,6 +374,7 @@ def test_bone_xpbd_explicit_chain_step_reset_same_frame_and_tail_follow():
             graph.endpoint_particles,
             ((0, 1), (1, 2), (2, 3), (3, 4)),
         )
+        np.testing.assert_array_equal(graph.segment_pins, (1, 0, 0, 1))
         np.testing.assert_allclose(graph.rest_armature_positions, rest_points, atol=1.0e-7)
         np.testing.assert_array_equal(graph.inverse_masses, (0.0, 0.0, 1.0, 0.0, 0.0))
 
@@ -308,6 +418,24 @@ def test_bone_xpbd_explicit_chain_step_reset_same_frame_and_tail_follow():
         assert follow_plan["schema"] == "bone_xpbd_writeback_plan_v1"
         assert len(follow_batch["records"]) == len(bone_names)
         assert all(record["tail_follow"] is True for record in follow_batch["records"])
+        assert [record["pinned"] for record in follow_batch["records"]] == [
+            True,
+            False,
+            False,
+            True,
+        ]
+        for name, record, target in zip(
+            bone_names,
+            follow_batch["records"],
+            follow_batch["target_pose_matrices"],
+        ):
+            if record["pinned"]:
+                np.testing.assert_allclose(
+                    _matrix_values(target),
+                    _matrix_values(initial_pose_matrices[name]),
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
         assert any(
             _rotation_delta(target, initial_pose_matrices[name]) > 1.0e-5
             for name, target in zip(bone_names, follow_batch["target_pose_matrices"])
@@ -643,7 +771,7 @@ def test_bone_xpbd_prepare_failure_discards_old_slot_and_cold_rebuilds():
             feedback.BONE_XPBD_FRAME_STATE_KEY
         ]
 
-        def fail_prepare(_world, _specs):
+        def fail_prepare(_world, _specs, **_kwargs):
             raise ReferenceError("模拟 Blender 对象引用在准备阶段失效")
 
         solver.prepare_bone_xpbd_feedback = fail_prepare
@@ -872,12 +1000,44 @@ def test_bone_xpbd_failed_writeback_keeps_last_confirmed_feedback_source():
             )
 
         _set_frame(world, 4)
-        staged = feedback.prepare_bone_xpbd_feedback(world, (task,))
+        topology = world.solver_slots[task.slot_id].data["topology"]
+        pinned_names = {
+            segment.bone_name
+            for segment, pinned in zip(topology.segments, topology.segment_pins)
+            if bool(pinned)
+        }
+        pinned_keys = {
+            (
+                topology.armature_ptr,
+                topology.armature_data_ptr,
+                name,
+            )
+            for name in pinned_names
+        }
+        staged = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (task,),
+            pinned_bone_keys=pinned_keys,
+        )
         for name in bone_names:
             np.testing.assert_allclose(
                 _matrix_values(staged.logical_pose_matrices[
                     (int(armature.as_pointer()), name)
                 ]),
+                _matrix_values(source_pose[name]),
+                rtol=0.0,
+                atol=1.0e-6,
+            )
+        for name in pinned_names:
+            entry = staged.state["bones"][(
+                int(armature.as_pointer()),
+                int(armature.data.as_pointer()),
+                name,
+            )]
+            assert entry["pinned"] is True
+            assert entry["source_pose_matrix"] is not None
+            np.testing.assert_allclose(
+                _matrix_values(entry["source_pose_matrix"]),
                 _matrix_values(source_pose[name]),
                 rtol=0.0,
                 atol=1.0e-6,
@@ -1007,6 +1167,153 @@ def test_bone_xpbd_task_parse_failure_clears_entire_solver_batch():
         _remove_bone_collision_property(added_binding, registered_class)
 
 
+def test_bone_xpbd_runtime_nonuniform_scale_fails_before_step_and_cold_rebuilds():
+    added_binding, registered_class = _ensure_bone_collision_property()
+    armature = None
+    world = world_types.PhysicsWorldCache()
+    world.generation = 1
+    try:
+        armature, bone_names, _rest_points = _make_explicit_chain()
+        task = _make_task(armature, bone_names, tail_follow=True)
+        _set_frame(world, 1)
+        assert solver.step_bone_xpbd(world, [task])[0] == 1
+        owner = world.solver_slots[task.slot_id].data["native_context"]
+        assert owner.stats()["step_count"] == 0
+        assert writeback.writeback_bone_transforms(world) == len(bone_names)
+        feedback_state = world.backend_resources[
+            feedback.BONE_XPBD_FRAME_STATE_KEY
+        ]
+        receipt_count = len(writeback.get_bone_writeback_receipts(world))
+
+        root = armature.pose.bones[bone_names[0]]
+        root.scale = (1.9, 0.45, 1.3)
+        bpy.context.view_layer.update()
+        _set_frame(world, 2)
+        try:
+            solver.step_bone_xpbd(world, [task])
+        except ValueError as exc:
+            assert "完整 Pose 祖先链" in str(exc)
+            assert bone_names[0] in str(exc)
+        else:
+            raise AssertionError("Bone XPBD 在非法 scale 下推进了 native step")
+
+        assert not owner.ready
+        assert task.slot_id not in world.solver_slots
+        assert world.backend_resources[
+            feedback.BONE_XPBD_FRAME_STATE_KEY
+        ] is feedback_state
+        assert len(writeback.get_bone_writeback_receipts(world)) == receipt_count
+        assert world.consume_results(
+            world_names.BONE_TRANSFORM_CHANNEL,
+            solver=names.BONE_XPBD_SOLVER_ID,
+        ) == []
+        failed_stats = results.get_bone_xpbd_stats_result(world)
+        assert failed_stats["status"] == "error"
+        assert failed_stats["stepped_slot_count"] == 0
+
+        root.scale = (1.0, 1.0, 1.0)
+        bpy.context.view_layer.update()
+        _set_frame(world, 3)
+        assert solver.step_bone_xpbd(world, [task])[0] == 1
+        rebuilt = world.solver_slots[task.slot_id].data["native_context"]
+        assert rebuilt is not owner
+        assert rebuilt.ready
+        assert rebuilt.stats()["step_count"] == 0
+        recovered_stats = results.get_bone_xpbd_stats_result(world)
+        assert recovered_stats["status"] == "ok"
+        assert recovered_stats["reset_slot_count"] == 1
+    finally:
+        world.omni_cache_dispose("bone_xpbd_runtime_scale_contract_complete")
+        if armature is not None:
+            data = armature.data
+            bpy.data.objects.remove(armature, do_unlink=True)
+            if not data.users:
+                bpy.data.armatures.remove(data)
+        _remove_bone_collision_property(added_binding, registered_class)
+
+
+def test_bone_xpbd_fast_moving_pins_remain_exact_and_finite():
+    added_binding, registered_class = _ensure_bone_collision_property()
+    armature = None
+    world = world_types.PhysicsWorldCache()
+    world.generation = 1
+    try:
+        armature, bone_names, _rest_points = _make_explicit_chain()
+        task = _make_task(armature, bone_names, tail_follow=True)
+        root = armature.pose.bones[bone_names[0]]
+        max_pin_error = 0.0
+        max_pin_pose_error = 0.0
+        max_absolute_position = 0.0
+
+        for frame in range(1, 121):
+            if frame > 1:
+                sign = -1.0 if frame % 2 else 1.0
+                root.matrix_basis = (
+                    mathutils.Matrix.Translation((0.8 * sign, 0.35 * sign, 0.0))
+                    @ mathutils.Matrix.Rotation(2.45 * sign, 4, "Z")
+                )
+                bpy.context.view_layer.update()
+
+            _set_frame(world, frame)
+            world.frame_context.substeps = 3
+            assert solver.step_bone_xpbd(
+                world, [task], debug_capture=True
+            )[0] == 1
+            slot = world.solver_slots[task.slot_id]
+            capture = slot.data["debug_capture"]
+            positions = capture["world_positions"]
+            targets = capture["rest_world_positions"]
+            fixed = capture["inverse_masses"] <= 0.0
+            assert np.isfinite(positions).all()
+            max_pin_error = max(
+                max_pin_error,
+                float(np.max(np.linalg.norm(
+                    positions[fixed] - targets[fixed],
+                    axis=1,
+                ))),
+            )
+            max_absolute_position = max(
+                max_absolute_position,
+                float(np.max(np.abs(positions))),
+            )
+
+            batch = slot.data["writeback_plan"]["batches"][0]
+            pinned_targets = {
+                record["bone_name"]: target.copy()
+                for record, target in zip(
+                    batch["records"],
+                    batch["target_pose_matrices"],
+                )
+                if record["pinned"]
+            }
+            assert set(pinned_targets) == {bone_names[0], bone_names[-1]}
+
+            _batch_result(world)
+            assert writeback.writeback_bone_transforms(world) == len(bone_names)
+            bpy.context.view_layer.update()
+            for name, target in pinned_targets.items():
+                error = float(np.max(np.abs(
+                    _matrix_values(armature.pose.bones[name].matrix)
+                    - _matrix_values(target)
+                )))
+                max_pin_pose_error = max(max_pin_pose_error, error)
+
+        assert max_pin_error <= 1.0e-6
+        assert max_pin_pose_error <= 2.0e-5
+        assert max_absolute_position < 1.0e4
+        assert world.solver_slots[task.slot_id].data[
+            "native_context"
+        ].stats()["step_count"] == 119
+    finally:
+        world.omni_cache_dispose("bone_xpbd_fast_pin_soak_complete")
+        if armature is not None:
+            data = armature.data
+            bpy.data.objects.remove(armature, do_unlink=True)
+            if not data.users:
+                bpy.data.armatures.remove(data)
+        _remove_bone_collision_property(added_binding, registered_class)
+
+
 def test_bone_xpbd_armature_world_scale_rebuilds_collision_radii():
     added_binding, registered_class = _ensure_bone_collision_property()
     armature = None
@@ -1044,6 +1351,55 @@ def test_bone_xpbd_armature_world_scale_rebuilds_collision_radii():
         assert stats["reset_slot_count"] == 1
     finally:
         world.omni_cache_dispose("bone_xpbd_scale_dirty_complete")
+        if armature is not None:
+            data = armature.data
+            bpy.data.objects.remove(armature, do_unlink=True)
+            if not data.users:
+                bpy.data.armatures.remove(data)
+        _remove_bone_collision_property(added_binding, registered_class)
+
+
+def test_bone_xpbd_writeback_rejects_unrepresentable_sheared_pose_target():
+    added_binding, registered_class = _ensure_bone_collision_property()
+    armature = None
+    world = world_types.PhysicsWorldCache()
+    world.generation = 1
+    try:
+        armature, bone_names, _rest_points = _make_explicit_chain()
+        task = _make_task(armature, bone_names, tail_follow=True)
+        graph = topology.build_bone_xpbd_topology(task, world=world)
+        anchored_targets = {
+            name: armature.pose.bones[name].matrix.copy()
+            for name in bone_names
+        }
+
+        root = armature.pose.bones[bone_names[0]]
+        root.matrix_basis = mathutils.Matrix.LocRotScale(
+            (0.4, -0.2, 0.1),
+            mathutils.Quaternion((0.0, 0.0, 1.0), 1.1),
+            (1.9, 0.45, 1.3),
+        )
+        bpy.context.view_layer.update()
+        targets = dict(anchored_targets)
+        targets[bone_names[0]] = root.matrix.copy()
+        try:
+            results.make_bone_xpbd_writeback_plan(
+                spec=task,
+                topology=graph,
+                target_pose_matrices=targets,
+                all_target_pose_matrices=targets,
+                world_positions=np.zeros(
+                    (graph.particle_count, 3),
+                    dtype=np.float32,
+                ),
+            )
+        except ValueError as exc:
+            assert "Blender L/R/S 可表示范围" in str(exc)
+            assert "shear" in str(exc)
+        else:
+            raise AssertionError("Bone XPBD 发布了无法由 Blender L/R/S 表达的 Pose")
+    finally:
+        world.omni_cache_dispose("bone_xpbd_pose_round_trip_complete")
         if armature is not None:
             data = armature.data
             bpy.data.objects.remove(armature, do_unlink=True)

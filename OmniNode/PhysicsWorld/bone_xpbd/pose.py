@@ -72,6 +72,8 @@ def build_bone_xpbd_pose_frame(
     inverse_world = matrix_world.inverted()
     pose_bones = armature.pose.bones
     logical = logical_pose_matrices or {}
+    if len(topology.segment_pins) != len(topology.segments):
+        raise ValueError("Bone XPBD 骨级 Pin 标记与拓扑段数量不一致")
     raw_world = np.empty((len(topology.segments) * 2, 3), dtype=np.float64)
     source_matrices = []
     for index, segment in enumerate(topology.segments):
@@ -93,14 +95,40 @@ def build_bone_xpbd_pose_frame(
         raw_world[index * 2] = tuple(float(value) for value in head_world)
         raw_world[index * 2 + 1] = tuple(float(value) for value in tail_world)
 
-    compact = np.zeros((topology.particle_count, 3), dtype=np.float64)
-    counts = np.zeros((topology.particle_count,), dtype=np.int32)
-    for raw_index, particle in enumerate(topology.endpoint_particles.reshape(-1)):
-        compact[int(particle)] += raw_world[raw_index]
-        counts[int(particle)] += 1
-    compact /= counts[:, None]
     axis_scales = np.linalg.norm(world_array[:3, :3], axis=0)
     radius_scale = float(np.max(axis_scales))
+    coordinate_magnitude = max(1.0, float(np.max(np.abs(raw_world), initial=0.0)))
+    conflict_tolerance = max(
+        1.0e-6,
+        4.0 * float(np.finfo(np.float32).eps) * coordinate_magnitude,
+    )
+    contributors = [[] for _index in range(topology.particle_count)]
+    for raw_index, particle in enumerate(topology.endpoint_particles.reshape(-1)):
+        contributors[int(particle)].append(raw_index)
+    compact = np.empty((topology.particle_count, 3), dtype=np.float64)
+    for particle, raw_indices in enumerate(contributors):
+        pinned_indices = [
+            raw_index
+            for raw_index in raw_indices
+            if bool(topology.segment_pins[raw_index // 2])
+        ]
+        selected_indices = pinned_indices or raw_indices
+        selected_positions = raw_world[selected_indices]
+        target = np.mean(selected_positions, axis=0)
+        if pinned_indices:
+            deviations = np.linalg.norm(selected_positions - target, axis=1)
+            if float(np.max(deviations, initial=0.0)) > conflict_tolerance:
+                labels = ", ".join(
+                    f"{topology.segments[index // 2].bone_name}."
+                    f"{'head' if index % 2 == 0 else 'tail'}"
+                    for index in pinned_indices
+                )
+                raise ValueError(
+                    "Bone XPBD 多个 Pin 端点为同一共享粒子提供了互相冲突的世界目标: "
+                    f"particle={particle}, endpoints=[{labels}]"
+                )
+        # 只要共享粒子含 Pin 贡献，普通 Move 端点就不能稀释硬锚目标。
+        compact[particle] = target
     radii = np.asarray(topology.local_collision_radii, dtype=np.float64) * radius_scale
     compact = np.ascontiguousarray(compact, dtype=np.float32)
     radii = np.ascontiguousarray(radii, dtype=np.float32)
@@ -144,15 +172,34 @@ def target_pose_matrices_from_particles(
     *,
     tail_follow: bool,
 ) -> dict[str, object]:
-    """以模拟 head 为平移，以 head->tail 方向吸附旋转并保留参考 roll/scale。"""
+    """先锁定 Pin 骨最终 Pose，再从粒子线段重建其余骨骼。"""
 
     import mathutils
 
     positions = np.asarray(world_positions, dtype=np.float64)
     if positions.shape != (topology.particle_count, 3) or not np.isfinite(positions).all():
         raise ValueError("Bone XPBD 输出 positions 与拓扑不匹配")
-    result = {}
-    for segment, source_matrix in zip(topology.segments, frame.source_pose_matrices):
+    if len(topology.segment_pins) != len(topology.segments):
+        raise ValueError("Bone XPBD 骨级 Pin 标记与拓扑段数量不一致")
+
+    result = {
+        segment.bone_name: source_matrix.copy()
+        for segment, source_matrix, pinned in zip(
+            topology.segments,
+            frame.source_pose_matrices,
+            topology.segment_pins,
+        )
+        if bool(pinned)
+    }
+    for segment, source_matrix, pinned in zip(
+        topology.segments,
+        frame.source_pose_matrices,
+        topology.segment_pins,
+    ):
+        if bool(pinned):
+            # Pin 的语义是完整最终 Pose 硬目标。不能再用 head->tail 线段
+            # 反推旋转，否则父级剧烈运动时会丢失 roll 并产生写回抖动。
+            continue
         head_world = mathutils.Vector(positions[segment.head_particle])
         tail_world = mathutils.Vector(positions[segment.tail_particle])
         head = frame.inverse_matrix_world @ head_world

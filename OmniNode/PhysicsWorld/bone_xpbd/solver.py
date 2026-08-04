@@ -70,12 +70,18 @@ def _slot_replacement_reason(world, spec, topology, pose_frame) -> str:
     return ""
 
 
-def _prepare_tasks(world, specs, logical_pose_matrices) -> list[_PreparedTask]:
+def _prepare_tasks(
+    world,
+    specs,
+    topologies,
+    logical_pose_matrices,
+) -> list[_PreparedTask]:
     prepared = []
     current_staged = None
     try:
-        for spec in specs:
-            topology = build_bone_xpbd_topology(spec, world=world)
+        if len(specs) != len(topologies):
+            raise ValueError("Bone XPBD task 与 topology 数量不一致")
+        for spec, topology in zip(specs, topologies):
             pose_frame = build_bone_xpbd_pose_frame(
                 topology,
                 spec,
@@ -319,6 +325,7 @@ def _capture_slot_debug(
     slot.data["debug_capture"] = {
         "world_positions": positions.copy(),
         "rest_world_positions": item.pose_frame.world_positions.copy(),
+        "segment_pins": item.topology.segment_pins.copy(),
         "inverse_masses": item.topology.inverse_masses.copy(),
         "endpoint_particles": item.topology.endpoint_particles.copy(),
         "stretch_indices": item.topology.stretch_indices.copy(),
@@ -352,10 +359,29 @@ def step_bone_xpbd(
         raise
     active_specs = tuple(spec for spec in specs if spec.enabled)
     try:
-        feedback_stage = prepare_bone_xpbd_feedback(world, active_specs)
+        topologies = tuple(
+            build_bone_xpbd_topology(spec, world=world)
+            for spec in active_specs
+        )
+        pinned_bone_keys = {
+            (
+                topology.armature_ptr,
+                topology.armature_data_ptr,
+                segment.bone_name,
+            )
+            for topology in topologies
+            for segment, pinned in zip(topology.segments, topology.segment_pins)
+            if bool(pinned)
+        }
+        feedback_stage = prepare_bone_xpbd_feedback(
+            world,
+            active_specs,
+            pinned_bone_keys=pinned_bone_keys,
+        )
         prepared = _prepare_tasks(
             world,
             active_specs,
+            topologies,
             feedback_stage.logical_pose_matrices,
         )
     except Exception as exc:

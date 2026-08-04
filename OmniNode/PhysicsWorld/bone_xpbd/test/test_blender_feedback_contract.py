@@ -105,6 +105,17 @@ def _world(generation: int, *, restart: bool = False):
     )
 
 
+def _pinned_keys(armature, names):
+    return {
+        (
+            int(armature.as_pointer()),
+            int(armature.data.as_pointer()),
+            str(name),
+        )
+        for name in names
+    }
+
+
 def _stage_single_expectation(stage, armature, bone_name, matrix_basis) -> dict:
     pose_bone = armature.pose.bones[bone_name]
     result = {
@@ -196,6 +207,87 @@ def test_feedback_rejects_result_for_another_armature_identity():
         _remove_rig(armature)
 
 
+def test_feedback_uses_pose_channels_for_own_sheared_writeback_identity():
+    armature, bone_names = _make_rig()
+    bone_name = bone_names[-1]
+    pose_bone = armature.pose.bones[bone_name]
+    world = _world(1)
+    try:
+        source_basis = feedback._pose_channel_basis(pose_bone)
+        source_pose = pose_bone.matrix.copy()
+        stage = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (_feedback_spec(armature, (bone_name,)),),
+        )
+        # matrix_basis 可以携带 shear，但 Blender 独立变换通道只能保存其
+        # location/rotation/scale 分解。旧反馈直接比较矩阵，会把自己的成功
+        # 写回误判成外部动画输入。
+        sheared_output = mathutils.Matrix((
+            (1.0, 0.35, 0.0, 0.25),
+            (0.0, 1.0, 0.2, -0.15),
+            (0.1, 0.0, 1.0, 0.05),
+            (0.0, 0.0, 0.0, 1.0),
+        ))
+        result = _stage_single_expectation(
+            stage,
+            armature,
+            bone_name,
+            sheared_output,
+        )
+        stage.commit(world)
+        diagnostics = {"frame": 1, "generation": 1, "receipts": []}
+        writeback._append_bone_writeback_receipt(world, diagnostics, result)
+        pose_bone.matrix_basis = sheared_output
+        bpy.context.view_layer.update()
+
+        world.frame_context.frame = 2
+        restored = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (_feedback_spec(armature, (bone_name,)),),
+        )
+        _assert_matrix_close(
+            restored.logical_pose_matrices[(int(armature.as_pointer()), bone_name)],
+            source_pose,
+        )
+        key = (
+            int(armature.as_pointer()),
+            int(armature.data.as_pointer()),
+            bone_name,
+        )
+        _assert_matrix_close(restored.state["bones"][key]["source_basis"], source_basis)
+        restored.commit(world)
+
+        # 真正修改独立通道仍必须成为新一帧宿主输入，不能被 receipt 吞掉。
+        pose_bone.location = (0.6, -0.2, 0.1)
+        pose_bone.rotation_mode = "QUATERNION"
+        pose_bone.rotation_quaternion = mathutils.Quaternion(
+            (0.0, 0.0, 1.0),
+            0.4,
+        )
+        bpy.context.view_layer.update()
+        external_basis = feedback._pose_channel_basis(pose_bone)
+        external_pose = writeback_pose.pose_matrix_from_matrix_basis(
+            pose_bone,
+            external_basis,
+            {},
+        )
+        world.frame_context.frame = 3
+        overridden = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (_feedback_spec(armature, (bone_name,)),),
+        )
+        _assert_matrix_close(
+            overridden.logical_pose_matrices[(int(armature.as_pointer()), bone_name)],
+            external_pose,
+        )
+        _assert_matrix_close(
+            overridden.state["bones"][key]["source_basis"],
+            external_basis,
+        )
+    finally:
+        _remove_rig(armature)
+
+
 def test_feedback_key_contains_object_data_and_bone_and_prunes_inactive_entries():
     armature, bone_names = _make_rig()
     world = _world(1)
@@ -243,6 +335,7 @@ def test_frame_jump_uses_current_rna_basis_after_writeback_clear():
     previous = _world(1)
     current = _world(2, restart=True)
     override_world = _world(2, restart=True)
+    pins = _pinned_keys(armature, (bone_name,))
     try:
         source_basis = mathutils.Matrix.LocRotScale(
             (0.15, -0.1, 0.05),
@@ -254,6 +347,7 @@ def test_frame_jump_uses_current_rna_basis_after_writeback_clear():
         stage = feedback.prepare_bone_xpbd_feedback(
             previous,
             (_feedback_spec(armature, (bone_name,)),),
+            pinned_bone_keys=pins,
         )
         output_basis = mathutils.Matrix.Rotation(-0.7, 4, "X")
         result = _stage_single_expectation(
@@ -279,6 +373,7 @@ def test_frame_jump_uses_current_rna_basis_after_writeback_clear():
         restored = feedback.prepare_bone_xpbd_feedback(
             current,
             (_feedback_spec(armature, (bone_name,)),),
+            pinned_bone_keys=pins,
         )
         identity_pose = writeback_pose.pose_matrix_from_matrix_basis(
             pose_bone,
@@ -300,10 +395,127 @@ def test_frame_jump_uses_current_rna_basis_after_writeback_clear():
         overridden = feedback.prepare_bone_xpbd_feedback(
             override_world,
             (_feedback_spec(armature, (bone_name,)),),
+            pinned_bone_keys=pins,
         )
         _assert_matrix_close(
             overridden.logical_pose_matrices[(int(armature.as_pointer()), bone_name)],
             override_pose,
+        )
+    finally:
+        _remove_rig(armature)
+
+
+def test_terminal_pin_keeps_independent_pose_when_only_parent_source_moves():
+    armature, bone_names = _make_rig()
+    root_name, child_name = bone_names
+    world = _world(1)
+    pins = _pinned_keys(armature, (child_name,))
+    try:
+        child = armature.pose.bones[child_name]
+        stage = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (_feedback_spec(armature, bone_names),),
+            pinned_bone_keys=pins,
+        )
+        anchor = stage.logical_pose_matrices[
+            (int(armature.as_pointer()), child_name)
+        ].copy()
+        output_basis = child.matrix_basis.copy()
+        result = _stage_single_expectation(
+            stage,
+            armature,
+            child_name,
+            output_basis,
+        )
+        stage.commit(world)
+        diagnostics = {"frame": 1, "generation": 1, "receipts": []}
+        writeback._append_bone_writeback_receipt(world, diagnostics, result)
+
+        # 子骨没有直接输入变化，仅祖先发生宿主动画。Pin 必须继续拥有原世界锚，
+        # 不能把保存的局部 basis 重新叠到新父姿态上。
+        armature.pose.bones[root_name].matrix_basis = mathutils.Matrix.LocRotScale(
+            (1.8, -0.4, 0.2),
+            mathutils.Quaternion((0.0, 0.0, 1.0), 1.1),
+            (1.0, 1.0, 1.0),
+        )
+        child.matrix_basis = output_basis
+        bpy.context.view_layer.update()
+        live_pose = child.matrix.copy()
+        assert float((live_pose.translation - anchor.translation).length) > 0.5
+
+        restored = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (_feedback_spec(armature, bone_names),),
+            pinned_bone_keys=pins,
+        )
+        _assert_matrix_close(
+            restored.logical_pose_matrices[
+                (int(armature.as_pointer()), child_name)
+            ],
+            anchor,
+        )
+        _assert_matrix_close(
+            restored.state["bones"][
+                (
+                    int(armature.as_pointer()),
+                    int(armature.data.as_pointer()),
+                    child_name,
+                )
+            ]["source_pose_matrix"],
+            anchor,
+        )
+    finally:
+        _remove_rig(armature)
+
+
+def test_terminal_pin_refreshes_anchor_when_its_own_channels_change():
+    armature, bone_names = _make_rig()
+    child_name = bone_names[-1]
+    child = armature.pose.bones[child_name]
+    world = _world(1)
+    pins = _pinned_keys(armature, (child_name,))
+    try:
+        stage = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (_feedback_spec(armature, bone_names),),
+            pinned_bone_keys=pins,
+        )
+        previous_anchor = stage.logical_pose_matrices[
+            (int(armature.as_pointer()), child_name)
+        ].copy()
+        output_basis = feedback._pose_channel_basis(child)
+        result = _stage_single_expectation(
+            stage,
+            armature,
+            child_name,
+            output_basis,
+        )
+        stage.commit(world)
+        diagnostics = {"frame": 1, "generation": 1, "receipts": []}
+        writeback._append_bone_writeback_receipt(world, diagnostics, result)
+
+        child.location = (0.45, -0.25, 0.15)
+        child.rotation_mode = "QUATERNION"
+        child.rotation_quaternion = mathutils.Quaternion(
+            (1.0, 0.0, 0.0),
+            0.55,
+        )
+        bpy.context.view_layer.update()
+        external_pose = child.matrix.copy()
+        assert float(
+            (external_pose.translation - previous_anchor.translation).length
+        ) > 0.1
+
+        refreshed = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (_feedback_spec(armature, bone_names),),
+            pinned_bone_keys=pins,
+        )
+        _assert_matrix_close(
+            refreshed.logical_pose_matrices[
+                (int(armature.as_pointer()), child_name)
+            ],
+            external_pose,
         )
     finally:
         _remove_rig(armature)
@@ -357,6 +569,69 @@ def test_object_registration_rejects_connected_bones():
             assert bone_names[1] in str(exc)
         else:
             raise AssertionError("Bone XPBD 接受了 use_connect=True 的骨骼")
+    finally:
+        _remove_rig(armature)
+
+
+def test_object_registration_rejects_pose_bone_constraints():
+    armature, bone_names = _make_rig()
+    try:
+        armature.pose.bones[bone_names[-1]].constraints.new("COPY_LOCATION")
+        try:
+            object_spec.BoneXpbdObjectSpec(armature, bone_names)
+        except ValueError as exc:
+            assert "Constraint/IK" in str(exc)
+            assert bone_names[-1] in str(exc)
+        else:
+            raise AssertionError("Bone XPBD 接受了无法隔离反馈的 PoseBone Constraint")
+    finally:
+        _remove_rig(armature)
+
+
+def test_object_registration_rejects_nonuniform_pose_scale_in_parent_chain():
+    armature, bone_names = _make_rig()
+    try:
+        armature.pose.bones[bone_names[0]].scale = (1.9, 0.45, 1.3)
+        bpy.context.view_layer.update()
+        try:
+            object_spec.BoneXpbdObjectSpec(armature, bone_names[-1:])
+        except ValueError as exc:
+            assert "完整 Pose 祖先链" in str(exc)
+            assert bone_names[0] in str(exc)
+        else:
+            raise AssertionError("Bone XPBD 接受了非均匀 Pose scale 的父链")
+    finally:
+        _remove_rig(armature)
+
+
+def test_feedback_rejects_pose_scale_animated_nonuniform_after_registration():
+    armature, bone_names = _make_rig()
+    child_name = bone_names[-1]
+    world = _world(1)
+    spec = _feedback_spec(armature, bone_names)
+    pins = _pinned_keys(armature, (child_name,))
+    try:
+        initial = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (spec,),
+            pinned_bone_keys=pins,
+        )
+        initial.commit(world)
+
+        armature.pose.bones[bone_names[0]].scale = (1.9, 0.45, 1.3)
+        bpy.context.view_layer.update()
+        world.frame_context.frame = 2
+        try:
+            feedback.prepare_bone_xpbd_feedback(
+                world,
+                (spec,),
+                pinned_bone_keys=pins,
+            )
+        except ValueError as exc:
+            assert "Blender L/R/S 无法表达的 shear" in str(exc)
+            assert bone_names[0] in str(exc)
+        else:
+            raise AssertionError("Bone XPBD 运行中接受了非均匀 Pose scale")
     finally:
         _remove_rig(armature)
 

@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
+import math
+
+
+_POSE_SCALE_ABS_TOLERANCE = 1.0e-6
+_POSE_SCALE_REL_TOLERANCE = 1.0e-5
 
 
 def _pointer(value) -> int:
@@ -25,6 +30,55 @@ def _signature(payload: dict) -> str:
         separators=(",", ":"),
     ).encode("ascii")
     return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def validate_bone_xpbd_pose_scale_contract(armature, bone_names) -> None:
+    """拒绝会让子骨最终 Pose 反算需要 shear 的祖先 scale。"""
+
+    pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
+    if pose_bones is None:
+        raise ReferenceError("Bone XPBD Armature Pose 已失效")
+    checked = set()
+    invalid = []
+    for selected_name in bone_names:
+        pose_bone = pose_bones.get(str(selected_name))
+        if pose_bone is None:
+            raise ReferenceError(f"Bone XPBD PoseBone 已失效: {selected_name!r}")
+        # 骨自身的任意有限非奇异 L/R/S 可由自己的 basis 表达；只有它作为
+        # 另一个写回骨的父变换时，非均匀 scale 才会迫使子骨补偿 shear。
+        pose_bone = pose_bone.parent
+        while pose_bone is not None:
+            name = str(pose_bone.name)
+            if name in checked:
+                break
+            checked.add(name)
+            try:
+                scale = tuple(float(value) for value in pose_bone.scale)
+            except (ReferenceError, TypeError, ValueError):
+                raise ReferenceError(f"Bone XPBD PoseBone 已失效: {name!r}") from None
+            magnitude = max((abs(value) for value in scale), default=0.0)
+            tolerance = max(
+                _POSE_SCALE_ABS_TOLERANCE,
+                _POSE_SCALE_REL_TOLERANCE * magnitude,
+            )
+            if (
+                len(scale) != 3
+                or not all(math.isfinite(value) for value in scale)
+                or magnitude <= _POSE_SCALE_ABS_TOLERANCE
+                or max(scale) - min(scale) > tolerance
+            ):
+                invalid.append((name, scale))
+            pose_bone = pose_bone.parent
+    if invalid:
+        details = ", ".join(
+            f"{name}=({', '.join(f'{value:.6g}' for value in scale)})"
+            for name, scale in invalid
+        )
+        raise ValueError(
+            "Bone XPBD 当前只支持写回骨骼完整 Pose 祖先链中的有限、非零、"
+            "均匀 scale；非均匀父变换会让 Pin 最终 Pose 需要 Blender L/R/S "
+            f"无法表达的 shear: {details}"
+        )
 
 
 def _bone_collection(value) -> tuple[object, tuple[str, ...], str] | None:
@@ -102,6 +156,17 @@ class BoneXpbdObjectSpec:
         ]
         if missing:
             raise ValueError(f"Bone XPBD 找不到骨骼: {', '.join(missing)}")
+        constrained = [
+            name
+            for name in names
+            if len(getattr(pose_bones.get(name), "constraints", ())) > 0
+        ]
+        if constrained:
+            raise ValueError(
+                "Bone XPBD 当前不支持带 PoseBone Constraint/IK 的模拟骨骼: "
+                f"{', '.join(constrained)}；请先移除约束再注册"
+            )
+        validate_bone_xpbd_pose_scale_contract(self.armature, names)
         connected = [
             name for name in names
             if bool(getattr(data_bones.get(name), "use_connect", False))
@@ -257,4 +322,5 @@ __all__ = [
     "BoneXpbdObjectSpec",
     "make_bone_xpbd_custom_objects",
     "read_bone_xpbd_panel_objects",
+    "validate_bone_xpbd_pose_scale_contract",
 ]
