@@ -62,6 +62,7 @@ public:
         float bend_compliance,
         std::int32_t iterations
     );
+    void set_orientation_guard(bool enabled);
     void update_pin_targets(std::vector<float> pin_positions);
     void reset(const std::vector<float>& positions);
     void step(
@@ -99,6 +100,9 @@ private:
         float compliance,
         float substep_delta_time
     );
+    void enforce_orientation_guard(
+        const std::vector<Constraint>& constraints
+    );
     std::uint64_t solve_collisions(
         const ColliderView& colliders,
         std::uint32_t collided_by_groups
@@ -111,6 +115,7 @@ private:
     std::vector<float> pin_positions_;
     std::vector<float> positions_;
     std::vector<float> previous_positions_;
+    std::vector<float> orientation_reference_positions_;
     std::vector<float> inverse_masses_;
     std::vector<float> collision_radii_;
     std::vector<std::int32_t> stretch_indices_;
@@ -123,6 +128,7 @@ private:
     float stretch_compliance_ = 0.0F;
     float bend_compliance_ = 0.0F;
     std::int32_t iterations_ = 0;
+    bool orientation_guard_ = false;
     ContextStats stats_;
 };
 

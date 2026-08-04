@@ -123,6 +123,8 @@ void bind_mesh_xpbd(nb::module_& module) {
         .def("update_parameters", &mesh_xpbd::Context::update_parameters,
             nb::arg("damping"), nb::arg("stretch_compliance"),
             nb::arg("bend_compliance"), nb::arg("iterations"))
+        .def("set_orientation_guard", &mesh_xpbd::Context::set_orientation_guard,
+            nb::arg("enabled"))
         .def("reset", [](mesh_xpbd::Context& context, cf32_2d positions) {
             require_float3_rows(positions, "positions");
             context.reset(copy_float_2d(positions));

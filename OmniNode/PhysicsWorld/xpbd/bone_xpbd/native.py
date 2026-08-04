@@ -54,6 +54,10 @@ class BoneXpbdNativeContext:
             raise RuntimeError(
                 "hotools_native 缺少 Bone XPBD 所需的 moving Pin target API"
             )
+        if not hasattr(context, "set_orientation_guard"):
+            context.dispose()
+            raise RuntimeError("hotools_native 缺少 Bone XPBD 方向防倒转 API")
+        context.set_orientation_guard(True)
         previous = self._context
         self._context = context
         self.topology_signature = topology.topology_signature

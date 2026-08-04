@@ -121,6 +121,7 @@ Context::Context(
       pin_positions_(rest_positions_),
       positions_(rest_positions_),
       previous_positions_(rest_positions_),
+      orientation_reference_positions_(rest_positions_),
       inverse_masses_(std::move(inverse_masses)),
       collision_radii_(std::move(collision_radii)),
       stretch_indices_(std::move(stretch_indices)),
@@ -219,6 +220,7 @@ void Context::update_reference(
     rest_positions_ = std::move(rest_positions);
     last_step_pin_positions_ = rest_positions_;
     pin_positions_ = rest_positions_;
+    orientation_reference_positions_ = rest_positions_;
     inverse_masses_ = std::move(inverse_masses);
     collision_radii_ = std::move(collision_radii);
     rebuild_constraints();
@@ -231,6 +233,10 @@ void Context::update_pin_targets(std::vector<float> pin_positions) {
         throw std::invalid_argument("pin_positions must match particle count");
     }
     require_finite_array(pin_positions, "pin_positions");
+    if (orientation_guard_) {
+        // Pin 目标在步进前会立即写入固定粒子；方向参考必须保留在写入前。
+        orientation_reference_positions_ = positions_;
+    }
     pin_positions_ = std::move(pin_positions);
     apply_pins();
     ++stats_.pin_target_update_count;
@@ -251,6 +257,12 @@ void Context::update_parameters(
     ++stats_.parameter_update_count;
 }
 
+void Context::set_orientation_guard(bool enabled) {
+    require_live();
+    orientation_guard_ = enabled;
+    orientation_reference_positions_ = positions_;
+}
+
 void Context::reset(const std::vector<float>& positions) {
     require_live();
     if (positions.size() != positions_.size()) {
@@ -259,6 +271,7 @@ void Context::reset(const std::vector<float>& positions) {
     require_finite_array(positions, "positions");
     positions_ = positions;
     previous_positions_ = positions;
+    orientation_reference_positions_ = positions;
     pin_positions_ = positions;
     last_step_pin_positions_ = positions;
     std::fill(stretch_lambdas_.begin(), stretch_lambdas_.end(), 0.0F);
@@ -266,6 +279,70 @@ void Context::reset(const std::vector<float>& positions) {
     apply_pins();
     ++stats_.reset_count;
     stats_.last_contact_count = 0;
+}
+
+void Context::enforce_orientation_guard(
+    const std::vector<Constraint>& constraints
+) {
+    if (!orientation_guard_) {
+        return;
+    }
+    for (const Constraint& constraint : constraints) {
+        const std::size_t first = static_cast<std::size_t>(constraint.first);
+        const std::size_t second = static_cast<std::size_t>(constraint.second);
+        const auto reference_delta = subtract3(
+            load3(orientation_reference_positions_.data(), first),
+            load3(orientation_reference_positions_.data(), second)
+        );
+        const auto current_first = load3(positions_.data(), first);
+        const auto current_second = load3(positions_.data(), second);
+        const auto current_delta = subtract3(current_first, current_second);
+        const float reference_length = length3(reference_delta);
+        const float current_length = length3(current_delta);
+        if (reference_length <= kEpsilon || current_length <= kEpsilon ||
+            dot3(reference_delta, current_delta) >= 0.0F) {
+            continue;
+        }
+
+        const auto direction = multiply3(reference_delta, 1.0F / reference_length);
+        const float first_weight = inverse_masses_[first];
+        const float second_weight = inverse_masses_[second];
+        const float total_weight = first_weight + second_weight;
+        if (total_weight <= kEpsilon) {
+            continue;
+        }
+        if (first_weight <= 0.0F) {
+            store3(
+                positions_, second,
+                subtract3(current_first, multiply3(direction, current_length))
+            );
+            store3(previous_positions_, second, load3(positions_.data(), second));
+        } else if (second_weight <= 0.0F) {
+            store3(
+                positions_, first,
+                add3(current_second, multiply3(direction, current_length))
+            );
+            store3(previous_positions_, first, load3(positions_.data(), first));
+        } else {
+            const auto center = multiply3(
+                add3(
+                    multiply3(current_first, second_weight),
+                    multiply3(current_second, first_weight)
+                ),
+                1.0F / total_weight
+            );
+            store3(
+                positions_, first,
+                add3(center, multiply3(direction, current_length * first_weight / total_weight))
+            );
+            store3(
+                positions_, second,
+                subtract3(center, multiply3(direction, current_length * second_weight / total_weight))
+            );
+            store3(previous_positions_, first, load3(positions_.data(), first));
+            store3(previous_positions_, second, load3(positions_.data(), second));
+        }
+    }
 }
 
 void Context::solve_distance_constraints(
@@ -547,7 +624,6 @@ void Context::step(
     );
     const auto acceleration = multiply3(gravity_normal, gravity_power);
     std::uint64_t contacts = 0;
-
     for (std::int32_t substep = 0; substep < substeps; ++substep) {
         for (std::size_t particle = 0; particle < inverse_masses_.size(); ++particle) {
             if (inverse_masses_[particle] <= 0.0F) {
@@ -584,12 +660,16 @@ void Context::step(
             );
             contacts += solve_collisions(colliders, collided_by_groups);
             apply_pins(pin_target_ratio);
+            enforce_orientation_guard(stretch_constraints_);
         }
     }
     if (!std::all_of(positions_.begin(), positions_.end(), finite)) {
         throw std::runtime_error("Mesh XPBD produced non-finite positions");
     }
     last_step_pin_positions_ = pin_positions_;
+    if (orientation_guard_) {
+        orientation_reference_positions_ = positions_;
+    }
     ++stats_.step_count;
     stats_.last_contact_count = contacts;
 }
@@ -604,6 +684,7 @@ void Context::dispose() noexcept {
     pin_positions_.clear();
     positions_.clear();
     previous_positions_.clear();
+    orientation_reference_positions_.clear();
     inverse_masses_.clear();
     collision_radii_.clear();
     stretch_indices_.clear();

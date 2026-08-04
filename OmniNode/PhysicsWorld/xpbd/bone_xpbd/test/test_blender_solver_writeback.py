@@ -1245,6 +1245,7 @@ def test_bone_xpbd_fast_moving_pins_remain_exact_and_finite():
         max_pin_error = 0.0
         max_pin_pose_error = 0.0
         max_absolute_position = 0.0
+        previous_positions = None
 
         for frame in range(1, 121):
             if frame > 1:
@@ -1266,6 +1267,19 @@ def test_bone_xpbd_fast_moving_pins_remain_exact_and_finite():
             targets = capture["rest_world_positions"]
             fixed = capture["inverse_masses"] <= 0.0
             assert np.isfinite(positions).all()
+            if previous_positions is not None:
+                previous_edges = np.diff(previous_positions, axis=0)
+                current_edges = np.diff(positions, axis=0)
+                previous_lengths = np.linalg.norm(previous_edges, axis=1)
+                current_lengths = np.linalg.norm(current_edges, axis=1)
+                valid = (previous_lengths > 1.0e-6) & (current_lengths > 1.0e-6)
+                valid &= ~(fixed[:-1] & fixed[1:])
+                direction_dots = np.sum(previous_edges * current_edges, axis=1)
+                direction_dots[valid] /= (
+                    previous_lengths[valid] * current_lengths[valid]
+                )
+                assert float(np.min(direction_dots[valid])) >= -1.0e-5
+            previous_positions = positions.copy()
             max_pin_error = max(
                 max_pin_error,
                 float(np.max(np.linalg.norm(
