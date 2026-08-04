@@ -313,9 +313,14 @@ def _resolved_pose_matrices(
             saved_source = _copy(entry.get("source_basis"))
             logical_bases[name] = current if saved_source is None else saved_source
             if pinned:
+                parent_drives_pin = (
+                    pose_bone.parent is not None
+                    and pose_bone.parent.name in pinned_names
+                )
                 saved_pose = (
                     _copy(entry.get("source_pose_matrix"))
                     if bool(entry.get("pinned", False))
+                    and not parent_drives_pin
                     else None
                 )
                 if saved_pose is None:

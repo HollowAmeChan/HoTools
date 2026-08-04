@@ -522,6 +522,83 @@ def test_terminal_pin_refreshes_anchor_when_its_own_channels_change():
         _remove_rig(armature)
 
 
+def test_child_pin_follows_parent_pin_final_pose():
+    armature, bone_names = _make_rig()
+    root_name, child_name = bone_names
+    world = _world(1)
+    pins = _pinned_keys(armature, bone_names)
+    try:
+        stage = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (_feedback_spec(armature, bone_names),),
+            pinned_bone_keys=pins,
+        )
+        root = armature.pose.bones[root_name]
+        child = armature.pose.bones[child_name]
+        root_basis = root.matrix_basis.copy()
+        child_basis = child.matrix_basis.copy()
+        result = {
+            "solver": "bone_xpbd",
+            "slot_id": "feedback-parent-pin-slot",
+            "transaction_id": "feedback-parent-pin-transaction",
+            "transaction_index": 0,
+            "transaction_size": 1,
+            "frame": 1,
+            "generation": 1,
+            "publication_id": 1,
+            "armature_ptr": int(armature.as_pointer()),
+            "armature_data_ptr": int(armature.data.as_pointer()),
+        }
+        stage.stage_writeback_expectations(({
+            "armature": armature,
+            "batches": ({
+                "records": (
+                    {"bone_name": root_name, "pose_bone": root},
+                    {"bone_name": child_name, "pose_bone": child},
+                ),
+                "matrix_bases": (root_basis, child_basis),
+            },),
+        },), (result,))
+        stage.commit(world)
+        diagnostics = {"frame": 1, "generation": 1, "receipts": []}
+        writeback._append_bone_writeback_receipt(world, diagnostics, result)
+
+        root.matrix_basis = mathutils.Matrix.LocRotScale(
+            (1.8, -0.4, 0.2),
+            mathutils.Quaternion((0.0, 0.0, 1.0), 1.1),
+            (1.0, 1.0, 1.0),
+        )
+        child.matrix_basis = child_basis
+        bpy.context.view_layer.update()
+        root_target = root.matrix.copy()
+        live_child = child.matrix.copy()
+        assert float((live_child.translation - stage.logical_pose_matrices[
+            (int(armature.as_pointer()), child_name)
+        ].translation).length) > 0.5
+
+        world.frame_context.frame = 2
+        refreshed = feedback.prepare_bone_xpbd_feedback(
+            world,
+            (_feedback_spec(armature, bone_names),),
+            pinned_bone_keys=pins,
+        )
+        expected_child = writeback_pose.pose_matrix_from_matrix_basis(
+            child,
+            child_basis,
+            {root_name: root_target},
+        )
+        _assert_matrix_close(
+            refreshed.logical_pose_matrices[(int(armature.as_pointer()), root_name)],
+            root_target,
+        )
+        _assert_matrix_close(
+            refreshed.logical_pose_matrices[(int(armature.as_pointer()), child_name)],
+            expected_child,
+        )
+    finally:
+        _remove_rig(armature)
+
+
 def test_pose_round_trip_uses_blender_bone_inheritance_contract():
     armature, bone_names = _make_rig()
     try:
