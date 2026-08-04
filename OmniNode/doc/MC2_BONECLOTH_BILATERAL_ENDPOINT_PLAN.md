@@ -1,6 +1,6 @@
 # BoneCloth 双端点与双边界链规划
 
-> 状态：MC2 边界与源码回退已冻结，py313 已更新、py311 发布库因运行中 Blender 文件锁待覆盖；Bone XPBD 实验性 vertical slice 与统一 XPBD 调度入口已落地；Field、multiscale chord/rod 与生产冻结仍待完成
+> 状态：MC2 边界与源码回退已冻结，py311/py313 发布库均已更新并通过安装路径回归；Bone XPBD 实验性 vertical slice 与统一 XPBD 调度入口已落地；Field、multiscale chord/rod 与生产冻结仍待完成
 >
 > 目标：明确每根骨骼的端点语义，解释双端 fixed 链中段塌软的来源，并确定 MC2、Mesh XPBD 与未来杆链解算路径的边界。
 

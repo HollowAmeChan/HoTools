@@ -281,7 +281,7 @@ Field evaluator、Volume、scope、participation 和生命周期继续归 Physic
 
 ## 12. 下一阶段优先级与验收
 
-1. py311/py313 隔离构建、C++ core 与 `update_pin_targets` 数值/ABI 回归已经通过；py313 发布库已覆盖。当前运行中的 Blender 锁住已安装 py311 库，发布前仍须关闭这些进程、覆盖最终 py311 产物并从安装路径复跑导入与 Blender 闭环。
+1. py311/py313 隔离构建、C++ core 与 `update_pin_targets` 数值/ABI 回归已经通过；两个 ABI 的发布库均已覆盖，并从 Blender 4.5.8 安装路径复跑导入、反馈、节点、写回和属性注册闭环。
 2. 固化 Blender 双端 Fixed 工程，覆盖创建、连续 step、same-frame、暂停、回帧 restart、Tail 吸附开关、`use_connect=True` 拒绝、多 task、task prune、Cache Delete 和插件注销。
 3. 把 13 点探针写成可重复 fixture，记录零重力 rest、重力下垂、左右镜像误差、最大 stretch/bend residual、iterations/substeps 曲线和耗时。
 4. 将公共 Field Wind 接到 native XPBD substep，同时给 Mesh XPBD 使用相同响应 ABI；先做 no-op、确定性和作用域矩阵，再开放 UI。
