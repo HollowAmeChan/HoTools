@@ -18,8 +18,8 @@ _BUILTIN_SOLVER_DOMAINS = (
     "spring_vrm",
     "rigid",
     "mc2",
-    "mesh_xpbd",
-    "bone_xpbd",
+    "xpbd.simple_mesh_xpbd",
+    "xpbd.bone_xpbd",
 )
 _BUILTIN_COMPONENT_DOMAINS = ("collision", "field", "simple_cloth")
 _RUNTIME_SOLVER_MODULES: dict[str, dict] = {}
@@ -127,6 +127,7 @@ def _default_descriptor(domain: str) -> dict:
     return {
         "domain": str(domain),
         "solver_id": str(domain),
+        "menu_group": None,
         "menu_name": str(domain),
         "declaration": None,
         "nodes": (),
@@ -326,9 +327,21 @@ def iter_world_dispose_handlers() -> list[dict]:
 
 
 def resolve_solver_declaration(domain: str):
-    descriptor = _solver_descriptor(domain)
+    key = _solver_domain_from_id(domain)
+    descriptor = _solver_descriptor(key)
     declaration_ref = descriptor.get("declaration")
-    return _resolve_declaration_ref(domain, declaration_ref)
+    return _resolve_declaration_ref(key, declaration_ref)
+
+
+def _solver_domain_from_id(domain_or_solver_id: str) -> str:
+    """允许公共查询继续使用稳定 solver_id，而不暴露包目录布局。"""
+    key = str(domain_or_solver_id)
+    if key in _BUILTIN_SOLVER_DOMAINS or key in _RUNTIME_SOLVER_MODULES:
+        return key
+    for domain, descriptor in all_solver_module_descriptors().items():
+        if _descriptor_solver_id(domain, descriptor) == key:
+            return domain
+    return key
 
 
 def iter_solver_declarations() -> list[dict]:
@@ -354,45 +367,61 @@ def iter_solver_node_modules() -> list[dict]:
 
 
 def iter_solver_node_groups() -> list[dict]:
-    """Return public node modules grouped by their owning solver."""
+    """按公共菜单组汇总节点，同时保留各运行域自己的 solver_id。"""
     groups: list[dict] = []
+    grouped: dict[str, dict] = {}
     for domain, descriptor in all_solver_module_descriptors().items():
         solver_id = _descriptor_solver_id(domain, descriptor)
+        menu_group = str(descriptor.get("menu_group") or solver_id).strip() or solver_id
         menu_name = str(descriptor.get("menu_name") or solver_id).strip() or solver_id
-        modules: list[dict] = []
+        group = grouped.get(menu_group)
+        if group is None:
+            group = {
+                "domain": domain,
+                "solver_id": menu_group,
+                "menu_name": menu_name,
+                "modules": [],
+            }
+            grouped[menu_group] = group
+            groups.append(group)
+        elif group["menu_name"] != menu_name:
+            raise RuntimeError(
+                f"solver菜单组 {menu_group} 声明了不一致的名称："
+                f"{group['menu_name']} / {menu_name}"
+            )
         for module_ref in _as_tuple(descriptor.get("nodes")):
             module = _resolve_module_ref(domain, module_ref)
             if module is None:
                 continue
-            modules.append({
+            group["modules"].append({
                 "domain": domain,
                 "solver_id": solver_id,
+                "menu_group": menu_group,
                 "menu_name": menu_name,
                 "module_ref": module_ref,
                 "module": module,
             })
-        if modules:
-            groups.append({
-                "domain": domain,
-                "solver_id": solver_id,
-                "menu_name": menu_name,
-                "modules": tuple(modules),
-            })
-    return groups
+    return [
+        {**group, "modules": tuple(group["modules"])}
+        for group in groups
+        if group["modules"]
+    ]
 
 
 def resolve_solver_capabilities(domain: str) -> dict:
-    descriptor = _solver_descriptor(domain)
+    key = _solver_domain_from_id(domain)
+    descriptor = _solver_descriptor(key)
     ref = descriptor.get("capabilities")
-    value = _resolve_ref(domain, ref)
+    value = _resolve_ref(key, ref)
     return deepcopy(value) if isinstance(value, dict) else {}
 
 
 def resolve_solver_blender_properties(domain: str) -> dict:
     """解析 solver 自己声明的 Blender class 与 RNA binding。"""
-    descriptor = _solver_descriptor(domain)
+    key = _solver_domain_from_id(domain)
+    descriptor = _solver_descriptor(key)
     ref = descriptor.get("blender_properties")
-    value = _resolve_ref(domain, ref)
+    value = _resolve_ref(key, ref)
     return value if isinstance(value, dict) else {}
 
 
@@ -656,9 +685,10 @@ def unregister_solver_blender_properties() -> None:
 
 
 def resolve_solver_debug_draw_modes(domain: str) -> dict:
-    descriptor = _solver_descriptor(domain)
+    key = _solver_domain_from_id(domain)
+    descriptor = _solver_descriptor(key)
     ref = descriptor.get("debug_draw_modes")
-    value = _resolve_ref(domain, ref)
+    value = _resolve_ref(key, ref)
     return deepcopy(value) if isinstance(value, dict) else {}
 
 
@@ -737,36 +767,37 @@ def validate_solver_registry() -> dict:
             problems.append(problem)
 
     for domain, descriptor in all_solver_module_descriptors().items():
-        _check_unique(seen_solver_ids, "solver_id", _descriptor_solver_id(domain, descriptor), domain)
+        solver_id = _descriptor_solver_id(domain, descriptor)
+        _check_unique(seen_solver_ids, "solver_id", solver_id, domain)
         declaration = resolve_solver_declaration(domain) or {}
 
         for slot_kind in _as_tuple(declaration.get("slot_kind")):
-            _check_unique(seen_slot_kinds, "slot_kind", slot_kind, domain)
+            _check_unique(seen_slot_kinds, "slot_kind", slot_kind, solver_id)
 
         export = declaration.get("export") if isinstance(declaration.get("export"), dict) else {}
         for channel in _as_tuple(export.get("result_channels")):
             key = str(channel or "").strip()
             shared_owners = seen_shared_result_channels.get(key, [])
             if shared_owners:
-                _ownership_problem(key, domain, shared_owners)
-            _check_unique(seen_result_channels, "result_channel", channel, domain)
+                _ownership_problem(key, solver_id, shared_owners)
+            _check_unique(seen_result_channels, "result_channel", channel, solver_id)
         for channel in _as_tuple(export.get("shared_result_channels")):
             key = str(channel or "").strip()
             exclusive_owner = seen_result_channels.get(key)
             if exclusive_owner is not None:
-                _ownership_problem(key, exclusive_owner, [domain])
-            _append_owner(seen_shared_result_channels, key, domain)
+                _ownership_problem(key, exclusive_owner, [solver_id])
+            _append_owner(seen_shared_result_channels, key, solver_id)
         for channel in _as_tuple(export.get("planned_result_channels")):
-            _append_owner(planned_result_channels, channel, domain)
+            _append_owner(planned_result_channels, channel, solver_id)
         for channel in _as_tuple(export.get("planned_shared_result_channels")):
-            _append_owner(planned_shared_result_channels, channel, domain)
+            _append_owner(planned_shared_result_channels, channel, solver_id)
 
         implicit = declaration.get("implicit_objects") if isinstance(declaration.get("implicit_objects"), dict) else {}
         for tag in _as_tuple(implicit.get("consumes")) + _as_tuple(implicit.get("planned")):
-            _check_unique(seen_implicit_tags, "implicit_object_tag", tag, domain)
+            _check_unique(seen_implicit_tags, "implicit_object_tag", tag, solver_id)
 
         for mode_id in resolve_solver_debug_draw_modes(domain):
-            _check_unique(seen_debug_modes, "debug_draw_mode", mode_id, domain)
+            _check_unique(seen_debug_modes, "debug_draw_mode", mode_id, solver_id)
 
     return {
         "valid": not problems,

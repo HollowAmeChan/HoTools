@@ -7,7 +7,7 @@
 Mesh XPBD 保留，但只保留为一个干净、可读、可扩展 Physics World 的基础纯 Mesh solver 蓝本：
 
 - 它解决单个 Mesh 的粒子距离约束，不承担 MC2 的融合域、对象收集、自碰撞和 GPU 路线。
-- 它与 SpringBone VRM 一样是独立 solver module，不是 MC2 setup。
+- 它是 `PhysicsWorld/xpbd` 家族内独立持有 slot/result 的 Simple Mesh 任务域，不是 MC2 setup，也不是与 Bone 数据融合的 payload。
 - 它验证 Mesh topology、native context、公共碰撞和 GN 写回的最小完整生命周期。
 - 生产验收后冻结能力和数值语义。未来高级 XPBD 改良另起 solver id，不在这个基线上不断加分支。
 
@@ -137,7 +137,7 @@ Context.dispose()
 - stats/debug 是请求驱动；关闭时不额外复制 topology、particle 或 collider 数组。
 - debug 至少公开 frame decision、slot status、particle/stretch/bend/collider counts、step time、non-finite guard 和 native context generation。
 - debug 观察 production pass，不另跑一遍 shadow solver。
-- `XPBD可视化调试` 独立位于模拟步下游；任一视图开启后才请求下一次 solver 捕获，全部关闭时清除快照并移除视口 draw handler。
+- `XPBD通用可视化调试` 同时读取 Simple Mesh 与 Bone 域的粒子、Stretch、Bend；`Simple Mesh XPBD详细调试` 只补充表面、法线、rest偏移、半径、碰撞体与接触审计。任一视图开启后才请求下一次 solver 捕获，全部关闭时清除快照并移除视口 draw handler。
 - 调试节点不拥有第二套帧生命周期。world owner 被 runtime 替换或销毁时，即使节点本帧没有再次执行，注册表调度的 dispose hook 也必须清除其冻结快照和视口 handler。
 - 可视化覆盖 Move/Pin 粒子、当前三角面、Stretch/Bend 相对 rest 误差、rest 偏移、表面法线、任务重力、逐粒子半径、实际消费的四类公共碰撞体，以及最终位置的接触接近/残余穿透审计。
 - 任务筛选、每类显示上限、约束误差阈值、接触边距和显示缩放只影响调试读取与绘制，不进入 solver 参数或 dirty key。
@@ -151,7 +151,7 @@ Context.dispose()
 5. **旧路径删除**：一次删除 `_MeshPhysics`、`_MeshPhysicsCppBackend`、两个旧节点、私有 `_OmniCache` payload、`XPBDDelta`/`xpbd_delta` 和悬空 native 名称；不保留运行兼容层。
 6. **冻结**：记录最终参数默认值、ABI/layout version、能力矩阵和性能基线。此后只修 bug、兼容性和确定性，不扩张产品范围。
 
-截至 2026-08-01，阶段 1 到 4 已完成。生产验收使用 Blender 4.5.8 只读加载 `OMNI测试.blend`，在其中真实 8 顶点 `Cube` 上连续运行 180 帧：177 次 native step、2 次有意 reset、公共平面碰撞、逐帧 GN 写回、同帧重发布、零 dt 暂停、world restart、参数热更新和 `matrix_world` 动画均保持单一 slot/context；最终最大局部 offset 约 `0.5881`，全程有限。对应回归脚本为 `mesh_xpbd/test/test_blender_production_soak.py`。
+截至 2026-08-01，阶段 1 到 4 已完成。生产验收使用 Blender 4.5.8 只读加载 `OMNI测试.blend`，在其中真实 8 顶点 `Cube` 上连续运行 180 帧：177 次 native step、2 次有意 reset、公共平面碰撞、逐帧 GN 写回、同帧重发布、零 dt 暂停、world restart、参数热更新和 `matrix_world` 动画均保持单一 slot/context；最终最大局部 offset 约 `0.5881`，全程有限。对应回归脚本为 `xpbd/simple_mesh_xpbd/test/test_blender_production_soak.py`。
 
 dirty/lifecycle 回归同时覆盖：孤立顶点导致的 particle-count topology replacement、Basis/reference 静态 reset、纯数值参数热更新、矩阵参考系更新保留惯性、generation replacement、task prune 和 world dispose。阶段 5 完成前仍不得标记为冻结。
 

@@ -316,19 +316,17 @@ def test_solver_node_modules_are_grouped_by_manifest_menu_name():
         "spring_vrm",
         "rigid_jolt",
         "mc2",
-        "mesh_xpbd",
-        "bone_xpbd",
+        "xpbd",
     )
     assert tuple(group["menu_name"] for group in groups) == (
         "VRM SpringBone",
         "Jolt刚体",
         "MC2",
-        "Mesh XPBD",
-        "Bone XPBD",
+        "XPBD",
     )
     assert all(group["modules"] for group in groups)
     assert all(
-        module["solver_id"] == group["solver_id"]
+        module["menu_group"] == group["solver_id"]
         and module["menu_name"] == group["menu_name"]
         for group in groups
         for module in group["modules"]
@@ -352,8 +350,7 @@ def test_solver_node_add_menu_uses_manifest_submenus():
         ("spring_vrm", "VRM SpringBone", "NODE_MT_OMNINODE_SOLVER_SPRING_VRM"),
         ("rigid_jolt", "Jolt刚体", "NODE_MT_OMNINODE_SOLVER_RIGID_JOLT"),
         ("mc2", "MC2", "NODE_MT_OMNINODE_SOLVER_MC2"),
-        ("mesh_xpbd", "Mesh XPBD", "NODE_MT_OMNINODE_SOLVER_MESH_XPBD"),
-        ("bone_xpbd", "Bone XPBD", "NODE_MT_OMNINODE_SOLVER_BONE_XPBD"),
+        ("xpbd", "XPBD", "NODE_MT_OMNINODE_SOLVER_XPBD"),
     )
     physics_extension = next(
         extension

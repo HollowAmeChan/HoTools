@@ -15,8 +15,8 @@
 - **`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`（当前实现状态）**：只记录各 domain 当前边界、未完成项和验收门槛，不保存逐次实施流水。
 - **`PHYSICS_FIELD_VOLUME_BLUEPRINT.md`（Field/Volume 蓝本）**：公共 Field 的 Volume、Wind、采样、作用域、可视化、Blender 创作与阶段闸门；不承诺具体 solver 的消费实现。
 - **`MC2_BLUEPRINT.md`（MC2 实现蓝本）**：MC2当前产品决策、支持域、数据流、Python/C++职责、数值边界和debug的稳定入口；E6实现只路由到`MC2_GPU_BACKEND_DESIGN.md`。
-- **`MESH_XPBD_BLUEPRINT.md`（基础 Mesh XPBD 蓝本）**：独立基础网格 solver 的严格 XPBD 数值合同、冻结能力、native 边界、生产验收和旧路径删除顺序。
-- **`BONE_XPBD_BLUEPRINT.md`（基础 Bone XPBD 蓝本）**：显式 BoneSegment 端点图、共点共享、Pin/Tail 写回、共享 XPBD native 边界、数值限制与后续约束路线。
+- **`MESH_XPBD_BLUEPRINT.md`（Simple Mesh XPBD 域蓝本）**：XPBD 家族内基础网格域的严格数值合同、冻结能力、native 边界、生产验收和旧路径删除顺序。
+- **`BONE_XPBD_BLUEPRINT.md`（Bone XPBD 域蓝本）**：XPBD 家族内显式 BoneSegment 端点图、共点共享、Pin/Tail 写回、共享 native 边界、数值限制与后续约束路线。
 - **`PHYSICS_BAKE_NODE_BLUEPRINT.md`（通用 Bake 蓝图）**：Physics World结果到Bone/Object关键帧、Mesh外部缓存、跳帧清理、播放代理和Finalize的产品与实施合同。
 - **`../ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
 

@@ -42,8 +42,12 @@ physicsWorld/
       mesh_cloth/
       bone_cloth/
       bone_spring/
-  mesh_xpbd/                 # 独立基础纯 Mesh XPBD
-  bone_xpbd/                 # 显式端点、无depth方向的独立 Bone XPBD
+  xpbd/                      # 一个共享模拟步、多种强类型任务域
+    family_solver.py         # 分域调度与整族失败事务
+    colliders.py             # 两域共享的公共碰撞快照适配
+    native.py                # 共享 nanobind 模块装载边界
+    simple_mesh_xpbd/        # 基础纯 Mesh XPBD 任务域
+    bone_xpbd/               # 显式端点、无depth方向的 Bone XPBD 任务域
   ui/
 ```
 
@@ -71,8 +75,8 @@ physicsWorld/
 | SpringBone VRM | world-aware vertical slice 可用 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用 | body/constraint、scope、result/writeback、query/event/debug、dispose、soak 与 golden | 统一零 dt 行为；Path 和高级 shape/query |
 | MC2 | 三 setup 统一域 CPU 产品可用；公共 Field native 风产品链已接通；BoneCloth 源码回退与阶段里程碑完成；E6 GPU 设计已立项 | MeshCloth 消费公共 simple_cloth 对象/BasePose/GN资源，solver step不创建Blender数据；三setup显式域分区；Domain 静态同步注册 partition consumer contexts，参数更新上传逐粒子响应，fixed 子步 Python 只传 runtime handle 与 World sample time，native 从 Domain-owned positions 调用标准 evaluator 并在 Center inertia 后、Integration 前应用；MC2只持有“响应场风”开关与0..20响应强度，旧七个wind参数、位置读回、Python sampler、逐粒子 packet ABI 已删除且无兼容；native evaluator 输出独立 participation；三setup公共Field风600帧产品矩阵已标记`verified`；终端粒子、双写回、DomainV1 mixed pass、whole-domain self、多目标事务、产品debug及Teleport/碰撞历史闭环；CPU是独立长期reference | py311/py313 发布库均已更新，并通过 Blender 4.5.8 安装路径原生与产品回归；native scratch/output 的容量、线程与 GPU staging 尚未冻结；连续 participation/weight、attenuation 权责、GPU入口见`MC2_GPU_BACKEND_DESIGN.md` |
-| Mesh XPBD | World vertical slice、生产 soak 与旧路径删除审计通过，待冻结矩阵最终记录 | 面板/自定义对象适配器消费公共simple_cloth对象并在solver前准备GN资源；source Mesh topology/reference、累计 lambda nanobind context、四类公共 collider、slot/debug、事务化 GN result/writeback；可视化 draw store/handler 已接入注册表驱动的 world owner 销毁链，跳帧替换与 runtime clear 不留残影；时间矩阵、dirty、dispose 和 `OMNI测试.blend` 180 帧验收通过；旧双节点、私有 cache/writeback 与悬空 ABI 已移除；不建立无运行语义的融合域 | 记录最终 ABI/layout、能力矩阵与性能基线后冻结；见 `MESH_XPBD_BLUEPRINT.md` |
-| Bone XPBD | experimental vertical slice 可用，尚未冻结 | 面板对象、自定义对象、任务、可视化调试四个 Bone 节点已注册；任务强类型接入现有 `XPBD模拟步`，与 Mesh task 共用用户调度入口但各持独立 slot/native context；显式 `BoneSegment(head_particle, tail_particle)` 与骨级 `segment_pins` 身份、rest 几何共点共享且禁止传递折叠同一骨段、无 depth/父级方向、`use_connect=True` 注册拒绝；Pin 双端并输出独立 Armature Pose 空间完整最终硬 Pose，自身 L/R/S 外部修改才刷新，所选父骨求解结果不拖动未直接编辑的 Pin，但 `Armature.matrix_world` 仍逐帧整体生效；共享焊接点由显式 Pin 优先，多个 Pin 只允许浮点精度内一致，否则 prepare 报错；成功帧之间按 native 子步连续推进 Moving Pin，非 Pin 才使用默认开启且可关闭的 Tail 吸附；公共 Bone 写回先建全部 Pin 最终目标，再生成 Move 目标，完整目标图就绪后统一反算所有 basis，并以 canonical L/R/S 正向 round-trip 预检实际可表示性，需要 shear 时整批拒绝；restart 从 RNA 通道 basis 与完整父目标图递归重建，不读取可能陈旧的 `PoseBone.matrix`；Pin 切换进入 static signature 并 staged replacement，不承诺无缝延续旧动态历史；pending/confirmed + 成功 receipt 隔离反馈，事务失败零部分写回且不前移指纹；只走共享 native XPBD context，无 Python solver fallback；py311/py313 隔离构建、原生回归、Blender 4.5.8 安装路径回归及产品工程高速 Pin 自动 soak 均通过 | 当前显式拒绝所选 PoseBone 的任意 Constraint/IK，并在注册与逐帧准备阶段拒绝每根写回骨 Pose 祖先链中的非均匀/奇异 scale；叶骨自身或其它有效变换若使目标超出直接 L/R/S 可表示范围，也会在发布前整批拒绝；外碰为 task 统一半径/16-bit mask；Field Wind 仅为未来 native 子步扩展；独立 `2N+weld`、multiscale chord 与 rod/shape matching 未实现；跨 solver 同一 PoseBone owner 仲裁仍是后续公共契约，当前图必须避免重复目标；继续固化可重复 13 点数值探针，再决定约束扩展；见 `BONE_XPBD_BLUEPRINT.md` |
+| Simple Mesh XPBD 域 | XPBD 家族内的 World vertical slice、生产 soak 与旧路径删除审计通过，待冻结矩阵最终记录 | 与 Bone 域共用一个 `XPBD` 节点菜单、模拟步、失败事务、碰撞适配、native 装载和粒子/Stretch/Bend通用调试；本域拥有 simple_cloth authoring、Mesh topology/reference、slot、详细表面调试与 GN result/writeback；运行标识仍为 `mesh_xpbd` | 记录最终 ABI/layout、能力矩阵与性能基线后冻结；见 `MESH_XPBD_BLUEPRINT.md` |
+| Bone XPBD 域 | XPBD 家族内的 experimental vertical slice 可用，尚未冻结 | 与 Mesh task 共用 `XPBD模拟步` 但持独立 `bone_xpbd` slot/native context；通用粒子/Stretch/Bend进入家族调试，域节点只保留骨段到head/tail粒子的特有映射；显式端点拓扑、Pin硬目标、完整Pose批写回与反馈事务保持原合同 | 当前约束、scale、碰撞、Field、跨solver PoseBone owner等限制不变；继续固化13点数值探针；见 `BONE_XPBD_BLUEPRINT.md` |
 
 Field -> MC2 CPU 产品链当前为 active：World Begin 发布 `FieldSnapshotV0` 并编译 `NativeFieldRuntimeV1` 到 world cache；MC2 Domain 静态同步作用域上下文与响应，fixed substep 只传 `handle + sample_time_seconds`，native 以 `sample_time_seconds + frame_step_dt * update_index / update_count` 从 Domain-owned 当前粒子位置采样，作用域按 Object/Armature 名、Collection 名与公共碰撞组低 16 位执行，并在 Center inertia 后应用响应。独立 participation 区分未参与和精确抵消；旧七个 MC2 wind 参数、Python 位置读回、sampler、packet 和兼容数据均已删除。
 
@@ -91,7 +95,7 @@ MC2 仍有独立于 Field 的低层事务缺口：live Domain 进入 mutating pa
 5. GPU 成功必须以产品整帧、上传/同步/readback、工作量等价、设备失败和规模曲线判断，不能只报告 kernel 时间。
 6. Rigid/Jolt 优先清除私自 dt fallback，并继续补公共时间合同。
 7. Bake 与 Field 继续保持公共 owner，不进入任一 solver 私有目录。
-8. Mesh XPBD 已按 `MESH_XPBD_BLUEPRINT.md` 以独立 solver 重写；生产验收和旧路径删除审计完成，最终冻结前只保留合同矩阵与性能基线记录。
+8. Simple Mesh XPBD 已按 `MESH_XPBD_BLUEPRINT.md` 作为 XPBD 家族任务域重写；生产验收和旧路径删除审计完成，最终冻结前只保留合同矩阵与性能基线记录。
 
 ## 公共验收门槛
 

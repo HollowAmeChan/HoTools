@@ -330,7 +330,8 @@ Field evaluator、Volume、scope、participation 和生命周期继续归 Physic
 
 ## 13. 实现入口
 
-- Domain 声明：`OmniNode/PhysicsWorld/bone_xpbd/declaration.py`
+- 家族共享调度、碰撞与通用调试：`OmniNode/PhysicsWorld/xpbd/family_solver.py`、`colliders.py`、`nodes.py`
+- Domain 声明：`OmniNode/PhysicsWorld/xpbd/bone_xpbd/declaration.py`
 - 对象与任务：`object_spec.py`、`specs.py`、`authoring.py`
 - 显式端点拓扑：`topology.py`
 - 逐帧姿态与 Tail 吸附：`pose.py`
@@ -338,6 +339,6 @@ Field evaluator、Volume、scope、participation 和生命周期继续归 Physic
 - Slot、结果事务与调试捕获：`solver.py`
 - 写回反馈：`feedback.py`
 - 公共 Bone 批写回计划：`results.py`
-- 用户节点与视口调试：`nodes.py`、`debug_draw.py`
+- 用户节点与视口特有调试：`nodes.py`、`debug_draw.py`；这里只保留骨段到端点粒子的映射
 - 共享 native context：`_native/include/hotools_mesh_xpbd.hpp`、`_native/src/mesh_xpbd.cpp`、`_native/src/mesh_xpbd_bindings.cpp`
-- 当前合同测试：`bone_xpbd/test/test_contract.py`、`bone_xpbd/test/test_blender_solver_writeback.py`、`_native/tests/test_mesh_xpbd_core.cpp`、`_native/tests/test_mesh_xpbd_native.py`
+- 当前合同测试：`xpbd/bone_xpbd/test/test_contract.py`、`xpbd/bone_xpbd/test/test_blender_solver_writeback.py`、`_native/tests/test_mesh_xpbd_core.cpp`、`_native/tests/test_mesh_xpbd_native.py`
