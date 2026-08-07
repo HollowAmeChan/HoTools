@@ -575,6 +575,25 @@ class PhysicsWorldCache:
         self.result_streams.setdefault(ch, []).append(data)
         return data
 
+    def publish_result_owned(
+        self,
+        item: dict,
+        channel: str | None = None,
+        solver: str = "unknown",
+    ) -> dict | None:
+        """发布调用方移交所有权的结果，避免大批量结果重复复制字典。"""
+        if not isinstance(item, dict):
+            return None
+        ch = str(channel or item.get("channel") or "").strip()
+        if not ch:
+            return None
+        item["channel"] = ch
+        item.setdefault("solver", solver)
+        item.setdefault("frame", int(getattr(self.frame_context, "frame", 0) or 0))
+        item.setdefault("generation", int(self.generation))
+        self.result_streams.setdefault(ch, []).append(item)
+        return item
+
     def consume_results(
         self,
         channel: str | None = None,

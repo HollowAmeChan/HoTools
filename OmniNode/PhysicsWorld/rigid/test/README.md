@@ -184,5 +184,5 @@ golden 基线。
 参数。旧 ABI 会明确失败；`_native/tests/run_all.py` 中的约束矩阵则会报告 SKIP，
 不会把 ABI 缺失误报成物理通过。
 
-contact/query fixture 还要求 `get_contact_events` 与 `cast_ray`。原生测试入口会把
+contact/query fixture 还要求 `get_contact_events_numpy` 与 `cast_ray`。原生测试入口会把
 旧 ABI 明确报告为 SKIP，并继续保留基础刚体矩阵的独立结果。

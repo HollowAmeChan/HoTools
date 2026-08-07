@@ -57,6 +57,49 @@ def _constraint_creation_order(constraints) -> list[ConstraintSpec]:
     return ordered
 
 
+def _native_contact_events(world) -> list[tuple]:
+    """把 native 的列式 NumPy 快照重组为 canonical 测试输入。"""
+    raw = world.get_contact_events_numpy()
+    if not isinstance(raw, (tuple, list)) or len(raw) != 14:
+        raise RuntimeError("get_contact_events_numpy 必须返回 14 个字段数组")
+    (
+        states, body_a_handles, body_b_handles,
+        body_a_sensors, body_b_sensors, is_sensors,
+        normals, penetration_depths,
+        points_a_offsets, points_on_a,
+        points_b_offsets, points_on_b,
+        sub_shapes_a, sub_shapes_b,
+    ) = raw
+    state_names = ("added", "persisted", "removed")
+    events = []
+    for index in range(len(states)):
+        a_start = int(points_a_offsets[index]) * 3
+        a_end = int(points_a_offsets[index + 1]) * 3
+        b_start = int(points_b_offsets[index]) * 3
+        b_end = int(points_b_offsets[index + 1]) * 3
+        events.append((
+            state_names[min(int(states[index]), 2)],
+            int(body_a_handles[index]),
+            int(body_b_handles[index]),
+            bool(body_a_sensors[index]),
+            bool(body_b_sensors[index]),
+            bool(is_sensors[index]),
+            tuple(float(value) for value in normals[index * 3:index * 3 + 3]),
+            float(penetration_depths[index]),
+            tuple(
+                tuple(float(value) for value in points_on_a[offset:offset + 3])
+                for offset in range(a_start, a_end, 3)
+            ),
+            tuple(
+                tuple(float(value) for value in points_on_b[offset:offset + 3])
+                for offset in range(b_start, b_end, 3)
+            ),
+            int(sub_shapes_a[index]),
+            int(sub_shapes_b[index]),
+        ))
+    return events
+
+
 @dataclass
 class NativeRunResult:
     fixture: Fixture
@@ -301,10 +344,10 @@ class NativeFixtureRuntime:
         ]
         handle_to_id = {handle: body_id for body_id, handle in self.handles.items()}
         contacts = []
-        if hasattr(self.world, "get_contact_events"):
+        if hasattr(self.world, "get_contact_events_numpy"):
             contacts = [
                 canonical_contact_event(event, handle_to_id)
-                for event in self.world.get_contact_events()
+                for event in _native_contact_events(self.world)
             ]
             contacts.sort(key=lambda item: (
                 item["body_a"], item["body_b"], item["state"],

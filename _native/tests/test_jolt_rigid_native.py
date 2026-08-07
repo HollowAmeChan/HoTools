@@ -38,6 +38,48 @@ def _make_world(**kw) -> hotools_jolt.JoltWorld:
     )
 
 
+def _contact_events(jw) -> list[tuple]:
+    """按新列式 ABI 读取事件；测试断言仍使用便于阅读的逐事件元组。"""
+    raw = jw.get_contact_events_numpy()
+    assert isinstance(raw, tuple) and len(raw) == 14
+    (
+        states, body_a_handles, body_b_handles,
+        body_a_sensors, body_b_sensors, is_sensors,
+        normals, penetration_depths,
+        points_a_offsets, points_on_a,
+        points_b_offsets, points_on_b,
+        sub_shapes_a, sub_shapes_b,
+    ) = raw
+    state_names = ("added", "persisted", "removed")
+    events = []
+    for index in range(len(states)):
+        a_start = int(points_a_offsets[index]) * 3
+        a_end = int(points_a_offsets[index + 1]) * 3
+        b_start = int(points_b_offsets[index]) * 3
+        b_end = int(points_b_offsets[index + 1]) * 3
+        events.append((
+            state_names[min(int(states[index]), 2)],
+            int(body_a_handles[index]),
+            int(body_b_handles[index]),
+            bool(body_a_sensors[index]),
+            bool(body_b_sensors[index]),
+            bool(is_sensors[index]),
+            tuple(float(value) for value in normals[index * 3:index * 3 + 3]),
+            float(penetration_depths[index]),
+            tuple(
+                tuple(float(value) for value in points_on_a[offset:offset + 3])
+                for offset in range(a_start, a_end, 3)
+            ),
+            tuple(
+                tuple(float(value) for value in points_on_b[offset:offset + 3])
+                for offset in range(b_start, b_end, 3)
+            ),
+            int(sub_shapes_a[index]),
+            int(sub_shapes_b[index]),
+        ))
+    return events
+
+
 def _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0), radius=0.5,
                 is_sensor=False):
     return jw.add_body(
@@ -614,7 +656,7 @@ def test_contact_and_sensor_event_snapshots():
     ground = _add_box(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0))
     ball = _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.45))
     jw.step(1.0 / 60.0, 1)
-    added = [event for event in jw.get_contact_events() if event[0] == "added"]
+    added = [event for event in _contact_events(jw) if event[0] == "added"]
     assert added, "首个接触步应产生 added 事件"
     event = added[0]
     assert len(event) == 12
@@ -625,7 +667,7 @@ def test_contact_and_sensor_event_snapshots():
     assert event[8] and event[9], "接触事件应包含两侧世界空间接触点"
 
     jw.step(1.0 / 60.0, 1)
-    assert any(event[0] == "persisted" for event in jw.get_contact_events())
+    assert any(event[0] == "persisted" for event in _contact_events(jw))
     assert jw.contact_event_overflow_count == 0
     jw.clear()
 
@@ -640,7 +682,7 @@ def test_contact_and_sensor_event_snapshots():
     probe = _add_sphere(sensor_world, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0))
     sensor_world.set_gravity((0.0, 0.0, 0.0))
     sensor_world.step(1.0 / 60.0, 1)
-    sensor_events = [event for event in sensor_world.get_contact_events() if event[5]]
+    sensor_events = [event for event in _contact_events(sensor_world) if event[5]]
     assert sensor_events, "重叠 sensor 应产生 sensor contact 事件"
     sensor_event = sensor_events[0]
     assert {sensor_event[1], sensor_event[2]} == {sensor, probe}
@@ -666,7 +708,7 @@ def test_contact_event_overflow_is_bounded_and_recovers():
     jw.step(1.0 / 60.0, 1)
 
     pair_count = 130 * 129 // 2
-    events = jw.get_contact_events()
+    events = _contact_events(jw)
     assert pair_count == 8385
     assert len(events) == 8192, "事件快照必须受固定容量约束"
     assert jw.contact_event_overflow_count == pair_count - len(events)
@@ -674,13 +716,13 @@ def test_contact_event_overflow_is_bounded_and_recovers():
 
     jw.clear()
     assert jw.body_count == 0
-    assert jw.get_contact_events() == []
+    assert _contact_events(jw) == []
     assert jw.contact_event_overflow_count == 0, "clear 后必须清空 overflow 计数"
 
     first = _add_sphere(jw, pos=(0.0, 0.0, 0.0), is_sensor=True)
     second = _add_sphere(jw, pos=(0.0, 0.0, 0.0), is_sensor=True)
     jw.step(1.0 / 60.0, 1)
-    recovered = jw.get_contact_events()
+    recovered = _contact_events(jw)
     assert len(recovered) == 1, "下一轮低负载 step 应恢复正常事件输出"
     assert {recovered[0][1], recovered[0][2]} == {first, second}
     assert jw.contact_event_overflow_count == 0

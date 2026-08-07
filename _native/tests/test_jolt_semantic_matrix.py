@@ -13,7 +13,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 TEST_ROOT = (
-    ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "rigid" / "test"
+    ROOT / "OmniNode" / "PhysicsWorld" / "rigid" / "test"
 )
 if str(TEST_ROOT) not in sys.path:
     sys.path.insert(0, str(TEST_ROOT))
@@ -152,7 +152,7 @@ def test_jolt_p0_constraint_semantic_matrix():
 
 def test_jolt_p0_contact_query_semantic_matrix():
     native = load_native_module(_native_dir())
-    if not hasattr(native.JoltWorld, "get_contact_events") or not hasattr(
+    if not hasattr(native.JoltWorld, "get_contact_events_numpy") or not hasattr(
         native.JoltWorld, "cast_ray",
     ):
         raise RuntimeError("SKIP: 当前 Python ABI 的 hotools_jolt 缺少 contact/query 接口")

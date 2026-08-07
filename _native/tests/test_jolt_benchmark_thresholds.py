@@ -10,9 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BENCHMARK_PATH = (
     ROOT
     / "OmniNode"
-    / "NodeTree"
-    / "Function"
-    / "physicsWorld"
+    / "PhysicsWorld"
     / "rigid"
     / "test"
     / "benchmark_blender_rigid.py"

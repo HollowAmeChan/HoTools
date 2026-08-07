@@ -519,6 +519,7 @@ set_body_motion_quality(handle, motion_quality)
 activate_body(handle, active)
 get_body_transform(handle)
 get_body_state(handle)
+get_body_states()
 add_constraint(constraint_type, body_a_handle, body_b_handle, anchor_pos, anchor_rot_wxyz,
                solver overrides, limit/spring, friction, motor, cone angle,
                disable_collisions)
@@ -527,20 +528,22 @@ step(dt, substeps)
 body_count
 constraint_count
 set_gravity(gravity)
-get_contact_events()
+set_solver_iterations(velocity_steps, position_steps)
+set_record_contact_events(enabled)
+get_contact_events_numpy()
 cast_ray(origin, direction, include_sensors, ignore_handle)
 clear()
 ```
 
 Native 侧当前特点：
 
-- `JobSystemSingleThreaded`，适合 Blender 进程集成初期。
+- 可按物理世界设置选择单线程或 `JobSystemThreadPool`；工作线程在 native 内完成调度。
 - Z-up，gravity 默认 `(0, 0, -9.81)`。
 - broadphase/object layer 只有 moving/non-moving。
 - static-static 不碰。
 - 支持固定到 world：`WORLD_HANDLE = 0xFFFFFFFF`。
 - 约束当前创建 fixed/hinge/slider/cone/point，并已接 Hinge/Slider 基础 limit/friction/motor、Cone half angle、通用 solver overrides。
-- 已接轻量 contact listener；callback 只缓存 handle、sensor 标记、法线、穿透深度、sub-shape id 和世界空间接触点，不访问 Blender/Python。
+- 已接轻量 contact listener；callback 只缓存数值字段，不访问 Blender/Python。事件通过一次性 NumPy 列式快照批量转移，旧的逐事件 tuple ABI 已移除。
 - 没有 debug draw API。
 - 已有 body state getter 和 body 控制 API：set velocity、add force/torque、add impulse/angular impulse、gravity factor、friction/restitution、motion quality、activate/deactivate。
 - HoTools collision group / mask 已接入 Jolt `CollisionGroup` / 自定义 `GroupFilter`。

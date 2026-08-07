@@ -65,6 +65,7 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Constraints/RackAndPinionConstraint.h>
 
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/array.h>
@@ -91,6 +92,15 @@ JPH_SUPPRESS_WARNINGS
 
 namespace nb = nanobind;
 using namespace JPH;
+
+template<typename T>
+nb::ndarray<nb::numpy, T> owned_contact_array(std::vector<T>&& values) {
+    auto* owner_data = new std::vector<T>(std::move(values));
+    nb::capsule owner(owner_data, [](void* pointer) noexcept {
+        delete static_cast<std::vector<T>*>(pointer);
+    });
+    return nb::ndarray<nb::numpy, T>(owner_data->data(), {owner_data->size()}, owner);
+}
 
 // ---------------------------------------------------------------------------
 // Jolt 全局初始化（lock-free，规避 tbbmalloc_proxy 干扰 MSVCP CRT mutex）
@@ -296,7 +306,7 @@ struct ContactKeyHash {
 };
 
 struct ContactEventRecord {
-    std::string state;
+    uint8_t state = 0;
     uint32_t body_a_handle = 0;
     uint32_t body_b_handle = 0;
     bool body_a_sensor = false;
@@ -310,23 +320,31 @@ struct ContactEventRecord {
     uint32_t sub_shape_b = 0;
 };
 
-using ContactEventTuple = std::tuple<
-    std::string,
+using BodyStateTuple = std::tuple<
     uint32_t,
-    uint32_t,
-    bool,
-    bool,
-    bool,
     std::array<float,3>,
-    float,
-    std::vector<std::array<float,3>>,
-    std::vector<std::array<float,3>>,
-    uint32_t,
-    uint32_t>;
+    std::array<float,4>,
+    std::array<float,3>,
+    std::array<float,3>,
+    bool,
+    bool>;
 
 class HoContactListener final : public ContactListener {
 public:
     static constexpr size_t MAX_EVENTS_PER_STEP = 8192;
+
+    void SetRecordingEnabled(bool enabled) {
+        lock_guard lock(mMutex);
+        mRecordingEnabled.store(enabled, std::memory_order_release);
+        if (!enabled) {
+            mStepEvents.clear();
+            mPendingEvents.clear();
+            mActiveContacts.clear();
+            mDroppedEventCount = 0;
+            mPendingDroppedEventCount = 0;
+            mRecordingStep = false;
+        }
+    }
 
     void RegisterBody(BodyID id, uint32_t handle) {
         lock_guard lock(mMutex);
@@ -340,6 +358,15 @@ public:
 
     void BeginStep() {
         lock_guard lock(mMutex);
+        if (!mRecordingEnabled.load(std::memory_order_acquire)) {
+            mStepEvents.clear();
+            mPendingEvents.clear();
+            mActiveContacts.clear();
+            mDroppedEventCount = 0;
+            mPendingDroppedEventCount = 0;
+            mRecordingStep = false;
+            return;
+        }
         mStepEvents = std::move(mPendingEvents);
         mPendingEvents.clear();
         mDroppedEventCount = mPendingDroppedEventCount;
@@ -363,9 +390,9 @@ public:
         mRecordingStep = false;
     }
 
-    std::vector<ContactEventRecord> GetEvents() {
+    std::vector<ContactEventRecord> TakeEvents() {
         lock_guard lock(mMutex);
-        return mStepEvents;
+        return std::move(mStepEvents);
     }
 
     uint32_t GetDroppedEventCount() {
@@ -379,7 +406,7 @@ public:
         const ContactManifold& manifold,
         ContactSettings& settings
     ) override {
-        RecordContact("added", body_a, body_b, manifold, settings);
+        RecordContact(0u, body_a, body_b, manifold, settings);
     }
 
     void OnContactPersisted(
@@ -388,11 +415,15 @@ public:
         const ContactManifold& manifold,
         ContactSettings& settings
     ) override {
-        RecordContact("persisted", body_a, body_b, manifold, settings);
+        RecordContact(1u, body_a, body_b, manifold, settings);
     }
 
     void OnContactRemoved(const SubShapeIDPair& pair) override {
+        if (!mRecordingEnabled.load(std::memory_order_acquire))
+            return;
         lock_guard lock(mMutex);
+        if (!mRecordingEnabled.load(std::memory_order_relaxed))
+            return;
         ContactKey key = MakeKey(pair);
         auto it = mActiveContacts.find(key);
         ContactEventRecord event;
@@ -407,7 +438,7 @@ public:
             event.sub_shape_a = pair.GetSubShapeID1().GetValue();
             event.sub_shape_b = pair.GetSubShapeID2().GetValue();
         }
-        event.state = "removed";
+        event.state = 2u;
         AppendEvent(std::move(event));
     }
 
@@ -440,12 +471,14 @@ private:
     }
 
     void RecordContact(
-        const char* state,
+        uint8_t state,
         const Body& body_a,
         const Body& body_b,
         const ContactManifold& manifold,
         const ContactSettings& settings
     ) {
+        if (!mRecordingEnabled.load(std::memory_order_acquire))
+            return;
         ContactEventRecord event;
         event.state = state;
         event.body_a_sensor = body_a.IsSensor();
@@ -467,6 +500,8 @@ private:
             event.points_on_b.push_back(from_vec3(manifold.GetWorldSpaceContactPointOn2(i)));
 
         lock_guard lock(mMutex);
+        if (!mRecordingEnabled.load(std::memory_order_relaxed))
+            return;
         event.body_a_handle = LookupHandle(body_a.GetID());
         event.body_b_handle = LookupHandle(body_b.GetID());
         mActiveContacts[MakeKey(body_a, body_b, manifold)] = event;
@@ -490,6 +525,7 @@ private:
     uint32_t mDroppedEventCount = 0;
     uint32_t mPendingDroppedEventCount = 0;
     bool mRecordingStep = false;
+    std::atomic<bool> mRecordingEnabled{true};
 };
 
 class HoRayBodyFilter final : public BodyFilter {
@@ -547,6 +583,13 @@ public:
     ~JoltWorld() { clear(); }
 
     uint32_t worker_threads() const noexcept { return mWorkerThreads; }
+
+    void set_solver_iterations(uint32_t velocity_steps, uint32_t position_steps) {
+        PhysicsSettings settings = mPhysicsSystem->GetPhysicsSettings();
+        settings.mNumVelocitySteps = std::clamp(velocity_steps, 1u, 255u);
+        settings.mNumPositionSteps = std::clamp(position_steps, 1u, 255u);
+        mPhysicsSystem->SetPhysicsSettings(settings);
+    }
 
     // ---- Body management -----------------------------------------------
 
@@ -859,6 +902,32 @@ public:
             active,
             sleeping
         };
+    }
+
+    std::vector<BodyStateTuple> get_body_states() const {
+        std::vector<BodyStateTuple> result;
+        result.reserve(mBodies.size());
+        auto& lif = mPhysicsSystem->GetBodyLockInterface();
+        for (const auto& [handle, record] : mBodies) {
+            BodyLockRead lock(lif, record.id);
+            if (!lock.Succeeded())
+                continue;
+            const Body& body = lock.GetBody();
+            Vec3 linear_velocity = body.GetLinearVelocity();
+            Vec3 angular_velocity = body.GetAngularVelocity();
+            bool active = body.IsActive();
+            bool sleeping = body.GetMotionType() == EMotionType::Dynamic && !active;
+            result.emplace_back(
+                handle,
+                from_vec3(body.GetPosition()),
+                from_quat(body.GetRotation()),
+                std::array<float,3>{linear_velocity.GetX(), linear_velocity.GetY(), linear_velocity.GetZ()},
+                std::array<float,3>{angular_velocity.GetX(), angular_velocity.GetY(), angular_velocity.GetZ()},
+                active,
+                sleeping
+            );
+        }
+        return result;
     }
 
     std::tuple<
@@ -1586,31 +1655,84 @@ public:
     uint32_t body_count()       const { return static_cast<uint32_t>(mBodies.size()); }
     uint32_t constraint_count() const { return static_cast<uint32_t>(mConstraints.size()); }
 
-    std::vector<ContactEventTuple> get_contact_events() {
-        std::vector<ContactEventTuple> result;
-        std::vector<ContactEventRecord> events = mContactListener.GetEvents();
-        result.reserve(events.size());
+    nb::tuple get_contact_events_numpy() {
+        std::vector<ContactEventRecord> events = mContactListener.TakeEvents();
+        std::vector<uint8_t> states;
+        std::vector<uint32_t> body_a_handles;
+        std::vector<uint32_t> body_b_handles;
+        std::vector<uint8_t> body_a_sensors;
+        std::vector<uint8_t> body_b_sensors;
+        std::vector<uint8_t> is_sensors;
+        std::vector<float> normals;
+        std::vector<float> penetration_depths;
+        std::vector<uint32_t> points_a_offsets{0u};
+        std::vector<float> points_on_a;
+        std::vector<uint32_t> points_b_offsets{0u};
+        std::vector<float> points_on_b;
+        std::vector<uint32_t> sub_shapes_a;
+        std::vector<uint32_t> sub_shapes_b;
+
+        const size_t count = events.size();
+        states.reserve(count);
+        body_a_handles.reserve(count);
+        body_b_handles.reserve(count);
+        body_a_sensors.reserve(count);
+        body_b_sensors.reserve(count);
+        is_sensors.reserve(count);
+        normals.reserve(count * 3u);
+        penetration_depths.reserve(count);
+        sub_shapes_a.reserve(count);
+        sub_shapes_b.reserve(count);
         for (const ContactEventRecord& event : events) {
-            result.emplace_back(
-                event.state,
-                event.body_a_handle,
-                event.body_b_handle,
-                event.body_a_sensor,
-                event.body_b_sensor,
-                event.is_sensor,
-                event.normal,
-                event.penetration_depth,
-                event.points_on_a,
-                event.points_on_b,
-                event.sub_shape_a,
-                event.sub_shape_b
-            );
+            states.emplace_back(event.state);
+            body_a_handles.emplace_back(event.body_a_handle);
+            body_b_handles.emplace_back(event.body_b_handle);
+            body_a_sensors.emplace_back(event.body_a_sensor ? 1u : 0u);
+            body_b_sensors.emplace_back(event.body_b_sensor ? 1u : 0u);
+            is_sensors.emplace_back(event.is_sensor ? 1u : 0u);
+            normals.emplace_back(event.normal[0]);
+            normals.emplace_back(event.normal[1]);
+            normals.emplace_back(event.normal[2]);
+            penetration_depths.emplace_back(event.penetration_depth);
+            for (const auto& point : event.points_on_a) {
+                points_on_a.emplace_back(point[0]);
+                points_on_a.emplace_back(point[1]);
+                points_on_a.emplace_back(point[2]);
+            }
+            for (const auto& point : event.points_on_b) {
+                points_on_b.emplace_back(point[0]);
+                points_on_b.emplace_back(point[1]);
+                points_on_b.emplace_back(point[2]);
+            }
+            points_a_offsets.emplace_back(static_cast<uint32_t>(points_on_a.size() / 3u));
+            points_b_offsets.emplace_back(static_cast<uint32_t>(points_on_b.size() / 3u));
+            sub_shapes_a.emplace_back(event.sub_shape_a);
+            sub_shapes_b.emplace_back(event.sub_shape_b);
         }
-        return result;
+        return nb::make_tuple(
+            owned_contact_array(std::move(states)),
+            owned_contact_array(std::move(body_a_handles)),
+            owned_contact_array(std::move(body_b_handles)),
+            owned_contact_array(std::move(body_a_sensors)),
+            owned_contact_array(std::move(body_b_sensors)),
+            owned_contact_array(std::move(is_sensors)),
+            owned_contact_array(std::move(normals)),
+            owned_contact_array(std::move(penetration_depths)),
+            owned_contact_array(std::move(points_a_offsets)),
+            owned_contact_array(std::move(points_on_a)),
+            owned_contact_array(std::move(points_b_offsets)),
+            owned_contact_array(std::move(points_on_b)),
+            owned_contact_array(std::move(sub_shapes_a)),
+            owned_contact_array(std::move(sub_shapes_b))
+        );
     }
 
     uint32_t contact_event_overflow_count() {
         return mContactListener.GetDroppedEventCount();
+    }
+
+    void set_record_contact_events(bool enabled) {
+        mContactListener.SetRecordingEnabled(enabled);
     }
 
     void set_gravity(const std::array<float,3>& g) {
@@ -1753,6 +1875,10 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("worker_threads")           = 0,
              "创建 Jolt PhysicsSystem 实例；worker_threads 为 0 时单线程，正数时启用原生线程池。")
         .def_prop_ro("worker_threads", &JoltWorld::worker_threads)
+        .def("set_solver_iterations", &JoltWorld::set_solver_iterations,
+             nb::arg("velocity_steps"),
+             nb::arg("position_steps"),
+             "设置 Jolt 世界级速度与位置求解迭代数。")
 
         // body
         .def("add_body", &JoltWorld::add_body,
@@ -1845,6 +1971,9 @@ NB_MODULE(hotools_jolt, m) {
         .def("get_body_state", &JoltWorld::get_body_state,
              nb::arg("handle"),
              "返回 (position, rotation_wxyz, linear_velocity, angular_velocity, active, sleeping)。")
+
+        .def("get_body_states", &JoltWorld::get_body_states,
+             "批量返回当前所有刚体状态，元组首项为 native handle。")
 
         .def("cast_ray", &JoltWorld::cast_ray,
              nb::arg("origin"),
@@ -1943,13 +2072,16 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("substeps") = 1,
              "执行一帧物理模拟，返回耗时（毫秒，float）。")
 
-        .def("get_contact_events", &JoltWorld::get_contact_events,
-             "读取上一真实模拟步的接触事件数值快照。")
+        .def("get_contact_events_numpy", &JoltWorld::get_contact_events_numpy,
+             "以 NumPy 数组批量返回接触事件字段，点数组通过 offsets 索引。")
 
         // info
         .def_prop_ro("body_count",       &JoltWorld::body_count)
         .def_prop_ro("constraint_count", &JoltWorld::constraint_count)
         .def_prop_ro("contact_event_overflow_count", &JoltWorld::contact_event_overflow_count)
+        .def("set_record_contact_events", &JoltWorld::set_record_contact_events,
+             nb::arg("enabled"),
+             "启用或关闭原生接触事件记录。")
         .def("set_gravity",              &JoltWorld::set_gravity,
              nb::arg("gravity"),
              "设置重力向量，默认 (0, 0, -9.81)（Blender Z-up）。")

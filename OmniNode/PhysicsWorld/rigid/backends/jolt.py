@@ -230,10 +230,16 @@ class JoltAdapter:
         self.jolt_max_contact_constraints: int = max_contact_constraints
         self.jolt_velocity_steps: int = max(1, min(255, int(velocity_steps)))
         self.jolt_position_steps: int = max(1, min(255, int(position_steps)))
+        set_iterations = getattr(self._jw, "set_solver_iterations", None)
+        if callable(set_iterations):
+            set_iterations(self.jolt_velocity_steps, self.jolt_position_steps)
         self.jolt_worker_threads: int = int(
             getattr(self._jw, "worker_threads", max(0, min(64, int(worker_threads))))
         )
         self.jolt_record_contact_events: bool = bool(record_contact_events)
+        set_recording = getattr(self._jw, "set_record_contact_events", None)
+        if callable(set_recording):
+            set_recording(self.jolt_record_contact_events)
         self._jolt_capacity_signature: tuple[int, int, int] = (
             max_bodies,
             max_body_pairs,
@@ -474,6 +480,34 @@ class JoltAdapter:
             "active": bool(active),
             "sleeping": bool(sleeping),
         }
+
+    def get_body_states(self) -> dict[str, dict]:
+        """一次跨 native 边界读取所有刚体状态，按公开 slot id 返回。"""
+        getter = getattr(self._jw, "get_body_states", None)
+        if not callable(getter):
+            return {
+                slot_id: state
+                for slot_id in self._body_handles
+                if (state := self.get_body_state(slot_id)) is not None
+            }
+
+        states: dict[str, dict] = {}
+        for raw in getter():
+            if not isinstance(raw, (tuple, list)) or len(raw) != 7:
+                continue
+            handle, pos, rot, lin, ang, active, sleeping = raw
+            slot_id = self._body_slots_by_handle.get(int(handle), "")
+            if not slot_id:
+                continue
+            states[slot_id] = {
+                "position": tuple(pos),
+                "rotation_wxyz": tuple(rot),
+                "linear_velocity": tuple(lin),
+                "angular_velocity": tuple(ang),
+                "active": bool(active),
+                "sleeping": bool(sleeping),
+            }
+        return states
 
     def ray_cast(
         self,
@@ -764,55 +798,73 @@ class JoltAdapter:
 
     def _refresh_contact_events(self) -> None:
         """把 native handle 事件映射成不泄露后端句柄的 slot 快照。"""
-        if not hasattr(self._jw, "get_contact_events"):
+        if not self.jolt_record_contact_events:
+            self._clear_contact_events()
+            return
+        if not hasattr(self._jw, "get_contact_events_numpy"):
             self.last_contact_events = []
             self.last_contact_event_overflow = 0
             return
 
         events = []
-        for raw in self._jw.get_contact_events():
-            if not isinstance(raw, (tuple, list)) or len(raw) != 12:
-                continue
-            (
-                state,
-                body_a_handle,
-                body_b_handle,
-                body_a_sensor,
-                body_b_sensor,
-                is_sensor,
-                normal,
-                penetration_depth,
-                points_on_a,
-                points_on_b,
-                sub_shape_a,
-                sub_shape_b,
-            ) = raw
-            slot_a = self._body_slots_by_handle.get(int(body_a_handle), "")
-            slot_b = self._body_slots_by_handle.get(int(body_b_handle), "")
-            if not slot_a or not slot_b:
-                continue
-            events.append({
-                "state": str(state),
-                "body_a_slot_id": slot_a,
-                "body_b_slot_id": slot_b,
-                "body_a_sensor": bool(body_a_sensor),
-                "body_b_sensor": bool(body_b_sensor),
-                "is_sensor": bool(is_sensor),
-                "normal": _vec3_tuple(normal),
-                "penetration_depth": float(penetration_depth),
-                "points_on_a": tuple(_vec3_tuple(point) for point in points_on_a),
-                "points_on_b": tuple(_vec3_tuple(point) for point in points_on_b),
-                "sub_shape_a": int(sub_shape_a),
-                "sub_shape_b": int(sub_shape_b),
-            })
-        self.last_contact_events = events
-        self.last_contact_event_overflow = int(
-            getattr(self._jw, "contact_event_overflow_count", 0) or 0
-        )
+        numpy_getter = getattr(self._jw, "get_contact_events_numpy", None)
+        if callable(numpy_getter):
+            raw_numpy = numpy_getter()
+            if isinstance(raw_numpy, (tuple, list)) and len(raw_numpy) == 14:
+                (
+                    states, body_a_handles, body_b_handles,
+                    body_a_sensors, body_b_sensors, is_sensors,
+                    normals, penetration_depths,
+                    points_a_offsets, points_on_a,
+                    points_b_offsets, points_on_b,
+                    sub_shapes_a, sub_shapes_b,
+                ) = raw_numpy
+                state_names = ("added", "persisted", "removed")
+                for index in range(len(states)):
+                    slot_a = self._body_slots_by_handle.get(int(body_a_handles[index]), "")
+                    slot_b = self._body_slots_by_handle.get(int(body_b_handles[index]), "")
+                    if not slot_a or not slot_b:
+                        continue
+                    a_start = int(points_a_offsets[index])
+                    a_end = int(points_a_offsets[index + 1])
+                    b_start = int(points_b_offsets[index])
+                    b_end = int(points_b_offsets[index + 1])
+                    events.append({
+                        "state": state_names[min(int(states[index]), 2)],
+                        "body_a_slot_id": slot_a,
+                        "body_b_slot_id": slot_b,
+                        "body_a_sensor": bool(body_a_sensors[index]),
+                        "body_b_sensor": bool(body_b_sensors[index]),
+                        "is_sensor": bool(is_sensors[index]),
+                        "normal": (
+                            float(normals[index * 3]),
+                            float(normals[index * 3 + 1]),
+                            float(normals[index * 3 + 2]),
+                        ),
+                        "penetration_depth": float(penetration_depths[index]),
+                        "points_on_a": tuple(
+                            (float(points_on_a[offset]), float(points_on_a[offset + 1]), float(points_on_a[offset + 2]))
+                            for offset in range(a_start * 3, a_end * 3, 3)
+                        ),
+                        "points_on_b": tuple(
+                            (float(points_on_b[offset]), float(points_on_b[offset + 1]), float(points_on_b[offset + 2]))
+                            for offset in range(b_start * 3, b_end * 3, 3)
+                        ),
+                        "sub_shape_a": int(sub_shapes_a[index]),
+                        "sub_shape_b": int(sub_shapes_b[index]),
+                    })
+                self.last_contact_events = events
+                self.last_contact_event_overflow = int(
+                    getattr(self._jw, "contact_event_overflow_count", 0) or 0
+                )
+                return
+        self._clear_contact_events()
 
     def get_contact_events(self) -> list[dict]:
         """返回上一真实模拟步的 HoTools 接触事件快照。"""
-        return [dict(event) for event in self.last_contact_events]
+        if not self.jolt_record_contact_events:
+            return []
+        return self.last_contact_events
 
     # ---- Writeback -------------------------------------------------------
 

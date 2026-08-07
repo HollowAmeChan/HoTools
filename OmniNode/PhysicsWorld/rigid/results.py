@@ -339,6 +339,46 @@ def publish_rigid_contact_event_result(
     return world.publish_result(result, channel=channel, solver=RIGID_SOLVER_ID)
 
 
+def publish_owned_rigid_contact_event_result(
+    world,
+    event: dict,
+    frame: int,
+    generation: int,
+    event_index: int,
+    backend: str = "jolt",
+) -> dict | None:
+    """接管 adapter 的规范化事件字典，直接发布到主接触结果流。"""
+    body_a_slot_id = str(event.get("body_a_slot_id", "") or "")
+    body_b_slot_id = str(event.get("body_b_slot_id", "") or "")
+    body_a_sensor = bool(event.get("body_a_sensor", False))
+    body_b_sensor = bool(event.get("body_b_sensor", False))
+    event.update({
+        "channel": RIGID_CONTACT_EVENT_CHANNEL,
+        "solver": RIGID_SOLVER_ID,
+        "backend": str(backend),
+        "frame": int(frame),
+        "generation": int(generation),
+        "event_index": int(event_index),
+        "body_a_slot_id": body_a_slot_id,
+        "body_b_slot_id": body_b_slot_id,
+        "body_a_sensor": body_a_sensor,
+        "body_b_sensor": body_b_sensor,
+        "is_sensor": bool(event.get("is_sensor", False)),
+        "sensor_slot_ids": tuple(
+            slot_id for slot_id, is_sensor in (
+                (body_a_slot_id, body_a_sensor),
+                (body_b_slot_id, body_b_sensor),
+            )
+            if slot_id and is_sensor
+        ),
+    })
+    return world.publish_result_owned(
+        event,
+        channel=RIGID_CONTACT_EVENT_CHANNEL,
+        solver=RIGID_SOLVER_ID,
+    )
+
+
 def iter_rigid_contact_event_results(
     world,
     frame: int | None = None,

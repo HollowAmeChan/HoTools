@@ -34,6 +34,7 @@ from .results import (
     clear_rigid_contact_event_results,
     clear_rigid_constraint_state_results,
     clear_rigid_transform_results,
+    publish_owned_rigid_contact_event_result,
     publish_rigid_contact_event_result,
     publish_rigid_constraint_state_result,
     publish_rigid_transform_result,
@@ -428,6 +429,10 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
     frame = int(getattr(fc, "frame", 0) or 0)
     published = 0
     clear_rigid_transform_results(world)
+    batch_states = None
+    get_body_states = getattr(adapter, "get_body_states", None)
+    if callable(get_body_states):
+        batch_states = get_body_states()
 
     for slot_id, slot in _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND):
         spec = slot.data.get("spec")
@@ -436,7 +441,9 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
 
         try:
             state = None
-            if hasattr(adapter, "get_body_state"):
+            if batch_states is not None:
+                state = batch_states.get(slot_id)
+            elif hasattr(adapter, "get_body_state"):
                 state = adapter.get_body_state(slot_id)
 
             if state is not None:
@@ -521,7 +528,7 @@ def _publish_rigid_contact_event_results(
     contact_count = 0
     sensor_count = 0
     for event_index, event in enumerate(adapter.get_contact_events()):
-        result = publish_rigid_contact_event_result(
+        result = publish_owned_rigid_contact_event_result(
             world,
             event=event,
             frame=frame,

@@ -11,7 +11,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = (
-    ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld"
+    ROOT / "OmniNode" / "PhysicsWorld"
     / "rigid" / "test" / "run_native_soak.py"
 )
 

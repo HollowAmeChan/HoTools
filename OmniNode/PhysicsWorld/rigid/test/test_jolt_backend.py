@@ -53,6 +53,7 @@ def test_create_world():
 def test_worker_threads():
     single = hotools_jolt.JoltWorld(32, 64, 32, worker_threads=0)
     threaded = hotools_jolt.JoltWorld(32, 64, 32, worker_threads=2)
+    single.set_solver_iterations(4, 1)
     assert single.worker_threads == 0
     assert threaded.worker_threads == 2
     threaded.add_body("DYNAMIC", 1.0, 0.5, 0.0,
@@ -94,6 +95,9 @@ def test_adapter_batch_body_registration():
     assert errors == {}, errors
     assert adapter.body_count == 1
     assert adapter.get_body_transform("rigid:test") is not None
+    states = adapter.get_body_states()
+    assert set(states) == {"rigid:test"}
+    assert len(states["rigid:test"]["position"]) == 3
     adapter.dispose("adapter-batch-test")
 
 def test_add_remove_bodies():
@@ -181,6 +185,28 @@ def test_body_state():
     assert len(pos) == 3 and len(rot) == 4 and len(lin) == 3 and len(ang) == 3
     assert lin[2] < 0.0, f"重力后 Z 线速度应为负，得 {lin[2]}"
     assert isinstance(active, bool) and isinstance(sleeping, bool)
+    jw.clear()
+
+def test_bulk_body_state_and_contact_recording_switch():
+    jw = hotools_jolt.JoltWorld(32, 64, 32)
+    assert not hasattr(jw, "get_contact_events")
+    assert hasattr(jw, "get_contact_events_numpy")
+    ground = jw.add_body("STATIC", 0, 0.5, 0.0,
+                         (0, 0, 0), (1, 0, 0, 0),
+                         "BOX", 0.5, 0.5, (5.0, 5.0, 0.1))
+    ball = jw.add_body("DYNAMIC", 1.0, 0.5, 0.0,
+                       (0, 0, 1), (1, 0, 0, 0),
+                       "SPHERE", 0.5, 0.5, (0.5, 0.5, 0.5))
+    states = jw.get_body_states()
+    assert {item[0] for item in states} == {ground, ball}
+    assert all(len(item[1]) == 3 and len(item[2]) == 4 for item in states)
+
+    jw.set_record_contact_events(False)
+    jw.step(1 / 60.0, 1)
+    contact_snapshot = jw.get_contact_events_numpy()
+    assert len(contact_snapshot) == 14
+    assert len(contact_snapshot[0]) == 0
+    jw.set_record_contact_events(True)
     jw.clear()
 
 def test_runtime_controls():
@@ -310,6 +336,7 @@ if __name__ == "__main__":
         ("重力下落验证",            test_gravity_fall),
         ("set_gravity 零重力",       test_set_gravity_zero),
         ("body state 输出",          test_body_state),
+        ("bulk body state/contact recording", test_bulk_body_state_and_contact_recording_switch),
         ("runtime 控制 API",         test_runtime_controls),
         ("运动学 body 驱动",        test_kinematic_drive),
         ("约束 body-body",          test_constraint),
