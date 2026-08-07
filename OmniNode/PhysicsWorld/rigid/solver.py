@@ -681,12 +681,20 @@ def step_rigid_bodies(
     try:
         dt = float(fc.dt) if fc is not None and fc.dt > 0.0 else 1.0 / 60.0
         substeps = max(1, int(fc.substeps)) if fc is not None else 1
+        try:
+            from .implicit_objects import active_rigid_jolt_world_substeps
+            configured_substeps = active_rigid_jolt_world_substeps(world)
+            if configured_substeps > 0:
+                substeps = configured_substeps
+        except Exception:
+            pass
         # Jolt rigid-world settings and generated constraints are persistent implicit objects.
         # Apply Jolt rigid-world settings first, then materialize generated constraints as regular slots.
         sync_rigid_jolt_world_settings(world, adapter)
         sync_generated_constraint_slots(world, adapter=adapter)
 
         # --- sync rigid bodies ---
+        pending_body_sync = []
         for slot_id, slot in _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND):
             spec = slot.data.get("spec")
             if spec is None:
@@ -694,16 +702,22 @@ def step_rigid_bodies(
 
             needs_sync = slot.data.get("_jolt_generation") != world.generation
             if needs_sync:
-                try:
-                    adapter.sync_body(slot_id, spec)
-                    slot.data["_jolt_generation"] = world.generation
-                    slot.data.pop("_jolt_kinematic_pose_dirty", None)
-                    slot.data.pop("_jolt_error", None)
-                except Exception as e:
-                    slot.data["_jolt_error"] = str(e)
+                pending_body_sync.append((slot_id, slot, spec))
             elif spec.body_type == "KINEMATIC":
                 adapter.update_kinematic(slot_id, spec, dt)
                 slot.data.pop("_jolt_kinematic_pose_dirty", None)
+
+        if pending_body_sync:
+            batch_entries = [(slot_id, spec) for slot_id, _slot, spec in pending_body_sync]
+            batch_errors = adapter.sync_bodies_batch(batch_entries)
+            for slot_id, slot, _spec in pending_body_sync:
+                error = batch_errors.get(str(slot_id))
+                if error is not None:
+                    slot.data["_jolt_error"] = error
+                    continue
+                slot.data["_jolt_generation"] = world.generation
+                slot.data.pop("_jolt_kinematic_pose_dirty", None)
+                slot.data.pop("_jolt_error", None)
 
         # --- sync constraints ---
         for slot_id, slot in _ordered_constraint_slots(world):

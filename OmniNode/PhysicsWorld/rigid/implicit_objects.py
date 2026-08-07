@@ -26,6 +26,11 @@ DEFAULT_RIGID_GRAVITY = (0.0, 0.0, -9.81)
 DEFAULT_RIGID_JOLT_MAX_BODIES = 1024
 DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS = DEFAULT_RIGID_JOLT_MAX_BODIES * 4
 DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS = DEFAULT_RIGID_JOLT_MAX_BODIES * 2
+DEFAULT_RIGID_JOLT_SUBSTEPS = 1
+DEFAULT_RIGID_JOLT_VELOCITY_STEPS = 10
+DEFAULT_RIGID_JOLT_POSITION_STEPS = 2
+DEFAULT_RIGID_JOLT_WORKER_THREADS = 1
+DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS = True
 DEFAULT_RIGID_JOLT_WORLD_SETTING_SIGNATURE = "default"
 _PI = 3.141592653589793
 
@@ -66,6 +71,16 @@ def _positive_int(value, fallback: int, low: int = 1, high: int = 1_000_000) -> 
     if number < low:
         number = int(fallback)
     return max(low, min(high, number))
+
+
+def _nonnegative_int(value, fallback: int, high: int = 255) -> int:
+    try:
+        number = int(value)
+    except Exception:
+        number = int(fallback)
+    if number < 0:
+        number = int(fallback)
+    return max(0, min(high, number))
 
 
 def _jolt_capacity_tuple(
@@ -187,6 +202,11 @@ def make_rigid_jolt_world_setting_properties(
     max_bodies: int = DEFAULT_RIGID_JOLT_MAX_BODIES,
     max_body_pairs: int = DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS,
     max_contact_constraints: int = DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS,
+    substeps: int = DEFAULT_RIGID_JOLT_SUBSTEPS,
+    velocity_steps: int = DEFAULT_RIGID_JOLT_VELOCITY_STEPS,
+    position_steps: int = DEFAULT_RIGID_JOLT_POSITION_STEPS,
+    worker_threads: int = DEFAULT_RIGID_JOLT_WORKER_THREADS,
+    record_contact_events: bool = DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS,
 ) -> list[dict]:
     """构造一个可注册的 Jolt 刚体世界设置对象。"""
     bodies, pairs, contacts = _jolt_capacity_tuple(
@@ -199,6 +219,11 @@ def make_rigid_jolt_world_setting_properties(
         "max_bodies": bodies,
         "max_body_pairs": pairs,
         "max_contact_constraints": contacts,
+        "substeps": _positive_int(substeps, DEFAULT_RIGID_JOLT_SUBSTEPS, 1, 16),
+        "velocity_steps": _positive_int(velocity_steps, DEFAULT_RIGID_JOLT_VELOCITY_STEPS, 1, 255),
+        "position_steps": _positive_int(position_steps, DEFAULT_RIGID_JOLT_POSITION_STEPS, 1, 255),
+        "worker_threads": _nonnegative_int(worker_threads, DEFAULT_RIGID_JOLT_WORKER_THREADS, 64),
+        "record_contact_events": bool(record_contact_events),
         "enabled": bool(enabled),
         "source_id": str(source_id or "default"),
         "priority": int(priority),
@@ -216,6 +241,11 @@ def _copy_jolt_world_setting_object(item: dict) -> dict:
         "max_bodies": bodies,
         "max_body_pairs": pairs,
         "max_contact_constraints": contacts,
+        "substeps": _positive_int(item.get("substeps", DEFAULT_RIGID_JOLT_SUBSTEPS), DEFAULT_RIGID_JOLT_SUBSTEPS, 1, 16),
+        "velocity_steps": _positive_int(item.get("velocity_steps", DEFAULT_RIGID_JOLT_VELOCITY_STEPS), DEFAULT_RIGID_JOLT_VELOCITY_STEPS, 1, 255),
+        "position_steps": _positive_int(item.get("position_steps", DEFAULT_RIGID_JOLT_POSITION_STEPS), DEFAULT_RIGID_JOLT_POSITION_STEPS, 1, 255),
+        "worker_threads": _nonnegative_int(item.get("worker_threads", DEFAULT_RIGID_JOLT_WORKER_THREADS), DEFAULT_RIGID_JOLT_WORKER_THREADS, 64),
+        "record_contact_events": bool(item.get("record_contact_events", DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS)),
         "enabled": bool(item.get("enabled", True)),
         "source_id": str(item.get("source_id", "default") or "default"),
         "priority": int(item.get("priority", 0) or 0),
@@ -245,6 +275,11 @@ def rigid_jolt_world_setting_signature(item: dict) -> str:
         int(item.get("max_bodies", DEFAULT_RIGID_JOLT_MAX_BODIES) or DEFAULT_RIGID_JOLT_MAX_BODIES),
         int(item.get("max_body_pairs", DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS) or DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS),
         int(item.get("max_contact_constraints", DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS) or DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS),
+        int(item.get("substeps", DEFAULT_RIGID_JOLT_SUBSTEPS) or DEFAULT_RIGID_JOLT_SUBSTEPS),
+        int(item.get("velocity_steps", DEFAULT_RIGID_JOLT_VELOCITY_STEPS) or DEFAULT_RIGID_JOLT_VELOCITY_STEPS),
+        int(item.get("position_steps", DEFAULT_RIGID_JOLT_POSITION_STEPS) or DEFAULT_RIGID_JOLT_POSITION_STEPS),
+        int(item.get("worker_threads", DEFAULT_RIGID_JOLT_WORKER_THREADS) or 0),
+        "1" if bool(item.get("record_contact_events", DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS)) else "0",
     ]
     return stable_short_hash(payload, 16)
 
@@ -320,6 +355,11 @@ def selected_rigid_jolt_world_setting(world: PhysicsWorldCache) -> dict | None:
         "max_bodies": int(item.get("max_bodies", DEFAULT_RIGID_JOLT_MAX_BODIES) or DEFAULT_RIGID_JOLT_MAX_BODIES),
         "max_body_pairs": int(item.get("max_body_pairs", DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS) or DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS),
         "max_contact_constraints": int(item.get("max_contact_constraints", DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS) or DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS),
+        "substeps": int(item.get("substeps", DEFAULT_RIGID_JOLT_SUBSTEPS) or DEFAULT_RIGID_JOLT_SUBSTEPS),
+        "velocity_steps": int(item.get("velocity_steps", DEFAULT_RIGID_JOLT_VELOCITY_STEPS) or DEFAULT_RIGID_JOLT_VELOCITY_STEPS),
+        "position_steps": int(item.get("position_steps", DEFAULT_RIGID_JOLT_POSITION_STEPS) or DEFAULT_RIGID_JOLT_POSITION_STEPS),
+        "worker_threads": int(item.get("worker_threads", DEFAULT_RIGID_JOLT_WORKER_THREADS) or 0),
+        "record_contact_events": bool(item.get("record_contact_events", DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS)),
         "source_id": str(item.get("source_id", "default") or "default"),
         "priority": int(item.get("priority", 0) or 0),
         "stable_id": str(entry.get("stable_id") or rigid_jolt_world_setting_stable_id(item)),
@@ -350,6 +390,18 @@ def active_rigid_jolt_world_capacities(world: PhysicsWorldCache) -> tuple[int, i
         selected.get("max_bodies", DEFAULT_RIGID_JOLT_MAX_BODIES),
         selected.get("max_body_pairs", DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS),
         selected.get("max_contact_constraints", DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS),
+    )
+
+
+def active_rigid_jolt_world_substeps(world: PhysicsWorldCache) -> int:
+    selected = selected_rigid_jolt_world_setting(world)
+    if selected is None:
+        return 0
+    return _positive_int(
+        selected.get("substeps", DEFAULT_RIGID_JOLT_SUBSTEPS),
+        DEFAULT_RIGID_JOLT_SUBSTEPS,
+        1,
+        16,
     )
 
 

@@ -197,6 +197,10 @@ class JoltAdapter:
         max_bodies: int = 1024,
         max_body_pairs: int | None = None,
         max_contact_constraints: int | None = None,
+        velocity_steps: int = 10,
+        position_steps: int = 2,
+        worker_threads: int = 1,
+        record_contact_events: bool = True,
     ):
         native = _load_native()
         if native is None:
@@ -208,14 +212,33 @@ class JoltAdapter:
             max_body_pairs,
             max_contact_constraints,
         )
-        self._jw = native.JoltWorld(
-            max_bodies=max_bodies,
-            max_body_pairs=max_body_pairs,
-            max_contact_constraints=max_contact_constraints,
-        )
+        native_kwargs = {
+            "max_bodies": max_bodies,
+            "max_body_pairs": max_body_pairs,
+            "max_contact_constraints": max_contact_constraints,
+            "velocity_steps": max(1, min(255, int(velocity_steps))),
+            "position_steps": max(1, min(255, int(position_steps))),
+            "worker_threads": max(0, min(64, int(worker_threads))),
+            "record_contact_events": bool(record_contact_events),
+        }
+        try:
+            self._jw = native.JoltWorld(**native_kwargs)
+            self._native_runtime_settings = True
+        except TypeError:
+            # 旧版 pyd 只有容量三个参数；设置仍由 Python 侧管理。
+            self._jw = native.JoltWorld(
+                max_bodies=max_bodies,
+                max_body_pairs=max_body_pairs,
+                max_contact_constraints=max_contact_constraints,
+            )
+            self._native_runtime_settings = False
         self.jolt_max_bodies: int = max_bodies
         self.jolt_max_body_pairs: int = max_body_pairs
         self.jolt_max_contact_constraints: int = max_contact_constraints
+        self.jolt_velocity_steps: int = max(1, min(255, int(velocity_steps)))
+        self.jolt_position_steps: int = max(1, min(255, int(position_steps)))
+        self.jolt_worker_threads: int = max(0, min(64, int(worker_threads)))
+        self.jolt_record_contact_events: bool = bool(record_contact_events)
         self._jolt_capacity_signature: tuple[int, int, int] = (
             max_bodies,
             max_body_pairs,
@@ -256,7 +279,7 @@ class JoltAdapter:
 
     # ---- Body 管理 --------------------------------------------------------
 
-    def sync_body(self, slot_id: str, spec: "RigidBodySpec") -> int:
+    def sync_body(self, slot_id: str, spec: "RigidBodySpec", *, defer_add: bool = False) -> int:
         """
         注册或更新刚体。generation 变化时先 remove 再 add。
         返回 body handle。
@@ -302,10 +325,36 @@ class JoltAdapter:
             allowed_dofs=int(getattr(spec, "allowed_dofs", 0x3F)),
             collide_kinematic_vs_non_dynamic=bool(getattr(spec, "collide_kinematic_vs_non_dynamic", False)),
         )
-        handle = self._jw.add_body(**kwargs)
+        if defer_add and self._native_runtime_settings:
+            handle = self._jw.add_body(**kwargs, defer_add=True)
+        else:
+            handle = self._jw.add_body(**kwargs)
         self._body_handles[slot_id] = handle
         self._body_slots_by_handle[int(handle)] = str(slot_id)
         return handle
+
+    def sync_bodies_batch(self, entries) -> dict[str, str]:
+        """批量创建刚体，最后一次性提交 BroadPhase；返回按 slot_id 索引的错误。"""
+        errors: dict[str, str] = {}
+        pending = list(entries or [])
+        for slot_id, spec in pending:
+            try:
+                self.sync_body(
+                    str(slot_id), spec,
+                    defer_add=bool(self._native_runtime_settings),
+                )
+            except Exception as exc:
+                errors[str(slot_id)] = str(exc)
+        try:
+            finalize = getattr(self._jw, "finalize_body_batch", None)
+            if callable(finalize) and self._native_runtime_settings:
+                finalize(True)
+        except Exception as exc:
+            message = str(exc)
+            for slot_id, _spec in pending:
+                if str(slot_id) not in errors:
+                    errors[str(slot_id)] = message
+        return errors
 
     def remove_body(self, slot_id: str) -> None:
         self._clear_contact_events()
@@ -840,9 +889,21 @@ def ensure_jolt_adapter(world) -> "JoltAdapter | None":
     native 不可用时返回 None。
     """
     desired_capacity = _jolt_world_capacity_from_settings(world)
+    try:
+        from ..implicit_objects import selected_rigid_jolt_world_setting
+        setting = selected_rigid_jolt_world_setting(world) or {}
+    except Exception:
+        setting = {}
+    desired_runtime = (
+        int(setting.get("velocity_steps", 10) or 10),
+        int(setting.get("position_steps", 2) or 2),
+        int(setting.get("worker_threads", 1) or 0),
+        bool(setting.get("record_contact_events", True)),
+    )
+    desired_signature = (desired_capacity, desired_runtime)
     existing = world.backend_resources.get(RIGID_BACKEND_RESOURCE_KEY)
     if isinstance(existing, JoltAdapter) and existing._valid:
-        if getattr(existing, "_jolt_capacity_signature", None) != desired_capacity:
+        if getattr(existing, "_jolt_runtime_signature", None) != desired_signature:
             try:
                 existing.dispose("rigid_jolt_world_capacity_changed")
             except Exception:
@@ -870,7 +931,12 @@ def ensure_jolt_adapter(world) -> "JoltAdapter | None":
             max_bodies=desired_capacity[0],
             max_body_pairs=desired_capacity[1],
             max_contact_constraints=desired_capacity[2],
+            velocity_steps=desired_runtime[0],
+            position_steps=desired_runtime[1],
+            worker_threads=desired_runtime[2],
+            record_contact_events=desired_runtime[3],
         )
+        adapter._jolt_runtime_signature = desired_signature
         fc = world.frame_context if world.frame_context else None
         adapter._last_generation = fc.generation if fc else 0
         world.backend_resources[RIGID_BACKEND_RESOURCE_KEY] = adapter

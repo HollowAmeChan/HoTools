@@ -21,6 +21,11 @@ from .implicit_objects import (
     DEFAULT_RIGID_JOLT_MAX_BODIES,
     DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS,
     DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS,
+    DEFAULT_RIGID_JOLT_SUBSTEPS,
+    DEFAULT_RIGID_JOLT_VELOCITY_STEPS,
+    DEFAULT_RIGID_JOLT_POSITION_STEPS,
+    DEFAULT_RIGID_JOLT_WORKER_THREADS,
+    DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS,
     make_rigid_generated_constraint_properties,
     make_rigid_jolt_world_setting_properties,
     register_rigid_generated_constraint_objects,
@@ -352,8 +357,8 @@ def physicsRigidRayCast(
 
 
 @omni(
-    enable=True,
-    bl_label="刚体世界-Jolt设置属性",
+    enable=False,
+    bl_label="Jolt设置属性（已合并）",
     base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["重力", "最大刚体数", "最大刚体对", "最大接触约束", "来源ID", "优先级"],
@@ -392,8 +397,8 @@ def physicsRigidJoltWorldSettingsProperties(
 
 
 @omni(
-    enable=True,
-    bl_label="刚体世界-Jolt设置注册",
+    enable=False,
+    bl_label="Jolt设置注册（已合并）",
     base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "Jolt刚体世界设置属性"],
@@ -417,6 +422,67 @@ def physicsRigidJoltWorldSettingsRegister(
         enabled=True,
     )
     return world, int(count), int(dirty_count), int(version)
+
+
+@omni(
+    enable=True,
+    bl_label="Jolt设置",
+    base_color=nodeColors.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "物理世界", "重力", "最大刚体数", "最大刚体对", "最大接触约束",
+        "子步数", "速度迭代", "位置迭代", "工作线程", "记录接触事件",
+        "来源ID", "优先级",
+    ],
+    input_init={
+        "gravity": {"default_value": mathutils.Vector((0.0, 0.0, -9.81))},
+        "max_bodies": {"default_value": DEFAULT_RIGID_JOLT_MAX_BODIES, "min_value": 1, "max_value": 1000000},
+        "max_body_pairs": {"default_value": DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS, "min_value": 1, "max_value": 4000000},
+        "max_contact_constraints": {"default_value": DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS, "min_value": 1, "max_value": 2000000},
+        "substeps": {"default_value": DEFAULT_RIGID_JOLT_SUBSTEPS, "min_value": 1, "max_value": 16},
+        "velocity_steps": {"default_value": DEFAULT_RIGID_JOLT_VELOCITY_STEPS, "min_value": 1, "max_value": 255},
+        "position_steps": {"default_value": DEFAULT_RIGID_JOLT_POSITION_STEPS, "min_value": 1, "max_value": 255},
+        "worker_threads": {"default_value": DEFAULT_RIGID_JOLT_WORKER_THREADS, "min_value": 0, "max_value": 64},
+        "record_contact_events": {"default_value": DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS},
+        "priority": {"min_value": -255, "max_value": 255},
+    },
+    _OUTPUT_NAME=["物理世界", "设置数量", "变更数量", "版本"],
+    mute_passthrough={"_OUTPUT0": "world"},
+    omni_description="""
+    集中管理当前 Jolt 刚体解算器的设置。这里的子步数只作用于 Jolt，
+    不修改 PhysicsWorld 公共帧上下文；工作线程、求解迭代和接触事件采集
+    会在设置签名变化时重建 native Jolt world。
+    """,
+)
+def physicsRigidJoltSettings(
+    world: object,
+    gravity: mathutils.Vector = mathutils.Vector((0.0, 0.0, -9.81)),
+    max_bodies: int = DEFAULT_RIGID_JOLT_MAX_BODIES,
+    max_body_pairs: int = DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS,
+    max_contact_constraints: int = DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS,
+    substeps: int = DEFAULT_RIGID_JOLT_SUBSTEPS,
+    velocity_steps: int = DEFAULT_RIGID_JOLT_VELOCITY_STEPS,
+    position_steps: int = DEFAULT_RIGID_JOLT_POSITION_STEPS,
+    worker_threads: int = DEFAULT_RIGID_JOLT_WORKER_THREADS,
+    record_contact_events: bool = DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS,
+    source_id: str = "default",
+    priority: int = 0,
+) -> tuple[object, int, int, int]:
+    properties = make_rigid_jolt_world_setting_properties(
+        gravity=_vec3(gravity, (0.0, 0.0, -9.81)),
+        max_bodies=int(max_bodies),
+        max_body_pairs=int(max_body_pairs),
+        max_contact_constraints=int(max_contact_constraints),
+        substeps=int(substeps),
+        velocity_steps=int(velocity_steps),
+        position_steps=int(position_steps),
+        worker_threads=int(worker_threads),
+        record_contact_events=bool(record_contact_events),
+        enabled=True,
+        source_id=str(source_id or "default"),
+        priority=int(priority),
+    )
+    return physicsRigidJoltWorldSettingsRegister(world, properties)
 
 
 @omni(

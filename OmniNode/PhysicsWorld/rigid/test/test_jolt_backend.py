@@ -83,6 +83,29 @@ def test_gravity_fall():
     assert z1 < z0, f"球体应下落：z0={z0:.3f} z1={z1:.3f}"
     jw.clear()
 
+
+def test_batch_body_registration():
+    jw = hotools_jolt.JoltWorld(32, 128, 64)
+    if not hasattr(jw, "finalize_body_batch"):
+        # 旧版 native ABI 使用逐体注册；Python 适配器会自动回退到该路径。
+        jw.clear()
+        return
+    handles = []
+    for index in range(8):
+        handles.append(jw.add_body(
+            "DYNAMIC", 1.0, 0.5, 0.0,
+            (float(index) * 1.1, 0.0, 3.0), (1, 0, 0, 0),
+            "BOX", 0.5, 0.5, (0.5, 0.5, 0.5),
+            defer_add=True,
+        ))
+    assert jw.finalize_body_batch() == 8
+    assert jw.body_count == 8
+    jw.step(1 / 60.0, 1)
+    for handle in handles:
+        position, _rotation = jw.get_body_transform(handle)
+        assert len(position) == 3
+    jw.clear()
+
 def test_set_gravity_zero():
     jw = hotools_jolt.JoltWorld(32, 64, 32)
     jw.set_gravity((0.0, 0.0, 0.0))
@@ -225,6 +248,7 @@ def test_step_timing():
 
 if __name__ == "__main__":
     tests = [
+        ("batch body registration",       test_batch_body_registration),
         ("创建 JoltWorld",          test_create_world),
         ("添加/删除刚体",           test_add_remove_bodies),
         ("重力下落验证",            test_gravity_fall),

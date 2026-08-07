@@ -98,7 +98,7 @@ RIGID_CONSTRAINT_CAPABILITY = {
 
 RIGID_JOLT_WORLD_SETTING_CAPABILITY = {
     "capability_id": RIGID_JOLT_WORLD_SETTING_CAPABILITY_ID,
-    "display_name": "Jolt 刚体世界设置",
+    "display_name": "Jolt设置",
     "semantic_owner": "physicsWorld/rigid 解算器能力声明",
     "implicit_object_tag": RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
     "fields": [
@@ -106,6 +106,11 @@ RIGID_JOLT_WORLD_SETTING_CAPABILITY = {
         {"name": "max_bodies", "type": "int", "default": 1024, "update_policy": "适配器重建"},
         {"name": "max_body_pairs", "type": "int", "default": 4096, "update_policy": "适配器重建"},
         {"name": "max_contact_constraints", "type": "int", "default": 2048, "update_policy": "适配器重建"},
+        {"name": "substeps", "type": "int", "default": 1, "range": [1, 16], "update_policy": "Jolt模拟步读取"},
+        {"name": "velocity_steps", "type": "int", "default": 10, "range": [1, 255], "update_policy": "适配器重建"},
+        {"name": "position_steps", "type": "int", "default": 2, "range": [1, 255], "update_policy": "适配器重建"},
+        {"name": "worker_threads", "type": "int", "default": 1, "range": [0, 64], "update_policy": "适配器重建"},
+        {"name": "record_contact_events", "type": "bool", "default": True, "update_policy": "适配器重建"},
     ],
 }
 
@@ -153,7 +158,7 @@ RIGID_UPDATE_FREQUENCY_TABLE = [
     {"data": "帧号 / dt", "source": "PhysicsWorldCache.frame_context", "policy": "每帧更新"},
     {"data": "刚体规格", "source": "Object.hotools_rigid_body -> RigidBodySpec", "policy": "签名变化时更新"},
     {"data": "约束规格", "source": "Object.hotools_rigid_constraint / generated constraint -> ConstraintSpec", "policy": "签名变化时更新"},
-    {"data": "Jolt 世界设置", "source": f'world.implicit_objects["{RIGID_JOLT_WORLD_SETTING_OBJECT_TAG}"]', "policy": "隐式对象签名变化时更新"},
+    {"data": "Jolt设置", "source": f'world.implicit_objects["{RIGID_JOLT_WORLD_SETTING_OBJECT_TAG}"]', "policy": "隐式对象签名变化时更新"},
     {"data": "运动学刚体变换", "source": "RigidBodySpec 世界变换快照", "policy": "每帧同步；同帧不推进时间"},
     {"data": "刚体运行时命令", "source": f'world.exchange["{RIGID_BODY_COMMANDS_CHANNEL}"]', "policy": "按代次/帧令牌单次消费"},
     {"data": "原生 Jolt 世界", "source": "world.backend_resources", "policy": "持续到 world dispose 或容量配置变化"},

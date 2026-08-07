@@ -99,6 +99,10 @@ def rigid_backend_debug_snapshot(adapter) -> dict:
         "jolt_max_bodies": int(getattr(adapter, "jolt_max_bodies", 0) or 0),
         "jolt_max_body_pairs": int(getattr(adapter, "jolt_max_body_pairs", 0) or 0),
         "jolt_max_contact_constraints": int(getattr(adapter, "jolt_max_contact_constraints", 0) or 0),
+        "jolt_velocity_steps": int(getattr(adapter, "jolt_velocity_steps", 0) or 0),
+        "jolt_position_steps": int(getattr(adapter, "jolt_position_steps", 0) or 0),
+        "jolt_worker_threads": int(getattr(adapter, "jolt_worker_threads", 0) or 0),
+        "jolt_record_contact_events": bool(getattr(adapter, "jolt_record_contact_events", True)),
     }
 
 
