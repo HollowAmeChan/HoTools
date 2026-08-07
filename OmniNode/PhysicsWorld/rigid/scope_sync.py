@@ -18,7 +18,11 @@ from .names import (
     RIGID_BODY_SLOT_KIND,
     RIGID_CONSTRAINT_SLOT_KIND,
 )
-from .specs import build_constraint_spec, build_rigid_body_spec
+from .specs import (
+    _world_transform_wxyz_from_matrix_values,
+    build_constraint_spec,
+    build_rigid_body_spec,
+)
 
 
 def _flatten(values) -> list:
@@ -35,14 +39,24 @@ def _flatten(values) -> list:
     return result
 
 
-def _scope_world_matrix_values(scope: PhysicsObjectScope, obj):
-    """按 Scope 冻结的 Collection 顺序读取 Object.matrix_world 批量切片。"""
+def _scope_world_matrix_values_by_pointer(
+    scope: PhysicsObjectScope,
+    object_ptr: int,
+):
+    """按对象整数身份读取本帧 Collection.matrix_world 批量切片。"""
     try:
-        object_ptr = int(obj.as_pointer())
-        batch_index, object_index = scope.collection_locations[object_ptr]
+        batch_index, object_index = scope.collection_locations[int(object_ptr)]
         batch = scope.collection_batches[batch_index]
         start = object_index * 16
         return batch["matrix_world_f32"][start:start + 16]
+    except Exception:
+        return None
+
+
+def _scope_world_matrix_values(scope: PhysicsObjectScope, obj):
+    """按 Scope 冻结的 Collection 顺序读取 Object.matrix_world 批量切片。"""
+    try:
+        return _scope_world_matrix_values_by_pointer(scope, int(obj.as_pointer()))
     except Exception:
         return None
 
@@ -277,6 +291,36 @@ def _mark_all_rigid_slots_for_resync(world: PhysicsWorldCache) -> None:
             slot.data.pop("_jolt_generation", None)
 
 
+def _sync_kinematic_poses_from_scope(
+    world: PhysicsWorldCache,
+    scope: PhysicsObjectScope,
+) -> None:
+    """连续帧只同步运动学目标，不重新读取整套刚体 PropertyGroup。"""
+    for slot in world.solver_slots.values():
+        if slot.kind != RIGID_BODY_SLOT_KIND:
+            continue
+        spec = slot.data.get("spec")
+        if spec is None or str(getattr(spec, "body_type", "")) != "KINEMATIC":
+            continue
+        values = _scope_world_matrix_values_by_pointer(
+            scope,
+            int(getattr(spec, "obj_ptr", 0) or 0),
+        )
+        if values is None:
+            continue
+        try:
+            position, rotation = _world_transform_wxyz_from_matrix_values(values)
+        except Exception:
+            continue
+        pose_signature = (_round_tuple(position), _round_tuple(rotation))
+        if slot.data.get("_kinematic_pose_signature") == pose_signature:
+            continue
+        spec.world_position = position
+        spec.world_rotation_wxyz = rotation
+        slot.data["_kinematic_pose_signature"] = pose_signature
+        slot.data["_jolt_kinematic_pose_dirty"] = True
+
+
 def reset_rigid_world_runtime(
     world: PhysicsWorldCache,
     _scope=None,
@@ -321,6 +365,11 @@ def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjec
     if not isinstance(world, PhysicsWorldCache) or not isinstance(scope, PhysicsObjectScope):
         return
     if not (scope.include_rigid_body or scope.include_rigid_constraint):
+        return
+
+    frame_context = getattr(world, "frame_context", None)
+    if not bool(getattr(frame_context, "registration_refresh_required", True)):
+        _sync_kinematic_poses_from_scope(world, scope)
         return
 
     solver_id = "_rigid_scope_sync"

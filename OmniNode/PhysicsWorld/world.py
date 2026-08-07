@@ -467,6 +467,12 @@ def physicsWorldBegin(
         world.invalidate_all_slots("reset_requested")
 
     restart_required = bool(reset) or scope_changed or (not continuous and not same_frame) or (previous_frame is None)
+    registration_refresh_required = bool(
+        world.registration_refresh_requested
+        or scope_changed
+        or bool(reset)
+        or previous_frame is None
+    )
 
     # Blender 输出 fps/fps_base 是唯一基础时钟。sample_time 只累计已经跨过的
     # 连续 world 帧；same-frame 即使参数变化也不能篡改上一帧实际采用的步长。
@@ -487,6 +493,7 @@ def physicsWorldBegin(
     fc.same_frame = same_frame
     fc.reset_requested = bool(reset)
     fc.restart_required = restart_required
+    fc.registration_refresh_required = registration_refresh_required
     fc.raw_dt = raw_dt
     fc.dt = effective_dt
     fc.frame_step_dt = frame_step_dt
@@ -529,13 +536,15 @@ def physicsWorldBegin(
 
     collider_count = len(new_snapshot.get("colliders") or [])
 
-    # 公共 component 先解析逐帧属性，solver 随后读取公共快照并收集私有规格。
+    # collector 自行区分低频注册和必要的逐帧输入同步。
     _collect_scope_physics_specs(world, object_scope)
+    world.registration_refresh_requested = False
 
     if debug_output:
         print(
             f"[PhysicsWorldBegin] gen={world.generation} frame={current_frame} "
             f"prev={previous_frame} continuous={continuous} restart={fc.restart_required} "
+            f"registration_refresh={fc.registration_refresh_required} "
             f"colliders={collider_count} invalid={invalid_count} "
             f"replace={world.replace_required}"
         )

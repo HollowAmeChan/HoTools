@@ -3,7 +3,7 @@ physicsWorld.scope — object scope 工具函数
 
 职责：
   - object 列表去重、过滤
-  - scope key 计算（双指针，防止 Blender 指针复用导致 scope 变化未被检测）
+  - scope key 计算（Collection 边界、对象数量和类型开关）
   - 从 scope 解析 PhysicsColliderSource 列表
 """
 
@@ -59,15 +59,10 @@ def _collection_is_valid(collection) -> bool:
 
 def build_scope_key(scope: PhysicsObjectScope) -> frozenset:
     """
-    计算 scope key，用于检测对象范围是否变化。
+    计算低频 scope key，只观察节点边界、对象数量和类型开关。
 
-    使用 (obj_ptr, data_ptr) 双指针，而不是单 obj_ptr：
-    Blender 删除对象后会释放地址，新建对象可能复用同一整数指针，
-    单指针无法感知"删除旧对象、新建不同对象但指针相同"的变化。
-
-    data_ptr 感知 mesh / armature 数据被替换（obj 同一个但 .data 换了）的情况。
-
-    include_flags 也纳入 key，flag 变化同样触发 restart。
+    对象内部属性、data 替换以及“同数量对象替换”不在运行时逐层核对；
+    这类编辑由用户重新编译 Omni 树后刷新注册。
     """
     entries: list[tuple] = []
     for collection in getattr(scope, "collections", ()):
@@ -75,18 +70,7 @@ def build_scope_key(scope: PhysicsObjectScope) -> frozenset:
             entries.append(("collection", int(collection.as_pointer())))
         except Exception:
             entries.append(("collection_invalid", id(collection)))
-    for obj in scope.objects:
-        if not _obj_is_valid(obj):
-            # 引用已失效：记录标记值而不是跳过
-            # 跳过会导致对象数量稳定但内容变了，无法触发 restart
-            entries.append((-1, id(obj)))
-            continue
-        try:
-            obj_ptr = int(obj.as_pointer())
-            data_ptr = int(obj.data.as_pointer()) if obj.data is not None else 0
-            entries.append((obj_ptr, data_ptr))
-        except Exception:
-            entries.append((-1, id(obj)))
+    entries.append(("object_count", len(getattr(scope, "objects", ()))))
 
     include_flags = (
         bool(scope.include_passive_collision),

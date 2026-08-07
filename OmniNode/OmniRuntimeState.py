@@ -161,6 +161,30 @@ def _dispose_cache_value(value, reason, seen=None, active_ids=None):
             _dispose_cache_value(item, reason, seen, active_ids)
 
 
+def _notify_cache_recompile(value, reason, seen=None):
+    """通知兼容重编译后仍被保留的缓存 owner。"""
+    value = _intent_visible_value(value)
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return
+    if seen is None:
+        seen = set()
+    value_id = id(value)
+    if value_id in seen:
+        return
+    seen.add(value_id)
+
+    callback = getattr(value, "omni_cache_on_recompile", None)
+    if callable(callback):
+        callback(str(reason or "recompile"))
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _notify_cache_recompile(item, reason, seen)
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            _notify_cache_recompile(item, reason, seen)
+
+
 def _dispose_pending_intent(intent, reason, active_ids=None, seen=None):
     intent = _decode_write_intent(intent)
     if intent.mode != "replace":
@@ -629,6 +653,7 @@ def _contracts_compatible(previous, current):
 def reconcile_root_tree(tree, previous_compiled, current_compiled):
     root_key = _runtime_tree_key(tree)
     removed_values = []
+    preserved_values = []
     preserved_namespaces = 0
     removed_namespaces = 0
     for namespace in list(_COMMITTED_CACHE.keys()):
@@ -638,6 +663,7 @@ def reconcile_root_tree(tree, previous_compiled, current_compiled):
         current = _compiled_namespace_contract(current_compiled, namespace[1])
         if _contracts_compatible(previous, current):
             preserved_namespaces += 1
+            preserved_values.extend(_COMMITTED_CACHE.get(namespace, {}).values())
             continue
         values = _COMMITTED_CACHE.pop(namespace, None)
         removed_namespaces += 1
@@ -652,6 +678,9 @@ def reconcile_root_tree(tree, previous_compiled, current_compiled):
             seen,
             active_ids=active_ids,
         )
+    notified_seen = set()
+    for value in preserved_values:
+        _notify_cache_recompile(value, "recompile_compatible", notified_seen)
     return {
         "preserved_namespaces": preserved_namespaces,
         "removed_namespaces": removed_namespaces,

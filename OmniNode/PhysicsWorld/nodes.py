@@ -90,6 +90,10 @@ def physicsObjectsFromScene(
     帧内批量读取和写回的固定边界。不同输入集合不能包含同一对象；范围内对象
     始终参与物理，不受视图隐藏状态影响。
 
+    物理对象注册采用低频刷新：首次运行、集合或类型开关变化、对象数量变化、
+    跳帧、重置和重新编译时执行。修改对象内部物理属性、替换 data，或同数量
+    替换对象后，需要重新编译 Omni 树。碰撞姿态和运动学刚体目标仍逐帧更新。
+
     各开关对齐 HoTools 统一物理面板的类型名称：
       简单碰撞 — 读取 hotools_object_collision.enabled
       骨骼碰撞 — 读取 Bone.hotools_collision.collision_type
@@ -147,6 +151,9 @@ def physicsObjectScope(
 
     读取上一帧的 PhysicsWorldCache，更新帧上下文、对象范围和碰撞快照，
     返回裸 world owner 供后续 solver 节点使用。
+
+    连续帧不会重复扫描全部刚体 PropertyGroup。完整注册只在对象范围数量变化、
+    跳帧、重置或重新编译后执行；内部物理属性编辑需通过重新编译生效。
 
     返回值：
       物理世界   — PhysicsWorldCache 裸对象（不是 cache intent）

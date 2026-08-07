@@ -107,6 +107,7 @@ class PhysicsFrameContext:
         "same_frame",
         "reset_requested",
         "restart_required",
+        "registration_refresh_required",
         "raw_dt",
         "dt",
         "frame_step_dt",
@@ -126,6 +127,7 @@ class PhysicsFrameContext:
         self.same_frame: bool = False
         self.reset_requested: bool = False
         self.restart_required: bool = True
+        self.registration_refresh_required: bool = True
         self.raw_dt: float = 0.0
         self.dt: float = 0.0
         self.frame_step_dt: float = 0.0
@@ -145,6 +147,7 @@ class PhysicsFrameContext:
             "same_frame": self.same_frame,
             "reset_requested": self.reset_requested,
             "restart_required": self.restart_required,
+            "registration_refresh_required": self.registration_refresh_required,
             "raw_dt": round(self.raw_dt, 6),
             "dt": round(self.dt, 6),
             "frame_step_dt": round(self.frame_step_dt, 6),
@@ -279,6 +282,7 @@ class PhysicsWorldCache:
     def __init__(self) -> None:
         self.frame_context: PhysicsFrameContext = PhysicsFrameContext()
         self.object_scope_key = None
+        self.registration_refresh_requested: bool = True
         self.collider_snapshot: dict = {"frame": None, "colliders": [], "source_count": 0}
         self.previous_collider_snapshot: dict | None = None
         self.solver_slots: dict[str, PhysicsSolverSlot] = {}
@@ -601,6 +605,10 @@ class PhysicsWorldCache:
         from .reference_guard import refresh_physics_world_references
 
         return refresh_physics_world_references(self, reason)
+
+    def omni_cache_on_recompile(self, _reason: str = "recompile") -> None:
+        """兼容重编译保留 world 时，请求下一次 Begin 重做对象注册。"""
+        self.registration_refresh_requested = True
 
     # ---- omni_cache_dispose 协议 ---------------------------------------
 
