@@ -21,9 +21,7 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Core/Mutex.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Core/JobSystemSingleThreaded.h>
-#ifdef HOTOOLS_JOLT_THREADPOOL_EXPERIMENT
-#  include <Jolt/Core/JobSystemThreadPool.h>
-#endif
+#include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -516,18 +514,22 @@ class JoltWorld {
 public:
     explicit JoltWorld(uint32_t max_bodies = 2048,
                        uint32_t max_body_pairs = 4096,
-                       uint32_t max_contact_constraints = 2048)
+                       uint32_t max_contact_constraints = 2048,
+                       uint32_t worker_threads = 0)
     {
         // ensure_jolt_initialized() 已在模块加载时调用，此处为保险再调一次（幂等）
         ensure_jolt_initialized();
         mGroupFilter = new HoCollisionGroupFilter();
         mTempAllocator = std::make_unique<TempAllocatorImpl>(8 * 1024 * 1024);
-#ifdef HOTOOLS_JOLT_THREADPOOL_EXPERIMENT
-        // 实验目标固定使用两个 worker；生产目标仍保持单线程，避免未经验证的 ABI 变化进入运行时。
-        mJobSystem     = std::make_unique<JobSystemThreadPool>(cMaxPhysicsJobs, cMaxPhysicsBarriers, 2);
-#else
-        mJobSystem     = std::make_unique<JobSystemSingleThreaded>(cMaxPhysicsJobs);
-#endif
+        // 0 明确表示单线程；正数直接使用 Jolt 原生线程池。
+        if (worker_threads == 0) {
+            mJobSystem = std::make_unique<JobSystemSingleThreaded>(cMaxPhysicsJobs);
+        } else {
+            const uint32_t worker_count = (std::min)(worker_threads, 64u);
+            mWorkerThreads = worker_count;
+            mJobSystem = std::make_unique<JobSystemThreadPool>(
+                cMaxPhysicsJobs, cMaxPhysicsBarriers, worker_count);
+        }
         mPhysicsSystem = std::make_unique<PhysicsSystem>();
         mPhysicsSystem->Init(
             max_bodies, 0,
@@ -543,6 +545,8 @@ public:
     }
 
     ~JoltWorld() { clear(); }
+
+    uint32_t worker_threads() const noexcept { return mWorkerThreads; }
 
     // ---- Body management -----------------------------------------------
 
@@ -1707,11 +1711,8 @@ private:
     HoContactListener mContactListener;
 
     std::unique_ptr<TempAllocatorImpl>        mTempAllocator;
-#ifdef HOTOOLS_JOLT_THREADPOOL_EXPERIMENT
     std::unique_ptr<JobSystem>                mJobSystem;
-#else
-    std::unique_ptr<JobSystemSingleThreaded>  mJobSystem;
-#endif
+    uint32_t                                  mWorkerThreads = 0;
     std::unique_ptr<PhysicsSystem>            mPhysicsSystem;
 
     std::unordered_map<uint32_t, BodyRecord> mBodies;
@@ -1745,11 +1746,13 @@ NB_MODULE(hotools_jolt, m) {
     ensure_jolt_initialized();
 
     nb::class_<JoltWorld>(m, "JoltWorld")
-        .def(nb::init<uint32_t, uint32_t, uint32_t>(),
+        .def(nb::init<uint32_t, uint32_t, uint32_t, uint32_t>(),
              nb::arg("max_bodies")              = 2048,
              nb::arg("max_body_pairs")          = 4096,
              nb::arg("max_contact_constraints") = 2048,
-             "创建 Jolt PhysicsSystem 实例。")
+             nb::arg("worker_threads")           = 0,
+             "创建 Jolt PhysicsSystem 实例；worker_threads 为 0 时单线程，正数时启用原生线程池。")
+        .def_prop_ro("worker_threads", &JoltWorld::worker_threads)
 
         // body
         .def("add_body", &JoltWorld::add_body,

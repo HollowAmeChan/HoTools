@@ -21,6 +21,12 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 import hotools_jolt
+from OmniNode.PhysicsWorld.types import PhysicsWorldCache
+from OmniNode.PhysicsWorld.rigid.implicit_objects import (
+    make_rigid_jolt_world_setting_properties,
+    register_rigid_jolt_world_setting_objects,
+)
+from OmniNode.PhysicsWorld.rigid.backends.jolt import ensure_jolt_adapter
 
 PASS = "[PASS]"
 FAIL = "[FAIL]"
@@ -42,6 +48,35 @@ def test_create_world():
     assert jw.body_count == 0
     assert jw.constraint_count == 0
     jw.clear()
+
+def test_worker_threads():
+    single = hotools_jolt.JoltWorld(32, 64, 32, worker_threads=0)
+    threaded = hotools_jolt.JoltWorld(32, 64, 32, worker_threads=2)
+    assert single.worker_threads == 0
+    assert threaded.worker_threads == 2
+    threaded.add_body("DYNAMIC", 1.0, 0.5, 0.0,
+                      (0, 0, 3), (1, 0, 0, 0),
+                      "SPHERE", 0.4, 0.4, (0.4, 0.4, 0.4))
+    threaded.step(1 / 60.0, 2)
+    single.clear()
+    threaded.clear()
+
+def test_node_worker_setting_replacement():
+    world = PhysicsWorldCache()
+    single_props = make_rigid_jolt_world_setting_properties(
+        worker_threads=0, source_id="worker-test")
+    register_rigid_jolt_world_setting_objects(world, single_props)
+    single = ensure_jolt_adapter(world)
+    assert single is not None and single.jolt_worker_threads == 0
+
+    threaded_props = make_rigid_jolt_world_setting_properties(
+        worker_threads=2, source_id="worker-test")
+    register_rigid_jolt_world_setting_objects(world, threaded_props)
+    threaded = ensure_jolt_adapter(world)
+    assert threaded is not None and threaded is not single
+    assert threaded.jolt_worker_threads == 2
+    assert threaded._jw.worker_threads == 2
+    threaded.dispose("worker-test")
 
 def test_add_remove_bodies():
     jw = hotools_jolt.JoltWorld(32, 64, 32)
@@ -249,6 +284,8 @@ def test_step_timing():
 if __name__ == "__main__":
     tests = [
         ("batch body registration",       test_batch_body_registration),
+        ("Jolt worker_threads",            test_worker_threads),
+        ("node worker setting replacement", test_node_worker_setting_replacement),
         ("创建 JoltWorld",          test_create_world),
         ("添加/删除刚体",           test_add_remove_bodies),
         ("重力下落验证",            test_gravity_fall),

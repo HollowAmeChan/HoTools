@@ -444,15 +444,12 @@ endif()
 endif()
 
 # ---------------------------------------------------------------------------
-# 隔离线程池 pyd 实验：输出到 build 目录，不覆盖 _Lib 运行时。
+# 隔离 pyd 实验：输出到 build 目录，不覆盖 _Lib 运行时；线程数由 JoltWorld.worker_threads 控制。
 # ---------------------------------------------------------------------------
 if(HOTOOLS_BUILD_JOLT AND HOTOOLS_BUILD_JOLT_THREADPOOL_EXPERIMENT)
 nanobind_add_module(hotools_jolt_threadpool_experiment
     NB_STATIC
     src/jolt_rigid.cpp
-)
-target_compile_definitions(hotools_jolt_threadpool_experiment PRIVATE
-    HOTOOLS_JOLT_THREADPOOL_EXPERIMENT
 )
 target_include_directories(hotools_jolt_threadpool_experiment PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/include"

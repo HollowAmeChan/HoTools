@@ -1,6 +1,6 @@
 # Jolt 多线程调查与实施契约
 
-状态：根因调查已完成，当前生产后端仍使用 `JobSystemSingleThreaded`；线程池实现已在隔离 pyd 中通过 Blender 验证。
+状态：Jolt 多线程已接入真实节点调用。native 直接构造默认 `worker_threads=0`，节点世界设置默认 `worker_threads=1`；生产 py311/py313 pyd 均已包含线程池 ABI。
 
 本文只讨论 Jolt 刚体后端的运行线程模型、构建稳定性和进程隔离边界。它不把 Blender 的 UI、depsgraph、节点编译或物理写回搬到 worker 线程。
 
@@ -8,7 +8,7 @@
 
 Jolt 已经原生支持多线程。`PhysicsSystem::Update` 接收 `JobSystem*`，官方样例使用 `JobSystemThreadPool`；`JobSystemSingleThreaded` 只是把同一套 job 接口立即在当前线程执行。参考：[Jolt JobSystem](https://jrouwe.github.io/JoltPhysics/class_job_system.html)、[Jolt PhysicsSystem](https://jrouwe.github.io/JoltPhysics/class_physics_system.html) 和官方 [Architecture](https://github.com/jrouwe/JoltPhysics/blob/master/Docs/Architecture.md)。
 
-此前一次新的 pyd 构建在 Blender 4.5.8 中于 `PhysicsSystem::Init` 的 `MSVCP140!Thrd_yield` 路径崩溃，而不是 nanobind 导入阶段。追溯后确认 FetchContent 使用的 Jolt 源码丢失了 HoTools 原有的 Win32 `Mutex.h` 修补，导致 Blender 的 `tbbmalloc_proxy.dll` 环境再次进入 `std::mutex` 路径。旧的可用 pyd 与新产物的 PE 链接器版本均为 14.44；因此当前证据不支持“必须换成 14.29 工具链”是根因。修补已固化到 `_native/CMakeLists.txt`，生产 pyd 在隔离验证完成前仍不替换。
+此前一次新的 pyd 构建在 Blender 4.5.8 中于 `PhysicsSystem::Init` 的 `MSVCP140!Thrd_yield` 路径崩溃，而不是 nanobind 导入阶段。追溯后确认 FetchContent 使用的 Jolt 源码丢失了 HoTools 原有的 Win32 `Mutex.h` 修补，导致 Blender 的 `tbbmalloc_proxy.dll` 环境再次进入 `std::mutex` 路径。修补已固化到 `_native/CMakeLists.txt`；在修补后重新编译的生产 py311/py313 pyd 已通过节点级线程池测试。
 
 本阶段的决策是：先做 ABI 兼容的进程内线程池探针，再做可关闭的 native 线程池实现；只有在构建兼容性或 Blender 进程稳定性仍无法满足验收时，才实现独立 Jolt host 进程。
 
@@ -68,6 +68,13 @@ Blender 4.5.8 的进程环境仍要求 pyd、Jolt 和 CRT 边界保持一致；�
 - 独立 native 探针的 1/2/4 worker、256/1024 body 对照均通过；当前机器上 4 worker 的 1024 body 用例较单线程更快，但 2 worker 的收益不稳定，不能提前承诺线性加速。
 - 旧 Git pyd 与新 pyd 的 PE linker version 都是 14.44；本机没有可用的 14.29 工具集，因此当前不再把安装旧工具链作为首要修复动作。
 
+### 节点接入结果
+
+- `rigid_jolt.world_setting.worker_threads` 进入设置对象签名，并由 `ensure_jolt_adapter()` 传给 native `JoltWorld`。
+- 设置为 `0` 时创建 `JobSystemSingleThreaded`；设置为正数时创建 `JobSystemThreadPool`，native 实际线程数通过只读 `JoltWorld.worker_threads` 暴露给调试和测试。
+- 设置签名变化会沿现有 adapter replacement 生命周期销毁旧 world、重建线程池并标记刚体/约束重新同步，不允许运行中的 world 原地替换 job system。
+- py311/Blender 4.5.8 和 py313/Blender 5.2.0 的节点设置切换测试均通过。
+
 ### 2. ContactListener 与事件缓冲
 
 listener 的回调发生在 Jolt worker 线程。当前的记录逻辑必须明确“写入阶段”和“读取阶段”：
@@ -125,7 +132,7 @@ listener 的回调发生在 Jolt worker 线程。当前的记录逻辑必须明�
 
 ### 阶段 C：可关闭的进程内线程池
 
-在 `JoltWorld` 增加显式 runtime setting：`worker_threads=0` 表示单线程，正数表示固定 worker 数，`-1` 表示受上限约束的自动值。默认仍为 `0`，直到所有验收通过。
+`JoltWorld` 已提供显式 runtime setting：`worker_threads=0` 表示单线程，正数表示固定 worker 数。native 直接构造默认仍为 `0`；节点世界设置默认值为 `1`，由集中设置节点控制。
 
 - `JobSystemThreadPool` 的生命周期严格属于 `JoltWorld`。
 - 构造时创建，销毁时先停止 world，再 join worker；不允许静态线程池跨 world 共享。

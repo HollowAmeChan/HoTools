@@ -216,28 +216,18 @@ class JoltAdapter:
             "max_bodies": max_bodies,
             "max_body_pairs": max_body_pairs,
             "max_contact_constraints": max_contact_constraints,
-            "velocity_steps": max(1, min(255, int(velocity_steps))),
-            "position_steps": max(1, min(255, int(position_steps))),
             "worker_threads": max(0, min(64, int(worker_threads))),
-            "record_contact_events": bool(record_contact_events),
         }
-        try:
-            self._jw = native.JoltWorld(**native_kwargs)
-            self._native_runtime_settings = True
-        except TypeError:
-            # 旧版 pyd 只有容量三个参数；设置仍由 Python 侧管理。
-            self._jw = native.JoltWorld(
-                max_bodies=max_bodies,
-                max_body_pairs=max_body_pairs,
-                max_contact_constraints=max_contact_constraints,
-            )
-            self._native_runtime_settings = False
+        self._jw = native.JoltWorld(**native_kwargs)
+        self._native_runtime_settings = True
         self.jolt_max_bodies: int = max_bodies
         self.jolt_max_body_pairs: int = max_body_pairs
         self.jolt_max_contact_constraints: int = max_contact_constraints
         self.jolt_velocity_steps: int = max(1, min(255, int(velocity_steps)))
         self.jolt_position_steps: int = max(1, min(255, int(position_steps)))
-        self.jolt_worker_threads: int = max(0, min(64, int(worker_threads)))
+        self.jolt_worker_threads: int = int(
+            getattr(self._jw, "worker_threads", max(0, min(64, int(worker_threads))))
+        )
         self.jolt_record_contact_events: bool = bool(record_contact_events)
         self._jolt_capacity_signature: tuple[int, int, int] = (
             max_bodies,
