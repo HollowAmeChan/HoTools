@@ -5,6 +5,8 @@ project(hotools_native LANGUAGES CXX)
 option(HOTOOLS_BUILD_NATIVE "Build the hotools_native extension" ON)
 option(HOTOOLS_BUILD_JOLT "Build the hotools_jolt extension" ON)
 option(HOTOOLS_BUILD_BOOLEAN "Build the CGAL outer-hull extension" OFF)
+option(HOTOOLS_BUILD_JOLT_THREAD_PROBE "Build the standalone Jolt thread-pool probe" OFF)
+option(HOTOOLS_BUILD_JOLT_THREADPOOL_EXPERIMENT "Build an isolated threaded hotools_jolt pyd" OFF)
 if(NOT HOTOOLS_BUILD_NATIVE AND NOT HOTOOLS_BUILD_JOLT AND NOT HOTOOLS_BUILD_BOOLEAN)
     message(FATAL_ERROR "At least one native extension must be enabled")
 endif()
@@ -141,6 +143,69 @@ endif()
 # ---------------------------------------------------------------------------
 # JoltPhysics：本地 extern/ 优先，无则 FetchContent
 # ---------------------------------------------------------------------------
+function(hotools_patch_jolt_mutex _jolt_root)
+    set(_mutex_header "${_jolt_root}/Jolt/Core/Mutex.h")
+    if(NOT EXISTS "${_mutex_header}")
+        message(FATAL_ERROR "[HoTools] Jolt Mutex.h not found: ${_mutex_header}")
+    endif()
+
+    file(READ "${_mutex_header}" _mutex_text)
+    string(REPLACE "\r\n" "\n" _mutex_text "${_mutex_text}")
+    string(FIND "${_mutex_text}" "HoTools patch: Blender loads tbbmalloc_proxy.dll" _patch_index)
+    if(NOT _patch_index EQUAL -1)
+        return()
+    endif()
+
+    set(_mutex_needle "#else\n\n// On other platforms just use the STL implementation")
+    set(_mutex_replacement [=[#elif defined(_WIN32)
+
+// HoTools patch: Blender loads tbbmalloc_proxy.dll which corrupts MSVCP140.dll TLS state.
+// Any std::mutex::lock() call crashes via Mtx_trylock -> Thrd_yield accessing invalid TLS.
+// Use Win32 CRITICAL_SECTION (Mutex) and SRWLOCK (SharedMutex) to bypass MSVCP140 entirely.
+#ifndef WIN32_LEAN_AND_MEAN
+#  define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+class MutexBase : public NonCopyable
+{
+public:
+    MutexBase()                             { InitializeCriticalSection(&mCS); }
+    ~MutexBase()                            { DeleteCriticalSection(&mCS); }
+    inline void     lock()                  { EnterCriticalSection(&mCS); }
+    inline bool     try_lock()              { return TryEnterCriticalSection(&mCS) != 0; }
+    inline void     unlock()               { LeaveCriticalSection(&mCS); }
+private:
+    CRITICAL_SECTION mCS;
+};
+
+class SharedMutexBase : public NonCopyable
+{
+public:
+    SharedMutexBase()                       { mSRW = SRWLOCK_INIT; }
+    inline void     lock()                  { AcquireSRWLockExclusive(&mSRW); }
+    inline bool     try_lock()              { return TryAcquireSRWLockExclusive(&mSRW) != 0; }
+    inline void     unlock()               { ReleaseSRWLockExclusive(&mSRW); }
+    inline void     lock_shared()           { AcquireSRWLockShared(&mSRW); }
+    inline bool     try_lock_shared()       { return TryAcquireSRWLockShared(&mSRW) != 0; }
+    inline void     unlock_shared()         { ReleaseSRWLockShared(&mSRW); }
+private:
+    SRWLOCK         mSRW;
+};
+
+#else
+
+// On other platforms just use the STL implementation]=])
+    string(FIND "${_mutex_text}" "${_mutex_needle}" _needle_index)
+    if(_needle_index EQUAL -1)
+        message(FATAL_ERROR "[HoTools] Unsupported Jolt Mutex.h layout; refusing an unpatched Blender build")
+    endif()
+
+    string(REPLACE "${_mutex_needle}" "${_mutex_replacement}" _mutex_text "${_mutex_text}")
+    file(WRITE "${_mutex_header}" "${_mutex_text}")
+    message(STATUS "[HoTools] Applied Blender-safe Jolt Mutex.h patch")
+endfunction()
+
 if(HOTOOLS_BUILD_JOLT)
     set(_jolt_local "${CMAKE_CURRENT_LIST_DIR}/extern/JoltPhysics")
     set(BUILD_SHARED_LIBS              OFF CACHE BOOL "" FORCE)
@@ -161,6 +226,7 @@ if(HOTOOLS_BUILD_JOLT)
 
     if(EXISTS "${_jolt_local}/Build/CMakeLists.txt")
         message(STATUS "[HoTools] JoltPhysics: 使用本地 extern/JoltPhysics")
+        hotools_patch_jolt_mutex("${_jolt_local}")
         add_subdirectory("${_jolt_local}/Build" JoltPhysics EXCLUDE_FROM_ALL)
     else()
         message(STATUS "[HoTools] JoltPhysics: 从 GitHub 拉取（FetchContent，缓存到 .fetch-cache/）")
@@ -173,6 +239,8 @@ if(HOTOOLS_BUILD_JOLT)
             SOURCE_SUBDIR  Build
         )
         FetchContent_MakeAvailable(JoltPhysics)
+        get_filename_component(_jolt_fetched_root "${JoltPhysics_SOURCE_DIR}/.." ABSOLUTE)
+        hotools_patch_jolt_mutex("${_jolt_fetched_root}")
     endif()
 endif()
 
@@ -357,4 +425,50 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
         ARCHIVE_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/lib"
     )
 endforeach()
+endif()
+
+# ---------------------------------------------------------------------------
+# 独立 Jolt 线程池探针：不链接 Python/nanobind，也不覆盖运行时 pyd。
+# 只有显式开启 HOTOOLS_BUILD_JOLT_THREAD_PROBE 时才生成。
+# ---------------------------------------------------------------------------
+if(HOTOOLS_BUILD_JOLT AND HOTOOLS_BUILD_JOLT_THREAD_PROBE)
+add_executable(hotools_jolt_thread_probe
+    tests/test_jolt_thread_pool.cpp
+)
+target_link_libraries(hotools_jolt_thread_probe PRIVATE Jolt)
+if(MSVC)
+    target_compile_options(hotools_jolt_thread_probe PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(hotools_jolt_thread_probe PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# 隔离线程池 pyd 实验：输出到 build 目录，不覆盖 _Lib 运行时。
+# ---------------------------------------------------------------------------
+if(HOTOOLS_BUILD_JOLT AND HOTOOLS_BUILD_JOLT_THREADPOOL_EXPERIMENT)
+nanobind_add_module(hotools_jolt_threadpool_experiment
+    NB_STATIC
+    src/jolt_rigid.cpp
+)
+target_compile_definitions(hotools_jolt_threadpool_experiment PRIVATE
+    HOTOOLS_JOLT_THREADPOOL_EXPERIMENT
+)
+target_include_directories(hotools_jolt_threadpool_experiment PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/include"
+)
+target_link_libraries(hotools_jolt_threadpool_experiment PRIVATE Jolt)
+if(MSVC)
+    target_compile_options(hotools_jolt_threadpool_experiment PRIVATE /utf-8 /permissive-)
+else()
+    target_compile_options(hotools_jolt_threadpool_experiment PRIVATE -frtti -fexceptions)
+endif()
+set_target_properties(hotools_jolt_threadpool_experiment PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "hotools_jolt"
+    SUFFIX "${HOTOOLS_PYTHON_EXTENSION_SUFFIX}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/threadpool-experiment"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/threadpool-experiment"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
 endif()

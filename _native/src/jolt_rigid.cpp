@@ -21,6 +21,9 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Core/Mutex.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Core/JobSystemSingleThreaded.h>
+#ifdef HOTOOLS_JOLT_THREADPOOL_EXPERIMENT
+#  include <Jolt/Core/JobSystemThreadPool.h>
+#endif
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -519,7 +522,12 @@ public:
         ensure_jolt_initialized();
         mGroupFilter = new HoCollisionGroupFilter();
         mTempAllocator = std::make_unique<TempAllocatorImpl>(8 * 1024 * 1024);
+#ifdef HOTOOLS_JOLT_THREADPOOL_EXPERIMENT
+        // 实验目标固定使用两个 worker；生产目标仍保持单线程，避免未经验证的 ABI 变化进入运行时。
+        mJobSystem     = std::make_unique<JobSystemThreadPool>(cMaxPhysicsJobs, cMaxPhysicsBarriers, 2);
+#else
         mJobSystem     = std::make_unique<JobSystemSingleThreaded>(cMaxPhysicsJobs);
+#endif
         mPhysicsSystem = std::make_unique<PhysicsSystem>();
         mPhysicsSystem->Init(
             max_bodies, 0,
@@ -1699,7 +1707,11 @@ private:
     HoContactListener mContactListener;
 
     std::unique_ptr<TempAllocatorImpl>        mTempAllocator;
+#ifdef HOTOOLS_JOLT_THREADPOOL_EXPERIMENT
+    std::unique_ptr<JobSystem>                mJobSystem;
+#else
     std::unique_ptr<JobSystemSingleThreaded>  mJobSystem;
+#endif
     std::unique_ptr<PhysicsSystem>            mPhysicsSystem;
 
     std::unordered_map<uint32_t, BodyRecord> mBodies;

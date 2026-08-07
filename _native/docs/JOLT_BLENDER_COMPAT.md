@@ -1,7 +1,7 @@
 # hotools_jolt — Blender 兼容性踩坑记录
 
 > 本文档记录将 Jolt Physics 集成进 Blender 插件（nanobind .pyd）时遇到的所有崩溃问题、根本原因及修复方案。
-> 每次清空 build 目录重新配置后，**必须重新应用这些 patch**。
+> Jolt 的 Win32 `Mutex.h` 修补现在由 `_native/CMakeLists.txt` 中的 `hotools_patch_jolt_mutex()` 在配置阶段自动应用。本文仍保留手工补丁内容，作为历史说明和构建结果核对依据。
 
 ---
 
@@ -44,8 +44,7 @@ std::mutex::lock()
 
 ### 修复 1：Jolt Mutex.h — 替换为 Win32 原生实现 ⚠️ 最关键
 
-**文件：** `_native/build/vs2022-py311/_deps/joltphysics-src/Jolt/Core/Mutex.h`  
-（py313 同理：`_native/build/vs2022-py313/_deps/joltphysics-src/Jolt/Core/Mutex.h`）
+**文件：** CMake 配置阶段自动处理的 Jolt 源码 `Jolt/Core/Mutex.h`。
 
 在 `#ifdef JPH_PLATFORM_BLUE` 的 `#else` 分支前，插入 `#elif defined(_WIN32)` 块：
 
@@ -163,10 +162,9 @@ NB_MODULE(hotools_jolt, m) {
 
 ---
 
-## ⚠️ 重建流程（清空 build 目录后）
+## 重建流程
 
-每次 `cmake --preset` 重新配置后，**fetch-cache 里的 Jolt 源码会被重新下载/解压**，
-所有手动 patch 都会丢失。必须按以下顺序重新应用：
+Jolt 源码会被重新下载或解压，但 CMake 会在添加 Jolt target 前检查并修补 `Mutex.h`。若 Jolt 源码布局发生变化，配置会直接失败，避免生成未经修补的 Blender pyd。
 
 ### 第 1 步：cmake 配置
 
@@ -211,11 +209,7 @@ elseif (PROFILER_IN_DEBUG_AND_RELEASE)
 endif()
 ```
 
-### 第 4 步：应用 Mutex.h patch（两份各操作）
-
-按修复 1 的说明修改 `Mutex.h`。
-
-### 第 5 步：从 Jolt.vcxproj 里删除 JPH_PROFILE_ENABLED / JPH_DEBUG_RENDERER 宏
+### 第 4 步：从 Jolt.vcxproj 里删除 JPH_PROFILE_ENABLED / JPH_DEBUG_RENDERER 宏
 
 用 Python 脚本（见下方）或手动删除两个 vcxproj 里 `PreprocessorDefinitions` 中的这两个宏。
 
@@ -237,7 +231,7 @@ for path in files:
     print("Updated:", path)
 ```
 
-### 第 6 步：全量重编
+### 第 5 步：全量重编
 
 ```powershell
 $msbuild = 'D:\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe'
@@ -310,7 +304,7 @@ vcxproj 重新生成。需要手动修改 vcxproj 里的 `PreprocessorDefinition
 |------|---------|------|
 | `_native/CMakeLists.txt` | 永久 | 禁用 AVX2/AVX、Profiler、DebugRenderer |
 | `_native/src/jolt_rigid.cpp` | 永久 | lock-free init、Win32 warmup、NB_MODULE 提前初始化 |
-| `build/.../Jolt/Core/Mutex.h` | **每次重建后重新 patch** | Win32 CRITICAL_SECTION + SRWLOCK |
+| `_native/CMakeLists.txt` | **持久化自动修补** | 配置阶段写入 Win32 CRITICAL_SECTION + SRWLOCK |
 | `build/.../Jolt/Jolt.cmake` | **每次重建后重新 patch** | 注释掉 Profiler/DebugRenderer compile_definitions |
 | `build/.../Jolt.vcxproj` | **每次重建后重新 patch** | 删除 JPH_PROFILE_ENABLED / JPH_DEBUG_RENDERER 宏 |
 | `build/.../hotools_jolt.vcxproj` | **每次重建后重新 patch** | 同上 |
