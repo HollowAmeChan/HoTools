@@ -27,6 +27,7 @@ from OmniNode.PhysicsWorld.rigid.implicit_objects import (
     register_rigid_jolt_world_setting_objects,
 )
 from OmniNode.PhysicsWorld.rigid.backends.jolt import ensure_jolt_adapter
+from OmniNode.PhysicsWorld.rigid.specs import RigidBodySpec
 
 PASS = "[PASS]"
 FAIL = "[FAIL]"
@@ -77,6 +78,23 @@ def test_node_worker_setting_replacement():
     assert threaded.jolt_worker_threads == 2
     assert threaded._jw.worker_threads == 2
     threaded.dispose("worker-test")
+
+def test_adapter_batch_body_registration():
+    world = PhysicsWorldCache()
+    adapter = ensure_jolt_adapter(world)
+    spec = RigidBodySpec(
+        obj=None,
+        obj_ptr=1,
+        data_ptr=1,
+        simulation_order_key=("test", "body"),
+        world_position=(0.0, 0.0, 3.0),
+        shape_type="SPHERE",
+    )
+    errors = adapter.sync_bodies_batch([("rigid:test", spec)])
+    assert errors == {}, errors
+    assert adapter.body_count == 1
+    assert adapter.get_body_transform("rigid:test") is not None
+    adapter.dispose("adapter-batch-test")
 
 def test_add_remove_bodies():
     jw = hotools_jolt.JoltWorld(32, 64, 32)
@@ -286,6 +304,7 @@ if __name__ == "__main__":
         ("batch body registration",       test_batch_body_registration),
         ("Jolt worker_threads",            test_worker_threads),
         ("node worker setting replacement", test_node_worker_setting_replacement),
+        ("adapter body batch registration", test_adapter_batch_body_registration),
         ("创建 JoltWorld",          test_create_world),
         ("添加/删除刚体",           test_add_remove_bodies),
         ("重力下落验证",            test_gravity_fall),

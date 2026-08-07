@@ -220,6 +220,11 @@ class JoltAdapter:
         }
         self._jw = native.JoltWorld(**native_kwargs)
         self._native_runtime_settings = True
+        # 延迟提交是可选的原生 ABI。当前生产 pyd 没有 defer_add，
+        # 不能仅凭运行时设置开关传入额外关键字，否则刚体会全部注册失败。
+        self._native_deferred_body_add = callable(
+            getattr(self._jw, "finalize_body_batch", None)
+        )
         self.jolt_max_bodies: int = max_bodies
         self.jolt_max_body_pairs: int = max_body_pairs
         self.jolt_max_contact_constraints: int = max_contact_constraints
@@ -315,7 +320,7 @@ class JoltAdapter:
             allowed_dofs=int(getattr(spec, "allowed_dofs", 0x3F)),
             collide_kinematic_vs_non_dynamic=bool(getattr(spec, "collide_kinematic_vs_non_dynamic", False)),
         )
-        if defer_add and self._native_runtime_settings:
+        if defer_add and self._native_deferred_body_add:
             handle = self._jw.add_body(**kwargs, defer_add=True)
         else:
             handle = self._jw.add_body(**kwargs)
@@ -331,13 +336,13 @@ class JoltAdapter:
             try:
                 self.sync_body(
                     str(slot_id), spec,
-                    defer_add=bool(self._native_runtime_settings),
+                    defer_add=bool(self._native_deferred_body_add),
                 )
             except Exception as exc:
                 errors[str(slot_id)] = str(exc)
         try:
             finalize = getattr(self._jw, "finalize_body_batch", None)
-            if callable(finalize) and self._native_runtime_settings:
+            if callable(finalize) and self._native_deferred_body_add:
                 finalize(True)
         except Exception as exc:
             message = str(exc)
