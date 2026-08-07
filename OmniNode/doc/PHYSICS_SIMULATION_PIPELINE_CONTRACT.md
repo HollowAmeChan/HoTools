@@ -105,7 +105,7 @@ Cache Read
 - object scope 不承诺限制 Blender depsgraph 求值范围，只限制 OmniNode 自己的枚举、打包和物理输入范围。
 - 对象范围节点必须 `always_run`，Collection 成员新增、删除或重挂必须在下一次图求值时生成新 scope 和 scope key。
 - 多个顶层输入 Collection 不得递归包含同一个 Object；这种重叠必须在 scope 构建时明确报错，禁止靠覆盖顺序决定注册或写回所有权。
-- scope 按 Collection 保存同一帧的稳定 Object 顺序，并用 `foreach_get` 冻结基础 transform 缓冲。World Begin 把批次发布到 frame exchange；Object 写回优先对同一 Collection 使用 `foreach_set`，仅对实际变更的对象逐个 `update_tag()`。
+- scope 按 Collection 保存同一帧的稳定 Object 顺序，并用 `foreach_get` 冻结基础 transform 缓冲。World Begin 把批次发布到 frame exchange。Collection 只是读取边界，不自动取得其中所有 Object 写通道的所有权。
 - Collection 批次只在当前图执行和当前帧有效。写回前必须核对 Collection 身份、对象数量和指针顺序；帧内编辑使批次失效时必须回退到稳定身份逐对象写回，不能把数据写给错位对象。
 - `PhysicsObjectScope.objects` 只作为公共 collector 和旧内部测试调用的展平兼容视图；新节点、solver 和性能路径不得把裸 Object 列表重新定义为公开范围协议。
 
@@ -1153,6 +1153,18 @@ C++ native context:
 
 solver step 应产生统一 result stream，而不是直接写 Blender。
 
+### Blender API 选择与写入所有权
+
+批量读取边界和批量写入边界必须分开定义。`foreach_get` 是只读快照，可以在 Physics Object Scope 的异构 `Collection.all_objects` 上统一采集 Object transform；`foreach_set` 会对容器中每个 RNA 元素执行 setter，没有稀疏索引语义，不能因为对象来自同一个 Scope Collection 就写完整容器。
+
+公共写回按以下规则选择 API：
+
+- **Object transform/delta**：先按 Collection 批次解析目标。只有本批每个 Object 都是当前 result stream 中该通道的真实写入目标时，才允许对 `Collection.all_objects` 使用 `foreach_set`；混合批次必须只逐个写命中的 Object。把未命中值原样填回数组不等于“没有写”，不能作为稀疏写回替代品。
+- **PoseBone `matrix_basis`**：Armature 是 owner，事务必须先合并同一 Armature 的全部目标。只有事务覆盖 `armature.pose.bones` 的每个元素时才允许整容器 `foreach_set`；部分骨骼事务逐目标写，并仍保持完整预检、回滚和 receipt 语义。
+- **Mesh 顶点/GN offset**：Mesh datablock 及其目标 attribute 是 owner。结果本身定义整份 POINT-domain offset 时，`attribute.data.foreach_set` 是合法稠密写入；不同 Mesh 不拼成 Scope 级写缓冲。
+- **Shape Key、未来实例或其它域**：各自声明 owner 容器、写通道和稠密覆盖判定，不能复用 Collection 身份猜测所有权。
+- 同一 Blender owner 的同一目标元素与写自由度存在多个 producer 时，必须在写入前合并或报冲突；不同通道也必须保持固定提交顺序和每 owner 汇总后的最少 `update_tag()`。批量 API 是满足所有权合同后的优化，不是所有权来源。
+
 当solver下一帧会从同一个Blender owner重新采集frame input时，必须定义输出反馈屏障：能够区分“上帧物理写回仍残留”和“本帧动画/driver已经覆盖”。该屏障及其持久状态由solver frame adapter拥有；统一writeback只应用结果plan，不替solver决定动画输入、不记录solver私有反馈状态。正常连续帧不清零 PoseBone；restart 则由统一清理入口恢复所有已登记的 Object delta、PoseBone `matrix_basis` 与 GN offset。若蓝本在动画求值前恢复初始Transform、动画求值后再读取，Blender适配器必须在内存中表达等价输入时序，不得在solver执行期倒写场景来伪造早更新。
 
 需要以“真实写入成功”排除自身输出反馈的 Bone solver 必须把 result publication 与 writeback confirmation 分开：发布阶段只能暂存 pending 指纹；公共 Bone 写回只有在整组 transaction 完整预检并成功提交后，才为每个 result envelope 产生一条 `bone_writeback_receipt_v1`。receipt 只含递增 serial、frame/generation、solver/slot、transaction/publication 与 Armature object/data identity 等纯值字段，不持有 Blender RNA、plan 或 matrix；失败、回滚或不完整 transaction 不得产生 receipt。solver adapter 只能用匹配 receipt 提升自己的 confirmed 指纹，不能把“计划过”“当前值碰巧相等”当成写入事实；同帧重复发布必须有不同 publication identity，旧 receipt 不得确认新结果。
@@ -1203,15 +1215,18 @@ Bone XPBD 的当前具体映射是：`segment_pins` 提供硬目标身份，Pin 
 slot["output.target_matrices"]  # (N, 16) float32，C++ 原地写
 slot["output.basis_values"]     # (N*16,) float32，Python 写回 foreach_set 用
 
-# writeback 节点消费
-armature.pose.bones.foreach_set("matrix_basis", slot["output.basis_values"])
+# writeback 节点消费；仅当目标覆盖全部 PoseBone 时使用整容器 API
+if target_pose_indices == set(range(len(armature.pose.bones))):
+    armature.pose.bones.foreach_set("matrix_basis", slot["output.basis_values"])
+else:
+    write_target_pose_bones_individually(...)
 armature.update_tag()  # 每个 armature 只调一次，汇总所有 solver 写完后
 ```
 
 其他 result 类型：
 
 ```text
-object_transforms    → Object.matrix_world 批量写回
+object_transforms    → 按真实目标覆盖率选择 Collection 稠密写或逐 Object 写
 mesh_delta_attribute → GN attribute 或 shape key
 shape_key_values
 debug_draw_primitives

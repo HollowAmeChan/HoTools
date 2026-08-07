@@ -1484,9 +1484,94 @@ def test_rigid_collection_batch_writeback_avoids_global_object_index():
 
     assert written == len(bodies)
     assert object_index_calls == 0, "Collection 写回不能枚举全局 bpy.data.objects"
+    diagnostics = world.backend_resources["_writeback_rigid_diagnostics"]
+    assert diagnostics["dense_collection_count"] == 1
+    assert diagnostics["dense_object_count"] == len(bodies)
+    assert diagnostics["sparse_collection_count"] == 0
     world.omni_cache_dispose("test_collection_batch_writeback")
     _del(*bodies)
     bpy.data.collections.remove(collection)
+
+
+def test_rigid_mixed_collection_uses_sparse_target_writeback():
+    scene = bpy.context.scene
+    collection = bpy.data.collections.new("T4A_MixedCollectionScope")
+    scene.collection.children.link(collection)
+    body = _make_obj("T4A_MixedCollectionBody", (0.0, 0.0, 2.0))
+    unrelated = bpy.data.objects.new("T4A_MixedCollectionUnrelated", None)
+    scene.collection.objects.link(unrelated)
+    collection.objects.link(body)
+    collection.objects.link(unrelated)
+    unrelated.delta_location = (3.0, 4.0, 5.0)
+    unrelated.delta_rotation_euler = (0.1, 0.2, 0.3)
+    try:
+        scope = make_scope(
+            collections=[collection],
+            include_rigid_body=True,
+            include_rigid_constraint=False,
+            include_passive_collision=False,
+            include_bone_collision=False,
+        )
+        scene.frame_set(1)
+        world, _, _, _restart = physicsWorldBegin(
+            cache_state=None,
+            scene=scene,
+            object_scope=scope,
+            enabled=True,
+        )
+        body_count, _step_ms = step_rigid_bodies(world, enabled=True)
+        assert body_count == 1
+        written = _pw("writeback").writeback_rigid_body_deltas(world)
+        assert written == 1
+        diagnostics = world.backend_resources["_writeback_rigid_diagnostics"]
+        assert diagnostics["dense_collection_count"] == 0
+        assert diagnostics["sparse_collection_count"] == 1
+        assert diagnostics["sparse_object_count"] == 1
+        assert tuple(unrelated.delta_location) == (3.0, 4.0, 5.0)
+        assert all(
+            abs(float(actual) - expected) < 1.0e-6
+            for actual, expected in zip(
+                unrelated.delta_rotation_euler,
+                (0.1, 0.2, 0.3),
+            )
+        )
+        world.omni_cache_dispose("test_mixed_collection_sparse_writeback")
+    finally:
+        _del(body, unrelated)
+        if collection.name in bpy.data.collections:
+            bpy.data.collections.remove(collection)
+
+
+def test_partial_bone_transaction_does_not_write_full_pose_collection():
+    writeback_module = _pw("writeback")
+
+    class FakePoseBone:
+        def __init__(self):
+            self.matrix_basis = mathutils.Matrix.Identity(4)
+
+    class FakePoseBones(list):
+        def __init__(self):
+            super().__init__([FakePoseBone(), FakePoseBone()])
+            self.foreach_get_calls = 0
+            self.foreach_set_calls = 0
+
+        def foreach_get(self, _name, _values):
+            self.foreach_get_calls += 1
+
+        def foreach_set(self, _name, _values):
+            self.foreach_set_calls += 1
+
+    pose_bones = FakePoseBones()
+    target = mathutils.Matrix.Translation((1.0, 2.0, 3.0))
+    writeback_module._apply_bone_basis_updates(
+        pose_bones,
+        [(pose_bones[0], 0, target, "Target")],
+        [0.0] * 32,
+    )
+    assert pose_bones.foreach_get_calls == 0
+    assert pose_bones.foreach_set_calls == 0
+    assert (pose_bones[0].matrix_basis.translation - target.translation).length < 1.0e-6
+    assert pose_bones[1].matrix_basis == mathutils.Matrix.Identity(4)
 
 
 def test_public_physics_scope_uses_recursive_collections():
@@ -2478,6 +2563,8 @@ if __name__ == "__main__":
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("刚体写回线性索引", test_rigid_writeback_builds_linear_indexes_once)
     check("Collection 批量刚体写回", test_rigid_collection_batch_writeback_avoids_global_object_index)
+    check("异构 Collection 稀疏刚体写回", test_rigid_mixed_collection_uses_sparse_target_writeback)
+    check("部分 Bone 事务禁止整容器写回", test_partial_bone_transaction_does_not_write_full_pose_collection)
     check("Collection 物理对象范围协议", test_public_physics_scope_uses_recursive_collections)
     check("contact + sensor event result pipeline", test_contact_and_sensor_event_result_pipeline)
     check("接触事件溢出有界与统计", test_contact_event_overflow_result_pipeline)

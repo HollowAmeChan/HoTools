@@ -55,6 +55,7 @@ _BONE_DIAGNOSTICS_KEY    = "_writeback_bone_diagnostics"
 _BONE_RECEIPTS_KEY       = "_writeback_bone_receipts"
 _BONE_RECEIPT_SERIAL_KEY = "_writeback_bone_receipt_serial"
 _GN_DIAGNOSTICS_KEY      = "_writeback_gn_diagnostics"
+_RIGID_DIAGNOSTICS_KEY   = "_writeback_rigid_diagnostics"
 _GN_RECEIPT_SERIAL_KEY   = "_writeback_gn_receipt_serial"
 _EULER_ORDERS = {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"}
 
@@ -333,9 +334,38 @@ def _batch_rotation_matrix(batch: dict, index: int, rotation_mode: str) -> mathu
     return euler.to_matrix().to_4x4()
 
 
+def _rigid_delta_components(batch: dict, index: int, obj, result: dict):
+    pos_arr = result.get("position")
+    rot_arr = result.get("rotation_wxyz")
+    if pos_arr is None or rot_arr is None:
+        raise ValueError("刚体结果缺少 position 或 rotation_wxyz")
+    base_location = batch["locations_f32"][index * 3:(index + 1) * 3]
+    delta_location = tuple(
+        float(value)
+        for value in mathutils.Vector(pos_arr) - mathutils.Vector(base_location)
+    )
+
+    rotation_mode = str(getattr(obj, "rotation_mode", "XYZ") or "XYZ")
+    rest_rot = _batch_rotation_matrix(batch, index, rotation_mode)
+    q = mathutils.Quaternion(tuple(float(value) for value in rot_arr))
+    delta_mat = rest_rot.inverted() @ q.to_matrix().to_4x4()
+    if rotation_mode in {"QUATERNION", "AXIS_ANGLE"}:
+        return (
+            delta_location,
+            (0.0, 0.0, 0.0),
+            tuple(float(value) for value in delta_mat.to_quaternion()),
+        )
+    order = rotation_mode if rotation_mode in _EULER_ORDERS else "XYZ"
+    return (
+        delta_location,
+        tuple(float(value) for value in delta_mat.to_euler(order)),
+        (1.0, 0.0, 0.0, 0.0),
+    )
+
+
 def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> int | None:
     """
-    用 Collection.all_objects 的 foreach_set 批量写入刚体 delta。
+    按 Collection 批次选择刚体 delta 的稠密或稀疏写入 API。
 
     返回 None 表示批次已失效，调用方必须退回逐 Object 路径。批次只保存本帧
     的稳定顺序；删除、重挂集合等编辑会使预检失败，而不是对错误目标批量写入。
@@ -346,6 +376,16 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
     )
     if not batches:
         return None
+
+    diagnostics = {
+        "schema": "rigid_writeback_api_diagnostics_v1",
+        "dense_collection_count": 0,
+        "dense_object_count": 0,
+        "sparse_collection_count": 0,
+        "sparse_object_count": 0,
+        "fallback_reason": "",
+    }
+    world.backend_resources[_RIGID_DIAGNOSTICS_KEY] = diagnostics
 
     updates = {}
     slots_by_object = {}
@@ -360,6 +400,7 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
             continue
         object_ptr = int(getattr(spec, "obj_ptr", 0) or 0)
         if object_ptr <= 0 or object_ptr in updates:
+            diagnostics["fallback_reason"] = "invalid_or_duplicate_target"
             return None
         updates[object_ptr] = (spec, result)
         slots_by_object[object_ptr] = slot
@@ -373,6 +414,7 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
             not isinstance(batch, dict)
             or batch.get("schema") != PHYSICS_SCOPE_COLLECTION_BATCH_SCHEMA
         ):
+            diagnostics["fallback_reason"] = "invalid_batch_schema"
             return None
         collection = batch.get("collection")
         object_ptrs = tuple(batch.get("object_ptrs") or ())
@@ -387,15 +429,19 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
                 or len(object_ptrs) != object_count
                 or tuple(int(obj.as_pointer()) for obj in live_objects) != object_ptrs
             ):
+                diagnostics["fallback_reason"] = "collection_membership_changed"
                 return None
         except Exception:
+            diagnostics["fallback_reason"] = "collection_reference_invalid"
             return None
         for index, object_ptr in enumerate(object_ptrs):
             if object_ptr in batch_locations:
+                diagnostics["fallback_reason"] = "overlapping_collection_target"
                 return None
             batch_locations[object_ptr] = (batch, index, live_objects)
 
     if any(object_ptr not in batch_locations for object_ptr in updates):
+        diagnostics["fallback_reason"] = "target_outside_collection_batches"
         return None
 
     written = 0
@@ -410,6 +456,49 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
         ]
         if not active_indices:
             continue
+        dense_batch = len(active_indices) == len(object_ptrs)
+        if not dense_batch:
+            diagnostics["sparse_collection_count"] += 1
+            for index in active_indices:
+                object_ptr = object_ptrs[index]
+                spec, result = updates[object_ptr]
+                slot = slots_by_object[object_ptr]
+                obj = objects[index]
+                previous = (
+                    tuple(obj.delta_location),
+                    tuple(obj.delta_rotation_euler),
+                    tuple(obj.delta_rotation_quaternion),
+                )
+                try:
+                    location, euler, quaternion = _rigid_delta_components(
+                        batch,
+                        index,
+                        obj,
+                        result,
+                    )
+                    obj.delta_location = location
+                    obj.delta_rotation_euler = euler
+                    obj.delta_rotation_quaternion = quaternion
+                    data_ptr = int(getattr(spec, "data_ptr", 0) or 0)
+                    touched[(object_ptr, data_ptr)] = (object_ptr, data_ptr)
+                    slot.data.pop("_writeback_error", None)
+                    diagnostics["sparse_object_count"] += 1
+                    written += 1
+                except Exception as exc:
+                    try:
+                        obj.delta_location = previous[0]
+                        obj.delta_rotation_euler = previous[1]
+                        obj.delta_rotation_quaternion = previous[2]
+                    except Exception:
+                        pass
+                    slot.data["_writeback_error"] = str(exc)
+                    continue
+                try:
+                    obj.update_tag()
+                except Exception:
+                    pass
+            continue
+
         try:
             delta_location = _foreach_float(live_objects, "delta_location", 3)
             delta_euler = _foreach_float(live_objects, "delta_rotation_euler", 3)
@@ -420,30 +509,17 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
 
             for index in active_indices:
                 object_ptr = object_ptrs[index]
-                spec, result = updates[object_ptr]
-                pos_arr = result.get("position")
-                rot_arr = result.get("rotation_wxyz")
-                if pos_arr is None or rot_arr is None:
-                    raise ValueError("刚体结果缺少 position 或 rotation_wxyz")
-                base_location = batch["locations_f32"][index * 3:(index + 1) * 3]
-                jolt_pos = mathutils.Vector(pos_arr)
-                delta_location[index * 3:(index + 1) * 3] = tuple(
-                    float(value) for value in jolt_pos - mathutils.Vector(base_location)
-                )
-
+                _spec, result = updates[object_ptr]
                 obj = objects[index]
-                rotation_mode = str(getattr(obj, "rotation_mode", "XYZ") or "XYZ")
-                rest_rot = _batch_rotation_matrix(batch, index, rotation_mode)
-                q = mathutils.Quaternion(tuple(float(value) for value in rot_arr))
-                delta_mat = rest_rot.inverted() @ q.to_matrix().to_4x4()
-                if rotation_mode in {"QUATERNION", "AXIS_ANGLE"}:
-                    delta_euler[index * 3:(index + 1) * 3] = (0.0, 0.0, 0.0)
-                    delta_quaternion[index * 4:(index + 1) * 4] = delta_mat.to_quaternion()
-                else:
-                    delta_quaternion[index * 4:(index + 1) * 4] = (1.0, 0.0, 0.0, 0.0)
-                    delta_euler[index * 3:(index + 1) * 3] = delta_mat.to_euler(
-                        rotation_mode if rotation_mode in _EULER_ORDERS else "XYZ"
-                    )
+                location, euler, quaternion = _rigid_delta_components(
+                    batch,
+                    index,
+                    obj,
+                    result,
+                )
+                delta_location[index * 3:(index + 1) * 3] = location
+                delta_euler[index * 3:(index + 1) * 3] = euler
+                delta_quaternion[index * 4:(index + 1) * 4] = quaternion
 
             live_objects.foreach_set("delta_location", delta_location)
             live_objects.foreach_set("delta_rotation_euler", delta_euler)
@@ -455,7 +531,11 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
                 live_objects.foreach_set("delta_rotation_quaternion", original_quaternion)
             except Exception:
                 pass
+            diagnostics["fallback_reason"] = "dense_collection_write_failed"
             return None
+
+        diagnostics["dense_collection_count"] += 1
+        diagnostics["dense_object_count"] += len(active_indices)
 
         for index in active_indices:
             object_ptr = object_ptrs[index]
@@ -934,9 +1014,15 @@ def _apply_bone_basis_updates(pose_bones, updates, basis_values=None) -> None:
         for pose_bone, _pose_index, _basis_matrix, _bone_name in updates
     )
 
-    if isinstance(basis_values, list):
+    pose_indices = {pose_index for _bone, pose_index, _matrix, _name in updates}
+    dense_owner = (
+        len(updates) == len(pose_bones)
+        and pose_indices == set(range(len(pose_bones)))
+    )
+
+    if dense_owner and isinstance(basis_values, list):
         candidate_values = basis_values
-    else:
+    elif dense_owner:
         try:
             buffer_size = len(pose_bones) * 16
         except Exception:
@@ -945,16 +1031,19 @@ def _apply_bone_basis_updates(pose_bones, updates, basis_values=None) -> None:
                 + 1
             ) * 16
         candidate_values = [0.0] * buffer_size
-    try:
-        pose_bones.foreach_get("matrix_basis", candidate_values)
-        for _pose_bone, pose_index, basis_matrix, _bone_name in updates:
-            _write_matrix_to_foreach_buffer(
-                candidate_values,
-                pose_index * 16,
-                basis_matrix,
-            )
-    except Exception:
+    else:
         candidate_values = None
+    if candidate_values is not None:
+        try:
+            pose_bones.foreach_get("matrix_basis", candidate_values)
+            for _pose_bone, pose_index, basis_matrix, _bone_name in updates:
+                _write_matrix_to_foreach_buffer(
+                    candidate_values,
+                    pose_index * 16,
+                    basis_matrix,
+                )
+        except Exception:
+            candidate_values = None
 
     if candidate_values is not None:
         try:
