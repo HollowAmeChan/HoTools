@@ -18,6 +18,10 @@ SOLVER_MODULE = {
     "scope_restart_handlers": (
         ".scope_sync:clear_scope_dynamic_rigid_deltas",
     ),
+    "world_restart_handlers": (
+        ".scope_sync:reset_rigid_world_runtime",
+        ".debug_draw:dispose_rigid_debug_draw_for_world",
+    ),
     "scope_collectors": (
         ".scope_sync:collect_rigid_specs_from_scope",
     ),

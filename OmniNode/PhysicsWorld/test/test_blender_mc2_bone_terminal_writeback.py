@@ -186,6 +186,20 @@ try:
         )
 
     assert changed
+    world.clear_results()
+    world.frame_context.restart_required = True
+    returned, written = physics_nodes.physicsWriteback(world)
+    assert returned is world and written == 0
+    identity = np.eye(4, dtype=np.float64)
+    assert all(
+        np.allclose(
+            np.asarray(pose_bone.matrix_basis, dtype=np.float64),
+            identity,
+            rtol=0.0,
+            atol=1.0e-8,
+        )
+        for pose_bone in pose_bones
+    )
 finally:
     world.omni_cache_dispose("MC2 terminal writeback regression cleanup")
     data = armature.data

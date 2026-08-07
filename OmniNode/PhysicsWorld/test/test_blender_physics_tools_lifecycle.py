@@ -86,8 +86,16 @@ def main() -> None:
             "field", "spring_vrm", "rigid", "mc2",
             "xpbd.simple_mesh_xpbd", "xpbd.bone_xpbd",
         }
+        assert {
+            entry["domain"]
+            for entry in solver_registry.iter_world_restart_handlers()
+        } == {
+            "field", "spring_vrm", "rigid", "mc2",
+            "xpbd.simple_mesh_xpbd", "xpbd.bone_xpbd",
+        }
         lifecycle_events = []
         dispose_events = []
+        restart_events = []
         dynamic_lifecycle = types.SimpleNamespace(
             register=lambda: lifecycle_events.append("register"),
             unregister=lambda: lifecycle_events.append("unregister"),
@@ -101,11 +109,30 @@ def main() -> None:
                         (str(id(world)), str(reason))
                     ),
                 ),
+                "world_restart_handlers": (
+                    lambda world, scope, reason: restart_events.append(
+                        (str(id(world)), scope, str(reason))
+                    ),
+                ),
             },
         )
         try:
             assert lifecycle_events == ["register"]
             lifecycle_world = world_types.PhysicsWorldCache()
+            solver_registry.run_world_restart_handlers(
+                lifecycle_world, None, "frame_jump"
+            )
+            assert restart_events == [
+                (str(id(lifecycle_world)), None, "frame_jump")
+            ]
+            assert lifecycle_world.runtime_cache("solver_registry_errors") is None
+            lifecycle_world.backend_resources["mc2.bone.frame_state"] = {
+                "generation": 1,
+                "bones": {},
+            }
+            solver_registry.run_scope_restart_handlers(lifecycle_world, None)
+            assert "mc2.bone.frame_state" not in lifecycle_world.backend_resources
+            assert lifecycle_world.runtime_cache("solver_registry_errors") is None
             lifecycle_world.omni_cache_dispose("registry_lifecycle_test")
             assert dispose_events == [
                 (str(id(lifecycle_world)), "registry_lifecycle_test")

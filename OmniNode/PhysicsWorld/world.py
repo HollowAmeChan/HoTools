@@ -202,10 +202,10 @@ def _compact_collider_snapshot(colliders: list[dict] | None) -> dict:
 
 
 def _clear_writeback_deltas_for_world(world: PhysicsWorldCache) -> None:
-    """清除旧 world 已写过的物理 delta，避免 restart 后残留末帧姿态。"""
+    """清除旧 world 的全部公共写回状态，避免 restart 后残留末帧姿态。"""
     try:
-        from .writeback import clear_all_deltas
-        clear_all_deltas(world)
+        from .writeback import reset_all_writebacks
+        reset_all_writebacks(world)
     except Exception:
         pass
 
@@ -416,9 +416,8 @@ def physicsWorldBegin(
     continuous = (previous_frame is not None) and (current_frame == previous_frame + 1)
     same_frame = (previous_frame is not None) and (current_frame == previous_frame)
     jumped = (previous_frame is not None) and not continuous and not same_frame
-    restart_before_scope = bool(reset) or jumped or (previous_frame is None)
 
-    if restart_before_scope:
+    if jumped:
         _clear_writeback_deltas_for_world(world)
 
     # 脏帧检测：帧号不连续时标记 world.valid = False，触发重建
@@ -434,8 +433,15 @@ def physicsWorldBegin(
             world = PhysicsWorldCache()
             world.copy_implicit_objects_from(previous_world)
         world.generation += 1
-        if jumped and not reset and previous_world is not None:
-            _run_world_replace_handlers(previous_world, world, "frame_jump")
+        if previous_world is not None:
+            if reset:
+                replace_reason = "reset_requested"
+            elif jumped:
+                replace_reason = "frame_jump"
+            else:
+                replace_reason = "world_invalid"
+            _run_world_replace_handlers(previous_world, world, replace_reason)
+            previous_world.omni_cache_dispose(replace_reason)
         world.replace_required = True
         world.valid = True
         # 重建时更新 fc 引用
@@ -460,8 +466,6 @@ def physicsWorldBegin(
         world.invalidate_all_slots("reset_requested")
 
     restart_required = bool(reset) or scope_changed or (not continuous and not same_frame) or (previous_frame is None)
-    if restart_required and (not jumped or previous_world is None):
-        _run_scope_restart_handlers(world, object_scope)
 
     # Blender 输出 fps/fps_base 是唯一基础时钟。sample_time 只累计已经跨过的
     # 连续 world 帧；same-frame 即使参数变化也不能篡改上一帧实际采用的步长。
@@ -490,6 +494,19 @@ def physicsWorldBegin(
     fc.time_scale = world_time_scale
     fc.substeps = max(1, int(substeps))
     fc.generation = world.generation
+
+    if restart_required:
+        if reset:
+            restart_reason = "reset_requested"
+        elif scope_changed:
+            restart_reason = "scope_changed"
+        elif jumped:
+            restart_reason = "frame_jump"
+        else:
+            restart_reason = "initialization"
+        _run_world_restart_handlers(world, object_scope, restart_reason)
+        if not jumped or previous_world is None:
+            _run_scope_restart_handlers(world, object_scope)
 
     # 收集 collider sources 并构建快照。
     # 连续帧才保留上帧紧凑快照；restart 帧不沿用旧 pose。
@@ -533,6 +550,19 @@ def _run_scope_restart_handlers(world: PhysicsWorldCache, scope: PhysicsObjectSc
         return
 
     run_scope_restart_handlers(world, scope)
+
+
+def _run_world_restart_handlers(
+    world: PhysicsWorldCache,
+    scope: PhysicsObjectScope,
+    reason: str,
+) -> None:
+    try:
+        from .registry import run_world_restart_handlers
+    except Exception:
+        return
+
+    run_world_restart_handlers(world, scope, reason)
 
 
 def _run_world_replace_handlers(

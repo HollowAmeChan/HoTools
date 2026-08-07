@@ -27,6 +27,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import bpy
+import mathutils
 
 
 def _register_physics_props():
@@ -175,6 +176,19 @@ def _run():
     stale_z = float(ball.matrix_world.translation.z)
     if abs(float(ball.delta_location.z)) < 0.01:
         raise RuntimeError("test setup failed: simulation did not produce delta writeback")
+    touched_objects = world.backend_resources.get("_writeback_touched_objects")
+    if not isinstance(touched_objects, dict) or not all(
+        isinstance(key, tuple) and len(key) == 2
+        for key in touched_objects
+    ):
+        raise RuntimeError("rigid writeback did not retain stable Object/Data identities")
+    ball.delta_rotation_euler = (0.1, -0.2, 0.3)
+    ball.delta_rotation_quaternion = mathutils.Quaternion((0.98, 0.1, 0.0, 0.0))
+    ball.delta_scale = (1.2, 0.8, 1.1)
+    previous_world = world
+    previous_adapter = previous_world.backend_resources.get("rigid_solver")
+    if previous_adapter is None:
+        raise RuntimeError("test setup failed: previous Jolt adapter is missing")
 
     scene.frame_set(1)
     rewound_world, _, _, restart = physicsWorldBegin(
@@ -189,6 +203,16 @@ def _run():
         raise RuntimeError("rewind should mark restart_required=True")
     if abs(float(ball.delta_location.z)) > 1e-6:
         raise RuntimeError(f"delta was not cleared before solver sync: {ball.delta_location.z:.6f}")
+    if mathutils.Vector(ball.delta_rotation_euler).length > 1e-7:
+        raise RuntimeError("Euler delta was not cleared before solver sync")
+    if abs(float(ball.delta_rotation_quaternion.angle)) > 1e-7:
+        raise RuntimeError("quaternion delta was not cleared before solver sync")
+    if (mathutils.Vector(ball.delta_scale) - mathutils.Vector((1.0, 1.0, 1.0))).length > 1e-7:
+        raise RuntimeError("scale delta was not cleared before solver sync")
+    if previous_world.backend_resources.get("rigid_solver") is not None:
+        raise RuntimeError("frame jump did not detach the previous Jolt adapter")
+    if bool(getattr(previous_adapter, "_valid", True)):
+        raise RuntimeError("frame jump did not dispose the previous Jolt native world")
 
     reset_z = float(ball.matrix_world.translation.z)
     if abs(reset_z - 5.0) > 1e-4:
@@ -196,6 +220,8 @@ def _run():
 
     step_rigid_bodies(rewound_world, enabled=True)
     adapter = rewound_world.backend_resources.get("rigid_solver")
+    if adapter is previous_adapter:
+        raise RuntimeError("frame jump reused the previous Jolt adapter")
     spec = build_rigid_body_spec(ball)
     pos, _rot = adapter.get_body_transform(spec.slot_id)
     if float(pos[2]) < 4.5:
@@ -210,6 +236,18 @@ def _run():
     )
     if rewound_result is None or float(rewound_result["position"][2]) < 4.5:
         raise RuntimeError("rewind did not publish a fresh rigid transform result")
+    apply_all_writebacks(rewound_world, restart=restart)
+    if ball.delta_location.length > 1e-7:
+        raise RuntimeError(
+            "restart frame writeback restored a non-zero object delta: "
+            f"{tuple(ball.delta_location)}"
+        )
+    if mathutils.Vector(ball.delta_rotation_euler).length > 1e-7:
+        raise RuntimeError("restart frame writeback restored a non-zero Euler delta")
+    if abs(float(ball.delta_rotation_quaternion.angle)) > 1e-7:
+        raise RuntimeError("restart frame writeback restored a non-identity quaternion delta")
+    if (mathutils.Vector(ball.delta_scale) - mathutils.Vector((1.0, 1.0, 1.0))).length > 1e-7:
+        raise RuntimeError("restart frame writeback restored a non-identity scale delta")
 
     cache_state, _, _ = physicsWorldCommit(rewound_world, enabled=True)
 
@@ -258,6 +296,67 @@ def _run():
         raise RuntimeError("same-frame dirty sync did not refresh rigid transform result")
 
     cache_state, _, _ = physicsWorldCommit(dirty_world, enabled=True)
+    reset_adapter = dirty_world.backend_resources.get("rigid_solver")
+    reset_world, _, _, reset_restart = physicsWorldBegin(
+        cache_state=cache_state,
+        scene=scene,
+        object_scope=scope,
+        enabled=True,
+        reset=True,
+    )
+    if not reset_restart:
+        raise RuntimeError("explicit reset did not enter the public restart contract")
+    if reset_world.backend_resources.get("rigid_solver") is not reset_adapter:
+        raise RuntimeError("explicit reset unexpectedly replaced the Jolt adapter owner")
+    if int(getattr(reset_adapter, "body_count", -1)) != 0:
+        raise RuntimeError("explicit reset did not clear Jolt native bodies before step")
+    if abs(float(ball.delta_location.z)) > 1e-6:
+        raise RuntimeError("explicit reset did not clear rigid delta writeback")
+    step_rigid_bodies(reset_world, enabled=True)
+    apply_all_writebacks(reset_world, restart=reset_restart)
+    if abs(float(ball.delta_location.z)) > 1e-6:
+        raise RuntimeError("explicit reset frame rewrote rigid delta")
+    cache_state, _, _ = physicsWorldCommit(reset_world, enabled=True)
+
+    forward_previous_world = reset_world
+    forward_previous_adapter = reset_world.backend_resources.get("rigid_solver")
+    scene.frame_set(10)
+    forward_world, _, _, forward_restart = physicsWorldBegin(
+        cache_state=cache_state,
+        scene=scene,
+        object_scope=scope,
+        enabled=True,
+    )
+    if not forward_restart or forward_world is forward_previous_world:
+        raise RuntimeError("forward jump did not replace the world owner")
+    if bool(getattr(forward_previous_adapter, "_valid", True)):
+        raise RuntimeError("forward jump did not dispose the previous Jolt adapter")
+    step_rigid_bodies(forward_world, enabled=True)
+    apply_all_writebacks(forward_world, restart=forward_restart)
+    if ball.delta_location.length > 1e-7:
+        raise RuntimeError("forward jump frame rewrote rigid delta")
+    cache_state, _, _ = physicsWorldCommit(forward_world, enabled=True)
+
+    combined_previous_world = forward_world
+    combined_previous_adapter = forward_world.backend_resources.get("rigid_solver")
+    scene.frame_set(20)
+    combined_world, _, _, combined_restart = physicsWorldBegin(
+        cache_state=cache_state,
+        scene=scene,
+        object_scope=scope,
+        enabled=True,
+        reset=True,
+    )
+    if not combined_restart or combined_world is combined_previous_world:
+        raise RuntimeError("jump + reset did not replace the world owner")
+    if bool(getattr(combined_previous_adapter, "_valid", True)):
+        raise RuntimeError("jump + reset did not dispose the previous Jolt adapter")
+    step_rigid_bodies(combined_world, enabled=True)
+    apply_all_writebacks(combined_world, restart=combined_restart)
+    if abs(float(ball.delta_location.z)) > 1e-6:
+        raise RuntimeError("jump + reset frame rewrote rigid delta")
+    cache_state, _, _ = physicsWorldCommit(combined_world, enabled=True)
+
     ball.hotools_rigid_body.enabled = False
     pruned_world, _, _, _ = physicsWorldBegin(
         cache_state=cache_state,

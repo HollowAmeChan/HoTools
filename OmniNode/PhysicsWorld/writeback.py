@@ -63,7 +63,7 @@ class WritebackCleanupResource:
     """
     def __init__(
         self,
-        touched_objects: set,
+        touched_objects: dict,
         touched_pose_bones: dict,
         touched_gn_objects: dict,
     ):
@@ -77,11 +77,11 @@ class WritebackCleanupResource:
         _reset_gn_objects(self._touched_gn_objects)
 
 
-def _get_touched_set(world) -> set:
-    """获取（或创建）本 world 记录的"已写过 delta"对象集合。"""
+def _get_touched_set(world) -> dict:
+    """获取（或创建）本 world 记录的刚体写回稳定身份表。"""
     br = world.backend_resources
     if _TOUCHED_OBJECTS_KEY not in br:
-        br[_TOUCHED_OBJECTS_KEY] = set()
+        br[_TOUCHED_OBJECTS_KEY] = {}
     return br[_TOUCHED_OBJECTS_KEY]
 
 
@@ -111,11 +111,20 @@ def _ensure_cleanup_resource(world) -> None:
 def _reset_rigid_objects(touched) -> None:
     if not touched:
         return
-    for obj in list(touched):
+    values = list(touched.values()) if isinstance(touched, dict) else list(touched)
+    for item in values:
         try:
+            if isinstance(item, tuple) and len(item) == 2:
+                obj = _find_object_by_pointer(item[0], item[1])
+            else:
+                # 兼容迁移前直接保存 bpy Object 的旧 cache。
+                obj = item
+            if obj is None:
+                continue
             obj.delta_location       = (0.0, 0.0, 0.0)
             obj.delta_rotation_euler = (0.0, 0.0, 0.0)
             obj.delta_rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+            obj.delta_scale = (1.0, 1.0, 1.0)
             obj.update_tag()
         except Exception:
             pass
@@ -123,6 +132,18 @@ def _reset_rigid_objects(touched) -> None:
         touched.clear()
     except Exception:
         pass
+
+
+def _find_object_by_pointer(object_ptr, object_data_ptr=0):
+    try:
+        from ..OmniReferenceGuard import resolve_bpy_object_reference
+
+        return resolve_bpy_object_reference(
+            int(object_ptr or 0),
+            int(object_data_ptr or 0),
+        )
+    except Exception:
+        return None
 
 
 def _reset_pose_bones(touched) -> None:
@@ -196,17 +217,21 @@ def reset_rigid_body_deltas(world) -> None:
     归零后对象返回 obj.location 所记录的原始位置。
     """
     updated = set()
-    for slot in world.solver_slots.values():
+    for slot in getattr(world, "solver_slots", {}).values():
         if slot.kind != RIGID_BODY_SLOT_KIND:
             continue
         spec = slot.data.get("spec")
         if spec is None or spec.body_type != "DYNAMIC" or spec.obj is None:
             continue
-        obj = spec.obj
+        obj = _find_object_by_pointer(
+            getattr(spec, "obj_ptr", 0),
+            getattr(spec, "data_ptr", 0),
+        ) or spec.obj
         try:
             obj.delta_location       = (0.0, 0.0, 0.0)
             obj.delta_rotation_euler = (0.0, 0.0, 0.0)
             obj.delta_rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+            obj.delta_scale = (1.0, 1.0, 1.0)
             updated.add(obj)
         except Exception as exc:
             slot.data["_writeback_error"] = f"reset delta: {exc}"
@@ -218,15 +243,23 @@ def reset_rigid_body_deltas(world) -> None:
             pass
 
 
-def clear_all_deltas(world) -> None:
+def reset_all_writebacks(world) -> None:
     """
-    清除本 world 期间所有曾被写过的对象、骨骼和 GN offset。
-    在 omni_cache_dispose / Cache Delete / 停止模拟时调用，确保目标归位。
+    统一清除本 world 的三类公共写回状态。
+
+    刚体同时覆盖当前 slot 与历史 touched 对象；骨骼和 GN 使用公共写回登记表
+    恢复。跳帧、显式 reset、scope 改变和 cache dispose 都必须走这个入口。
     """
+    reset_rigid_body_deltas(world)
     br = getattr(world, "backend_resources", {})
     _reset_rigid_objects(br.get(_TOUCHED_OBJECTS_KEY))
     _reset_pose_bones(br.get(_TOUCHED_POSE_BONES_KEY))
     _reset_gn_objects(br.get(_TOUCHED_GN_OBJECTS_KEY))
+
+
+def clear_all_deltas(world) -> None:
+    """兼容旧调用名；实际执行统一写回状态清理。"""
+    reset_all_writebacks(world)
 
 
 def writeback_rigid_body_deltas(world) -> int:
@@ -269,7 +302,10 @@ def writeback_rigid_body_deltas(world) -> int:
         try:
             pos_arr = result.get("position")
             rot_arr = result.get("rotation_wxyz")
-            obj = spec.obj
+            obj = _find_object_by_pointer(
+                getattr(spec, "obj_ptr", 0),
+                getattr(spec, "data_ptr", 0),
+            ) or spec.obj
 
             # 位置 delta = Jolt 世界位置 - 对象原始 location
             jolt_pos = mathutils.Vector(pos_arr)
@@ -300,7 +336,9 @@ def writeback_rigid_body_deltas(world) -> int:
                 obj.delta_rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
                 obj.delta_rotation_euler = delta_mat.to_euler(rotation_mode)
 
-            touched.add(obj)    # 记录已写过 delta 的对象
+            object_ptr = int(getattr(spec, "obj_ptr", 0) or obj.as_pointer())
+            data_ptr = int(getattr(spec, "data_ptr", 0) or 0)
+            touched[(object_ptr, data_ptr)] = (object_ptr, data_ptr)
             updated.add(obj)
             written += 1
             slot.data.pop("_writeback_error", None)
@@ -1126,12 +1164,10 @@ def apply_all_writebacks(world, restart: bool) -> int:
     """
     统一写回入口，被 physicsWriteback 节点调用。
 
-    restart=True 时（跳帧/复位/首帧）：先将所有刚体 delta 归零，再写入结果。
-    初始状态 = delta 全零，Blender 默认值，无需显式 K 帧记录。
+    restart=True 时先统一清除刚体、骨骼和 GN 三种写回状态，再写入本帧结果。
     """
     if restart:
-        reset_rigid_body_deltas(world)
-        reset_gn_offsets(world)
+        reset_all_writebacks(world)
 
     total  = writeback_rigid_body_deltas(world)
     total += writeback_bone_transforms(world)

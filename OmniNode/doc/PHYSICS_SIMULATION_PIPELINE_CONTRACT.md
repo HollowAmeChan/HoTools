@@ -133,13 +133,22 @@ PropertyGroup 来补偿已经冻结的对象字段。缺失资源必须在对象
 - 按注册依赖先运行共享 component scope collector，再运行 solver scope collector。component 在同一轮事务中写公共快照或受管 implicit object；solver 只能读取这些公共结果并生成私有规格。
 - 清理上一帧异常残留的 write lock。
 - 根据 validity、reset、跳帧、倒放、scope 变化设置 `replace_required`。
+- 当 `restart_required=True` 时先统一恢复上一代的 Object delta、PoseBone
+  `matrix_basis` 与 GN offset，再调用 `world_restart_handlers(world, scope, reason)`。
+  world 外调试绘制必须在该 hook 清理；solver native/runtime cache 可以在 hook
+  立即清理，也可以在本次 step 推进前消费同一个 `restart_required` 冷启动，
+  但不得另造一套私有跳帧判定。
+- Object 写回登记必须保存 Object/Data 双指针身份，restart 时重新解析活对象并把
+  `delta_location`、Euler/Quaternion rotation delta 与 `delta_scale` 全部恢复为单位值。
+  动态刚体冷启动必须从 authored location/rotation/scale 重建无 delta 世界变换，
+  不能假设清零 RNA 后 `matrix_world` 已在当前 frame callback 内同步刷新。
 - 准备 frame exchange registry：`world.clear_exchange()` 会在 Begin 清理上一轮帧级 scratch。
 
 不负责：
 
 - 不知道 MeshCloth、BoneCloth、SpringBone、RigidBody 的业务参数。
 - 不执行 solver prepare 或 solver step。
-- 不写 Blender。
+- 连续帧不写 Blender；restart 只允许执行上述公共写回恢复，不允许产生新模拟结果。
 - 不提交 runtime cache。
 - 不直接导入或点名具体 solver 域。需要从 scope 派生 solver spec 时，只能通过 `physicsWorld/registry.py` 调用已装载 solver module 声明的 hook；solver declaration 汇总也由 registry descriptor 提供，公共层只保留兼容导出。
 
@@ -635,6 +644,7 @@ result channel 的结构约定（以 transform + stats 双通道为例）：
 - solver 向 `world.result_streams["<domain>_transform"]` 写每个模拟体的本帧结果，是纯快照 dict/tuple 数据（如 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`），不含 backend handle。
 - solver 同时向 `world.result_streams["<domain>_solver_stats"]` 写本次调用统计（body/constraint 数、step_ms、dt、substeps、same_frame、各类 error count），供 debug/观察节点读取。
 - contact/sensor 等事件输出写入声明过的 result channel，例如 rigid/Jolt 的 `rigid_contact_event` / `rigid_sensor_event`。事件只含稳定 slot id 与普通数值快照，不含 backend body handle；same-frame 重发上一真实 step 快照，不重新触发 native step。
+- rigid/Jolt 在已有 `previous_frame` 的 restart 帧只重建 native world 并发布冷启动姿态，不能执行数值 step；否则统一写回刚清零的 `Object.delta_*` 会被重力等首步结果立即重新污染。首次初始化没有旧帧反馈，可以保持既有首帧推进语义。
 - writeback、solver 自有 debug draw、read-state 节点只消费 result stream 或本 solver 的 slot debug 快照，不读 backend-private handle（如 Jolt adapter 内部字段）。
 - 需要backend中间态的solver debug采用隐式请求：debug节点自动发现world内所属slot，只登记scope/过滤器。substep中间态在下一次真实推进后冻结；若某层观察的是scheduler前的新帧判定（例如Teleport阈值/触发），domain必须显式声明其producer阶段，并允许在zero-substep新帧冻结。same-frame和没有到达声明生产阶段的调用不得伪造新快照。
 - 未登记请求时禁止执行中间态native readback和逐项viewport几何展开。持续显示由`always_run`调试节点逐帧重新登记一次性请求表达，不把调试成本永久塞进solver主循环。
@@ -1135,11 +1145,11 @@ C++ native context:
 
 solver step 应产生统一 result stream，而不是直接写 Blender。
 
-当solver下一帧会从同一个Blender owner重新采集frame input时，必须定义输出反馈屏障：能够区分“上帧物理写回仍残留”和“本帧动画/driver已经覆盖”。该屏障及其持久状态由solver frame adapter拥有；统一writeback只应用结果plan，不替solver决定动画输入、不记录solver私有反馈状态，也不默认清零PoseBone。若蓝本在动画求值前恢复初始Transform、动画求值后再读取，Blender适配器必须在内存中表达等价输入时序，不得在solver执行期倒写场景来伪造早更新。
+当solver下一帧会从同一个Blender owner重新采集frame input时，必须定义输出反馈屏障：能够区分“上帧物理写回仍残留”和“本帧动画/driver已经覆盖”。该屏障及其持久状态由solver frame adapter拥有；统一writeback只应用结果plan，不替solver决定动画输入、不记录solver私有反馈状态。正常连续帧不清零 PoseBone；restart 则由统一清理入口恢复所有已登记的 Object delta、PoseBone `matrix_basis` 与 GN offset。若蓝本在动画求值前恢复初始Transform、动画求值后再读取，Blender适配器必须在内存中表达等价输入时序，不得在solver执行期倒写场景来伪造早更新。
 
 需要以“真实写入成功”排除自身输出反馈的 Bone solver 必须把 result publication 与 writeback confirmation 分开：发布阶段只能暂存 pending 指纹；公共 Bone 写回只有在整组 transaction 完整预检并成功提交后，才为每个 result envelope 产生一条 `bone_writeback_receipt_v1`。receipt 只含递增 serial、frame/generation、solver/slot、transaction/publication 与 Armature object/data identity 等纯值字段，不持有 Blender RNA、plan 或 matrix；失败、回滚或不完整 transaction 不得产生 receipt。solver adapter 只能用匹配 receipt 提升自己的 confirmed 指纹，不能把“计划过”“当前值碰巧相等”当成写入事实；同帧重复发布必须有不同 publication identity，旧 receipt 不得确认新结果。
 
-当 Physics World owner 因跳帧而替换时，通用 registry 提供 `world_replace_handlers(previous_world, world, reason)` 生命周期。solver 可以在该边界转移自己拥有的轻量 frame feedback，但不得复制 solver slot、native handle 或结果流；显式 reset/scope restart 仍通过 `scope_restart_handlers` 清理反馈。MC2 BoneCloth 在跳帧时携带上一帧的 source/expected basis，以识别 Blender 暂存的旧 PoseBone 写回；目标帧已经完成动画求值时，adapter 必须优先采用新的当前 basis。统一 writeback 在 restart 时清理过 `PoseBone.matrix_basis` 后，adapter 必须从该 RNA basis 重建输入，不得在同一 frame callback 中回读尚未刷新的 `PoseBone.matrix`。
+所有首次冷启动、显式 reset、scope restart、跳帧和倒放都进入 `world_restart_handlers(world, scope, reason)`；world 外调试绘制在这里立即清理，solver 数值缓存则必须在这里或本次 step 推进前消费同一个公共 restart。Physics World owner 因跳帧而替换时，公共顺序固定为：先恢复旧 world 的统一写回，再通过 `world_replace_handlers(previous_world, world, reason)` 转移必要的轻量 frame feedback，随后立即幂等 dispose 旧 world owner，最后在新 world 上执行 `world_restart_handlers`。replace handler 不得复制 solver slot、native handle 或结果流；旧 solver slot、backend/runtime cache 与绘制也不得等到 Cache Commit 才消失。MC2 BoneCloth 在跳帧时可携带上一帧的 source/expected basis，以识别 Blender 暂存的旧 PoseBone 写回；该输入反馈不属于数值解算缓存。目标帧已经完成动画求值时，adapter 必须优先采用新的当前 basis。统一 writeback 在 restart 时清理过 `PoseBone.matrix_basis` 后，adapter 必须从该 RNA basis 重建输入，不得在同一 frame callback 中回读尚未刷新的 `PoseBone.matrix`。
 
 ### Bone 运动学最终目标所有权合同
 

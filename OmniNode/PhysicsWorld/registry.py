@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import inspect
 import importlib.util
 from importlib import import_module
 from copy import deepcopy
@@ -52,6 +53,7 @@ def _component_descriptor(domain: str) -> dict:
         "blender_properties": None,
         "scope_collectors": (),
         "scope_restart_handlers": (),
+        "world_restart_handlers": (),
         "world_replace_handlers": (),
         "world_dispose_handlers": (),
         "blender_lifecycle": None,
@@ -137,6 +139,7 @@ def _default_descriptor(domain: str) -> dict:
         "debug_draw_modes": None,
         "scope_collectors": (),
         "scope_restart_handlers": (),
+        "world_restart_handlers": (),
         "world_replace_handlers": (),
         "world_dispose_handlers": (),
         "blender_lifecycle": None,
@@ -316,6 +319,11 @@ def iter_scope_collectors() -> list[dict]:
 
 def iter_scope_restart_handlers() -> list[dict]:
     return _iter_hooks("scope_restart_handlers")
+
+
+def iter_world_restart_handlers() -> list[dict]:
+    """返回所有领域在公共 world restart 阶段的清理回调。"""
+    return _iter_hooks("world_restart_handlers")
 
 
 def iter_world_replace_handlers() -> list[dict]:
@@ -845,6 +853,36 @@ def run_scope_restart_handlers(world, scope) -> int:
             count += 1
         except Exception as exc:
             _record_hook_error(world, entry.get("domain", ""), "scope_restart_handlers", exc)
+    return count
+
+
+def run_world_restart_handlers(world, scope, reason: str) -> int:
+    """让所有领域在跳帧/复位/首帧时清理自己的运行态。"""
+    count = 0
+    for entry in iter_world_restart_handlers():
+        try:
+            hook = entry["hook"]
+            parameters = tuple(inspect.signature(hook).parameters.values())
+            positional = tuple(
+                item for item in parameters
+                if item.kind in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                )
+            )
+            has_varargs = any(
+                item.kind == inspect.Parameter.VAR_POSITIONAL
+                for item in parameters
+            )
+            if has_varargs or len(positional) >= 3:
+                hook(world, scope, str(reason or "restart"))
+            elif len(positional) == 2:
+                hook(world, str(reason or "restart"))
+            else:
+                hook(world)
+            count += 1
+        except Exception as exc:
+            _record_hook_error(world, entry.get("domain", ""), "world_restart_handlers", exc)
     return count
 
 

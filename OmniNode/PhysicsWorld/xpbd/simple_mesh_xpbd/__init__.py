@@ -12,6 +12,9 @@ SOLVER_MODULE = {
     "menu_name": "XPBD",
     "declaration": ".declaration:MESH_XPBD_SOLVER_DECLARATION",
     "nodes": ("..nodes", ".nodes"),
+    "world_restart_handlers": (
+        ".debug_draw:dispose_mesh_xpbd_debug_draw_for_world",
+    ),
     "world_dispose_handlers": (
         ".debug_draw:dispose_mesh_xpbd_debug_draw_for_world",
     ),

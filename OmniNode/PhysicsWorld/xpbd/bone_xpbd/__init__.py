@@ -18,6 +18,9 @@ SOLVER_MODULE = {
     "world_replace_handlers": (
         ".feedback:carry_bone_xpbd_feedback",
     ),
+    "world_restart_handlers": (
+        ".debug_draw:dispose_bone_xpbd_debug_draw_for_world",
+    ),
     "world_dispose_handlers": (
         ".debug_draw:dispose_bone_xpbd_debug_draw_for_world",
     ),

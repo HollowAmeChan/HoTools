@@ -153,7 +153,8 @@ def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
     1. 获取或创建 JoltAdapter（首帧编译 hotools_jolt 模块未找到时节点静默跳过）。
     2. 首帧或 generation 变化时把 spec 同步到 Jolt（add_body / add_constraint）。
     3. KINEMATIC 刚体每帧跟随 Blender 动画位置。
-    4. 新帧执行 Jolt step（dt 和 substeps 来自物理世界帧上下文）。
+    4. 连续新帧执行 Jolt step（dt 和 substeps 来自物理世界帧上下文）；
+       已有 previous_frame 的 restart 帧只冷同步和发布，不推进。
     5. DYNAMIC 刚体写回由下游"物理写回"节点统一写入 Object.delta_*。
 
     hotools_jolt 未编译时透传 world，输出 (world, 0, 0.0)，不报错。

@@ -622,6 +622,44 @@ def _world_transform_wxyz(obj) -> tuple[tuple[float, float, float], tuple[float,
             return ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0))
 
 
+def _authored_world_transform_wxyz(
+    obj,
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    """从 authored channels 重建不含 Object.delta_* 的世界变换。"""
+    try:
+        import mathutils
+
+        rotation_mode = str(getattr(obj, "rotation_mode", "XYZ") or "XYZ")
+        if rotation_mode == "QUATERNION":
+            rotation = obj.rotation_quaternion.copy()
+        elif rotation_mode == "AXIS_ANGLE":
+            angle, axis_x, axis_y, axis_z = obj.rotation_axis_angle
+            axis = mathutils.Vector((axis_x, axis_y, axis_z))
+            if axis.length_squared <= 1.0e-20:
+                axis = mathutils.Vector((0.0, 0.0, 1.0))
+            rotation = mathutils.Quaternion(axis, float(angle))
+        else:
+            rotation = obj.rotation_euler.to_quaternion()
+
+        local_matrix = mathutils.Matrix.LocRotScale(
+            obj.location,
+            rotation,
+            obj.scale,
+        )
+        parent = getattr(obj, "parent", None)
+        parent_type = str(getattr(obj, "parent_type", "OBJECT") or "OBJECT")
+        if parent is not None and parent_type == "OBJECT":
+            local_matrix = parent.matrix_world @ obj.matrix_parent_inverse @ local_matrix
+
+        loc, rot, _scale = local_matrix.decompose()
+        return (
+            (float(loc.x), float(loc.y), float(loc.z)),
+            (float(rot.w), float(rot.x), float(rot.y), float(rot.z)),
+        )
+    except Exception:
+        return _world_transform_wxyz(obj)
+
+
 def _rotation_wxyz_from_euler(value) -> tuple[float, float, float, float]:
     try:
         import mathutils
@@ -676,7 +714,11 @@ def _ordered_pair(a: float, b: float) -> tuple[float, float]:
     return (a, b) if a <= b else (b, a)
 
 
-def build_rigid_body_spec(obj) -> RigidBodySpec | None:
+def build_rigid_body_spec(
+    obj,
+    *,
+    use_authored_transform: bool = False,
+) -> RigidBodySpec | None:
     """
     从 obj.hotools_rigid_body PropertyGroup 构造 RigidBodySpec。
 
@@ -693,9 +735,11 @@ def build_rigid_body_spec(obj) -> RigidBodySpec | None:
     if obj_ptr == 0:
         return None
     data_ptr = _object_data_pointer(obj)
-    world_position, world_rotation_wxyz = _world_transform_wxyz(obj)
-
     body_type = str(getattr(props, "body_type", "DYNAMIC"))
+    if use_authored_transform and body_type == "DYNAMIC":
+        world_position, world_rotation_wxyz = _authored_world_transform_wxyz(obj)
+    else:
+        world_position, world_rotation_wxyz = _world_transform_wxyz(obj)
     mass = max(float(getattr(props, "mass", 1.0)), 0.001)
     friction = max(0.0, min(1.0, float(getattr(props, "friction", 0.5))))
     restitution = max(0.0, min(1.0, float(getattr(props, "restitution", 0.0))))

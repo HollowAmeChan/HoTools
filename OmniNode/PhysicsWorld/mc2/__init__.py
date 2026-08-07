@@ -18,6 +18,9 @@ SOLVER_MODULE = {
     "world_replace_handlers": (
         ".setups.bone_frame_input:carry_mc2_bone_frame_state",
     ),
+    "world_restart_handlers": (
+        ".debug_draw:dispose_mc2_debug_draw_for_world",
+    ),
     "blender_lifecycle": ".source_observation_blender",
     "world_dispose_handlers": (
         ".debug_draw:dispose_mc2_debug_draw_for_world",

@@ -617,12 +617,13 @@ def physicsFieldRuntimeDebugDraw(
 
       初始状态约定：
       Blender 增量变换默认为 (0,0,0)，即"无物理偏移"。
-      跳帧/复位时节点自动将 delta 归零，再写入新的物理结果。
+      跳帧/复位时节点统一恢复刚体全部 delta、PoseBone matrix_basis 与 GN offset，
+      再写入新的物理结果。
       刚体/骨骼停止模拟后 delta 保留；GN 最终 offset 在写回阶段发现本帧
       无结果时会归零，防止残留上一帧 mesh 形变。删除缓存会统一自动清理。
 
     跳帧/复位处理：
-      world.frame_context.restart_required=True 时先将 delta 归零，
+      world.frame_context.restart_required=True 时先清除三种公共写回状态，
       再写入本帧物理结果——保证跳帧后无残留。
 
     接法：

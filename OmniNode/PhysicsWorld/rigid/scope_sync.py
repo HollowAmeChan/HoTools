@@ -265,6 +265,18 @@ def _mark_all_rigid_slots_for_resync(world: PhysicsWorldCache) -> None:
             slot.data.pop("_jolt_generation", None)
 
 
+def reset_rigid_world_runtime(
+    world: PhysicsWorldCache,
+    _scope=None,
+    _reason: str = "restart",
+) -> None:
+    """消费公共 world restart：清空 Jolt native 状态并强制所有刚体重同步。"""
+    _mark_all_rigid_slots_for_resync(world)
+    adapter = world.backend_resources.get(RIGID_BACKEND_RESOURCE_KEY)
+    if adapter is not None:
+        adapter._last_generation = int(world.generation)
+
+
 def _prune_stale_rigid_slots(
     world: PhysicsWorldCache,
     active_body_ids: set[str],
@@ -305,10 +317,14 @@ def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjec
         active_body_ids: set[str] = set()
         active_constraint_ids: set[str] = set(active_generated_constraint_slot_ids(world))
         spec_sync_dirty = False
+        restart = bool(getattr(world.frame_context, "restart_required", False))
 
         for obj in _flatten(scope.objects):
             if scope.include_rigid_body:
-                spec = build_rigid_body_spec(obj)
+                spec = build_rigid_body_spec(
+                    obj,
+                    use_authored_transform=restart,
+                )
                 if spec is not None:
                     active_body_ids.add(spec.slot_id)
                     slot = world.ensure_solver_slot(spec.slot_id, RIGID_BODY_SLOT_KIND)

@@ -15,6 +15,9 @@ COMPONENT_MODULE = {
         ".implicit_objects:collect_scope_field_specs",
         ".debug_draw:begin_field_runtime_debug_evaluation",
     ),
+    "world_restart_handlers": (
+        ".debug_draw:dispose_field_runtime_debug_draw_for_world",
+    ),
     "world_dispose_handlers": (
         ".debug_draw:dispose_field_runtime_debug_draw_for_world",
     ),

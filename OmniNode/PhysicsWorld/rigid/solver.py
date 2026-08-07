@@ -686,17 +686,6 @@ def step_rigid_bodies(
         sync_rigid_jolt_world_settings(world, adapter)
         sync_generated_constraint_slots(world, adapter=adapter)
 
-        # frame 0 -> 1 是不递增 generation 的 restart。每帧只消费一次，
-        # 首次求值重建 native 状态，同帧命令重放不得再次重建。
-        restart = bool(fc.restart_required) if fc is not None else True
-        restart_token = (int(world.generation), int(getattr(fc, "frame", 0) or 0))
-        consumed_restart = world.runtime_cache("rigid_restart_sync_token")
-        if restart and consumed_restart != restart_token:
-            for slot in world.solver_slots.values():
-                if slot.kind in {RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND}:
-                    slot.data.pop("_jolt_generation", None)
-            world.set_runtime_cache("rigid_restart_sync_token", restart_token)
-
         # --- sync rigid bodies ---
         for slot_id, slot in _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND):
             spec = slot.data.get("spec")
@@ -733,7 +722,11 @@ def step_rigid_bodies(
 
         _apply_rigid_body_commands(world, adapter)
 
-        if same_frame:
+        restart = bool(getattr(fc, "restart_required", True)) if fc is not None else True
+        # 非连续 restart 只发布冷启动姿态，避免本帧刚清零的 Object.delta_*
+        # 被重力等首步结果立即重新写入；首次初始化仍保持历史首帧推进语义。
+        restart_without_step = restart and getattr(fc, "previous_frame", None) is not None
+        if same_frame or restart_without_step:
             transform_count = _publish_rigid_transform_results(world, adapter)
             _publish_rigid_constraint_state_results(world, adapter)
             contact_count, sensor_count = _publish_rigid_contact_event_results(world, adapter)

@@ -162,7 +162,7 @@ def _mc2_bone_frame_state(world) -> dict:
     return state
 
 
-def clear_mc2_bone_frame_state(world) -> None:
+def clear_mc2_bone_frame_state(world, _scope=None) -> None:
     world.backend_resources.pop(MC2_BONE_FRAME_STATE_KEY, None)
 
 
