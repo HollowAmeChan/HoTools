@@ -23,13 +23,13 @@ from .specs import build_constraint_spec, build_rigid_body_spec
 
 def _flatten(values) -> list:
     result = []
-    stack = list(values) if isinstance(values, (list, tuple)) else (
+    stack = list(reversed(values)) if isinstance(values, (list, tuple)) else (
         [values] if values is not None else []
     )
     while stack:
-        item = stack.pop(0)
+        item = stack.pop()
         if isinstance(item, (list, tuple)):
-            stack[0:0] = list(item)
+            stack.extend(reversed(item))
         else:
             result.append(item)
     return result

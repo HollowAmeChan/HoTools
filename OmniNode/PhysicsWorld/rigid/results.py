@@ -105,6 +105,25 @@ def iter_rigid_transform_results(
     ]
 
 
+def index_rigid_transform_results_by_slot(
+    world,
+    frame: int | None = None,
+    generation: int | None = None,
+) -> dict[str, dict]:
+    """单次消费当前刚体结果流，并按稳定 slot id 建立只读索引。"""
+    indexed = {}
+    for result in iter_rigid_transform_results(
+        world,
+        frame=frame,
+        generation=generation,
+    ):
+        slot_id = str(result.get("slot_id") or "")
+        if slot_id and slot_id not in indexed:
+            # 保持 get_rigid_transform_result 历史上的“首条命中”语义。
+            indexed[slot_id] = result
+    return indexed
+
+
 def get_rigid_transform_result(
     world,
     slot_id: str | None = None,
@@ -233,6 +252,24 @@ def get_rigid_constraint_state_result(
             continue
         return result
     return None
+
+
+def index_rigid_constraint_state_results_by_slot(
+    world,
+    frame: int | None = None,
+    generation: int | None = None,
+) -> dict[str, dict]:
+    """单次消费当前约束状态流，并按稳定 slot id 建立只读索引。"""
+    indexed = {}
+    for result in iter_rigid_constraint_state_results(
+        world,
+        frame=frame,
+        generation=generation,
+    ):
+        slot_id = str(result.get("slot_id") or "")
+        if slot_id and slot_id not in indexed:
+            indexed[slot_id] = result
+    return indexed
 
 
 def clear_rigid_constraint_state_results(world) -> None:

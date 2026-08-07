@@ -23,8 +23,8 @@ from ..utils.debug_draw import (
     vector3,
 )
 from .results import (
-    get_rigid_constraint_state_result,
-    get_rigid_transform_result,
+    index_rigid_constraint_state_results_by_slot,
+    index_rigid_transform_results_by_slot,
     iter_rigid_contact_event_results,
 )
 
@@ -106,18 +106,31 @@ def build_rigid_debug_draw_snapshot(
     removed_sensor_lines: list[tuple[float, float, float]] = []
     constraint_type_counts: dict[str, int] = {}
     unknown_constraint_types: list[str] = []
+    body_results = (
+        index_rigid_transform_results_by_slot(
+            world,
+            frame=frame,
+            generation=generation,
+        )
+        if show_bodies
+        else {}
+    )
+    constraint_states = (
+        index_rigid_constraint_state_results_by_slot(
+            world,
+            frame=frame,
+            generation=generation,
+        )
+        if show_constraints or show_problems
+        else {}
+    )
 
     for slot_id, slot in list(world.solver_slots.items()):
         spec = slot.data.get("spec")
         if spec is None:
             continue
         if show_bodies and slot.kind == RIGID_BODY_SLOT_KIND:
-            result = get_rigid_transform_result(
-                world,
-                slot_id=slot_id,
-                frame=frame,
-                generation=generation,
-            )
+            result = body_results.get(slot_id)
             _append_body_shape_lines(
                 _body_line_target(
                     spec,
@@ -131,12 +144,7 @@ def build_rigid_debug_draw_snapshot(
                 result,
             )
         elif slot.kind == RIGID_CONSTRAINT_SLOT_KIND and (show_constraints or show_problems):
-            state = get_rigid_constraint_state_result(
-                world,
-                slot_id=slot_id,
-                frame=frame,
-                generation=generation,
-            )
+            state = constraint_states.get(slot_id)
             constraint_type = str(getattr(spec, "constraint_type", "FIXED") or "FIXED").upper()
             constraint_type_counts[constraint_type] = constraint_type_counts.get(constraint_type, 0) + 1
             if show_constraints:

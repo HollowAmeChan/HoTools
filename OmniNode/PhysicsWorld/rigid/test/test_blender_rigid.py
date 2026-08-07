@@ -1364,6 +1364,64 @@ def test_full_rigid_pipeline():
     _del(ground, ball)
 
 
+def test_rigid_writeback_builds_linear_indexes_once():
+    scene = bpy.context.scene
+    bodies = [
+        _make_obj(f"T4A_LinearWriteback_{index:03d}", (index * 1.1, 0.0, 2.0))
+        for index in range(24)
+    ]
+    scope = make_scope(
+        bodies,
+        include_rigid_body=True,
+        include_rigid_constraint=False,
+        include_passive_collision=False,
+        include_bone_collision=False,
+    )
+    scene.frame_set(1)
+    world, _, _, _restart = physicsWorldBegin(
+        cache_state=None,
+        scene=scene,
+        object_scope=scope,
+        enabled=True,
+    )
+    body_count, _step_ms = step_rigid_bodies(world, enabled=True)
+    assert body_count == len(bodies)
+
+    writeback_module = _pw("writeback")
+    original_build_index = writeback_module._build_object_pointer_index
+    original_consume_results = world.consume_results
+    object_index_calls = 0
+    rigid_result_reads = 0
+
+    def counted_build_index():
+        nonlocal object_index_calls
+        object_index_calls += 1
+        return original_build_index()
+
+    def counted_consume_results(*args, **kwargs):
+        nonlocal rigid_result_reads
+        channel = kwargs.get("channel")
+        if channel is None and args:
+            channel = args[0]
+        if channel == "rigid_transform":
+            rigid_result_reads += 1
+        return original_consume_results(*args, **kwargs)
+
+    writeback_module._build_object_pointer_index = counted_build_index
+    world.consume_results = counted_consume_results
+    try:
+        written = writeback_module.writeback_rigid_body_deltas(world)
+    finally:
+        writeback_module._build_object_pointer_index = original_build_index
+        world.consume_results = original_consume_results
+
+    assert written == len(bodies)
+    assert rigid_result_reads == 1, "一轮刚体写回只能扫描一次 transform result stream"
+    assert object_index_calls == 1, "一轮刚体写回只能枚举一次 Blender Object"
+    world.omni_cache_dispose("test_linear_rigid_writeback")
+    _del(*bodies)
+
+
 def test_contact_and_sensor_event_result_pipeline():
     scene = bpy.context.scene
     sensor = _make_obj("T4B_Sensor", (0, 0, 0), body_type="STATIC")
@@ -2307,6 +2365,7 @@ if __name__ == "__main__":
     check("rigid jolt world settings implicit object pipeline", test_rigid_jolt_world_settings_implicit_object_pipeline)
     check("刚体容量溢出隔离与诊断", test_rigid_body_capacity_overflow_isolated_and_reported)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
+    check("刚体写回线性索引", test_rigid_writeback_builds_linear_indexes_once)
     check("contact + sensor event result pipeline", test_contact_and_sensor_event_result_pipeline)
     check("接触事件溢出有界与统计", test_contact_event_overflow_result_pipeline)
     check("rigid RayCast query pipeline", test_rigid_ray_cast_query_pipeline)

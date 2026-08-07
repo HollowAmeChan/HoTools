@@ -25,7 +25,7 @@ import mathutils
 import numpy as np
 
 from .rigid.names import RIGID_BODY_SLOT_KIND
-from .rigid.results import get_rigid_transform_result
+from .rigid.results import index_rigid_transform_results_by_slot
 from .simple_cloth.output import (
     clear_gn_local_offsets,
     ensure_gn_offset_output,
@@ -108,14 +108,38 @@ def _ensure_cleanup_resource(world) -> None:
         )
 
 
+def _build_object_pointer_index() -> dict[int, tuple[int, object]]:
+    """单次枚举 Blender Object，供一轮写回按稳定指针 O(1) 解析。"""
+    try:
+        import bpy
+    except Exception:
+        return {}
+
+    indexed = {}
+    for obj in tuple(getattr(bpy.data, "objects", ())):
+        try:
+            object_ptr = int(obj.as_pointer())
+            data = getattr(obj, "data", None)
+            data_ptr = int(data.as_pointer()) if data is not None else 0
+            indexed[object_ptr] = (data_ptr, obj)
+        except Exception:
+            continue
+    return indexed
+
+
 def _reset_rigid_objects(touched) -> None:
     if not touched:
         return
+    object_index = _build_object_pointer_index()
     values = list(touched.values()) if isinstance(touched, dict) else list(touched)
     for item in values:
         try:
             if isinstance(item, tuple) and len(item) == 2:
-                obj = _find_object_by_pointer(item[0], item[1])
+                obj = _find_object_by_pointer(
+                    item[0],
+                    item[1],
+                    object_index=object_index,
+                )
             else:
                 # 兼容迁移前直接保存 bpy Object 的旧 cache。
                 obj = item
@@ -134,13 +158,28 @@ def _reset_rigid_objects(touched) -> None:
         pass
 
 
-def _find_object_by_pointer(object_ptr, object_data_ptr=0):
+def _find_object_by_pointer(
+    object_ptr,
+    object_data_ptr=0,
+    *,
+    object_index: dict[int, tuple[int, object]] | None = None,
+):
+    object_ptr = int(object_ptr or 0)
+    object_data_ptr = int(object_data_ptr or 0)
+    if object_index is not None:
+        record = object_index.get(object_ptr)
+        if record is None:
+            return None
+        live_data_ptr, obj = record
+        if object_data_ptr > 0 and live_data_ptr != object_data_ptr:
+            return None
+        return obj
     try:
         from ..OmniReferenceGuard import resolve_bpy_object_reference
 
         return resolve_bpy_object_reference(
-            int(object_ptr or 0),
-            int(object_data_ptr or 0),
+            object_ptr,
+            object_data_ptr,
         )
     except Exception:
         return None
@@ -217,6 +256,7 @@ def reset_rigid_body_deltas(world) -> None:
     归零后对象返回 obj.location 所记录的原始位置。
     """
     updated = set()
+    object_index = _build_object_pointer_index()
     for slot in getattr(world, "solver_slots", {}).values():
         if slot.kind != RIGID_BODY_SLOT_KIND:
             continue
@@ -226,6 +266,7 @@ def reset_rigid_body_deltas(world) -> None:
         obj = _find_object_by_pointer(
             getattr(spec, "obj_ptr", 0),
             getattr(spec, "data_ptr", 0),
+            object_index=object_index,
         ) or spec.obj
         try:
             obj.delta_location       = (0.0, 0.0, 0.0)
@@ -282,6 +323,12 @@ def writeback_rigid_body_deltas(world) -> int:
     touched = _get_touched_set(world)
     updated = set()
     written = 0
+    results_by_slot = index_rigid_transform_results_by_slot(
+        world,
+        frame=frame,
+        generation=generation,
+    )
+    object_index = _build_object_pointer_index()
 
     for slot in list(world.solver_slots.values()):
         if slot.kind != RIGID_BODY_SLOT_KIND:
@@ -290,12 +337,7 @@ def writeback_rigid_body_deltas(world) -> int:
         if spec is None or spec.body_type != "DYNAMIC" or spec.obj is None:
             continue
 
-        result = get_rigid_transform_result(
-            world,
-            slot_id=slot.slot_id,
-            frame=frame,
-            generation=generation,
-        )
+        result = results_by_slot.get(slot.slot_id)
         if result is None:
             continue
 
@@ -305,6 +347,7 @@ def writeback_rigid_body_deltas(world) -> int:
             obj = _find_object_by_pointer(
                 getattr(spec, "obj_ptr", 0),
                 getattr(spec, "data_ptr", 0),
+                object_index=object_index,
             ) or spec.obj
 
             # 位置 delta = Jolt 世界位置 - 对象原始 location
