@@ -1422,6 +1422,117 @@ def test_rigid_writeback_builds_linear_indexes_once():
     _del(*bodies)
 
 
+def test_rigid_collection_batch_writeback_avoids_global_object_index():
+    scene = bpy.context.scene
+    collection = bpy.data.collections.new("T4A_CollectionBatchScope")
+    scene.collection.children.link(collection)
+    bodies = [
+        _make_obj(f"T4A_CollectionBatch_{index:03d}", (index * 1.1, 0.0, 2.0))
+        for index in range(24)
+    ]
+    bodies[0].rotation_euler = (0.2, -0.35, 0.5)
+    for obj in bodies:
+        collection.objects.link(obj)
+    scope = make_scope(
+        collections=[collection],
+        include_rigid_body=True,
+        include_rigid_constraint=False,
+        include_passive_collision=False,
+        include_bone_collision=False,
+    )
+    assert scope.collections == (collection,)
+    assert scope.include_hidden is True
+    assert len(scope.collection_batches) == 1
+    assert len(scope.collection_batches[0]["matrix_world_f32"]) == len(bodies) * 16
+    first_matrix_values = scope.collection_batches[0]["matrix_world_f32"][:16]
+    first_spec = build_rigid_body_spec(
+        bodies[0],
+        world_matrix_values=first_matrix_values,
+    )
+    expected_location, expected_rotation, _scale = bodies[0].matrix_world.decompose()
+    assert (
+        mathutils.Vector(first_spec.world_position) - expected_location
+    ).length < 1.0e-6
+    actual_rotation = mathutils.Quaternion(first_spec.world_rotation_wxyz)
+    assert abs(float(actual_rotation.dot(expected_rotation))) > 0.999999
+
+    scene.frame_set(1)
+    world, _, _, _restart = physicsWorldBegin(
+        cache_state=None,
+        scene=scene,
+        object_scope=scope,
+        enabled=True,
+    )
+    body_count, _step_ms = step_rigid_bodies(world, enabled=True)
+    assert body_count == len(bodies)
+    assert len(world.consume_exchange("physics_scope_collection_batch_v1")) == 1
+
+    writeback_module = _pw("writeback")
+    original_build_index = writeback_module._build_object_pointer_index
+    object_index_calls = 0
+
+    def counted_build_index():
+        nonlocal object_index_calls
+        object_index_calls += 1
+        return original_build_index()
+
+    writeback_module._build_object_pointer_index = counted_build_index
+    try:
+        written = writeback_module.writeback_rigid_body_deltas(world)
+    finally:
+        writeback_module._build_object_pointer_index = original_build_index
+
+    assert written == len(bodies)
+    assert object_index_calls == 0, "Collection 写回不能枚举全局 bpy.data.objects"
+    world.omni_cache_dispose("test_collection_batch_writeback")
+    _del(*bodies)
+    bpy.data.collections.remove(collection)
+
+
+def test_public_physics_scope_uses_recursive_collections():
+    scene = bpy.context.scene
+    parent = bpy.data.collections.new("T4A_PublicScopeParent")
+    child = bpy.data.collections.new("T4A_PublicScopeChild")
+    scene.collection.children.link(parent)
+    parent.children.link(child)
+    obj = _make_obj("T4A_PublicScopeObject", (0.0, 0.0, 2.0))
+    child.objects.link(obj)
+    obj.hide_viewport = True
+    physics_nodes = _pw("nodes")
+    try:
+        assert not hasattr(physics_nodes, "physicsObjectsFromCollection")
+        assert physics_nodes.physicsObjectsFromScene(scene) is scene.collection
+        assert physics_nodes.physicsObjectScope.__meta["always_run"] is True
+        scope = physics_nodes.physicsObjectScope(
+            [parent],
+            include_passive_collision=False,
+            include_bone_collision=False,
+            include_rigid_body=True,
+            include_rigid_constraint=False,
+        )
+        assert scope.collections == (parent,)
+        assert scope.objects == (obj,)
+        assert scope.include_hidden is True
+        try:
+            physics_nodes.physicsObjectScope(
+                [parent, child],
+                include_passive_collision=False,
+                include_bone_collision=False,
+                include_rigid_body=True,
+                include_rigid_constraint=False,
+            )
+        except ValueError as exc:
+            assert "同一对象" in str(exc)
+        else:
+            raise AssertionError("重叠 Collection 必须在对象范围构建阶段报错")
+    finally:
+        obj.hide_viewport = False
+        _del(obj)
+        bpy.data.collections.remove(parent)
+        if child.name in bpy.data.collections:
+            bpy.data.collections.remove(child)
+
+
 def test_contact_and_sensor_event_result_pipeline():
     scene = bpy.context.scene
     sensor = _make_obj("T4B_Sensor", (0, 0, 0), body_type="STATIC")
@@ -2366,6 +2477,8 @@ if __name__ == "__main__":
     check("刚体容量溢出隔离与诊断", test_rigid_body_capacity_overflow_isolated_and_reported)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("刚体写回线性索引", test_rigid_writeback_builds_linear_indexes_once)
+    check("Collection 批量刚体写回", test_rigid_collection_batch_writeback_avoids_global_object_index)
+    check("Collection 物理对象范围协议", test_public_physics_scope_uses_recursive_collections)
     check("contact + sensor event result pipeline", test_contact_and_sensor_event_result_pipeline)
     check("接触事件溢出有界与统计", test_contact_event_overflow_result_pipeline)
     check("rigid RayCast query pipeline", test_rigid_ray_cast_query_pipeline)

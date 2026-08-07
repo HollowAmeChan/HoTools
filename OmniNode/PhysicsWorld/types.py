@@ -26,11 +26,15 @@ class PhysicsObjectScope:
     本帧物理世界关心的对象范围。
 
     它是纯运行值，不实现 omni_cache_dispose，不跨帧持有资源。
-    include_hidden 由此处统一决定；Physics World Begin 不再接收同名参数。
+    collections 是公开节点输入的所有权边界；objects 是从各 Collection.all_objects
+    按输入顺序展开后的兼容只读视图。collection_batches 仅在当前图执行内有效。
     """
 
     __slots__ = (
         "objects",
+        "collections",
+        "collection_batches",
+        "collection_locations",
         "include_passive_collision",
         "include_bone_collision",
         "include_rigid_body",
@@ -48,8 +52,16 @@ class PhysicsObjectScope:
         include_rigid_constraint: bool = True,
         include_hidden: bool = False,
         include_field: bool = True,
+        collections: tuple = (),
+        collection_batches: tuple = (),
+        collection_locations: dict | None = None,
     ) -> None:
         self.objects: tuple = tuple(objects) if objects else ()
+        self.collections: tuple = tuple(collections) if collections else ()
+        self.collection_batches: tuple = (
+            tuple(collection_batches) if collection_batches else ()
+        )
+        self.collection_locations: dict = dict(collection_locations or {})
         self.include_passive_collision: bool = bool(include_passive_collision)
         self.include_bone_collision: bool = bool(include_bone_collision)
         self.include_rigid_body: bool = bool(include_rigid_body)
@@ -60,6 +72,7 @@ class PhysicsObjectScope:
     def __repr__(self) -> str:
         return (
             f"PhysicsObjectScope("
+            f"collections={len(self.collections)}, "
             f"objects={len(self.objects)}, "
             f"passive={self.include_passive_collision}, "
             f"bone={self.include_bone_collision}, "

@@ -93,14 +93,21 @@ Cache Read
 
 职责：
 
-- 显式定义当前物理世界能感知哪些 Blender object。
-- 决定是否包含简单碰撞、骨骼碰撞、刚体、约束、Field、隐藏对象等类别；Field 开关默认开启，关闭时 World Begin 必须发布本帧零场运行态而不是沿用旧场。
+- 显式定义当前物理世界能感知哪些 Blender Collection。公开节点只接收 Collection 列表，不接收裸 Object 列表。
+- 每个输入 Collection 统一使用 `Collection.all_objects` 递归展开子集合。范围内对象始终参与注册，不按视图隐藏状态过滤；公开节点不再提供递归或忽略隐藏开关。
+- 决定是否包含简单碰撞、骨骼碰撞、刚体、约束、Field 等类别；Field 开关默认开启，关闭时 World Begin 必须发布本帧零场运行态而不是沿用旧场。
 - 只表达扫描范围和依赖范围，不表达具体 solver 参数。
+- “物理对象-从场景”只返回 `Scene.collection`；不再保留“物理对象-从集合”中间节点，用户可以把 Collection 直接连入对象范围。
 
 边界：
 
 - object scope 不是 participant schema。
 - object scope 不承诺限制 Blender depsgraph 求值范围，只限制 OmniNode 自己的枚举、打包和物理输入范围。
+- 对象范围节点必须 `always_run`，Collection 成员新增、删除或重挂必须在下一次图求值时生成新 scope 和 scope key。
+- 多个顶层输入 Collection 不得递归包含同一个 Object；这种重叠必须在 scope 构建时明确报错，禁止靠覆盖顺序决定注册或写回所有权。
+- scope 按 Collection 保存同一帧的稳定 Object 顺序，并用 `foreach_get` 冻结基础 transform 缓冲。World Begin 把批次发布到 frame exchange；Object 写回优先对同一 Collection 使用 `foreach_set`，仅对实际变更的对象逐个 `update_tag()`。
+- Collection 批次只在当前图执行和当前帧有效。写回前必须核对 Collection 身份、对象数量和指针顺序；帧内编辑使批次失效时必须回退到稳定身份逐对象写回，不能把数据写给错位对象。
+- `PhysicsObjectScope.objects` 只作为公共 collector 和旧内部测试调用的展平兼容视图；新节点、solver 和性能路径不得把裸 Object 列表重新定义为公开范围协议。
 
 ### Simple Cloth Object
 
@@ -143,6 +150,7 @@ PropertyGroup 来补偿已经冻结的对象字段。缺失资源必须在对象
   动态刚体冷启动必须从 authored location/rotation/scale 重建无 delta 世界变换，
   不能假设清零 RNA 后 `matrix_world` 已在当前 frame callback 内同步刷新。
 - 准备 frame exchange registry：`world.clear_exchange()` 会在 Begin 清理上一轮帧级 scratch。
+- 在 world 替换、restart hook 完成后发布当前 scope 的 Collection 批次，保证注册与写回消费同一份帧内对象顺序和基础 transform；不得把批次发布到即将 dispose 的旧 world。
 
 不负责：
 

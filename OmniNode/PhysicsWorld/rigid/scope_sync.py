@@ -35,6 +35,18 @@ def _flatten(values) -> list:
     return result
 
 
+def _scope_world_matrix_values(scope: PhysicsObjectScope, obj):
+    """按 Scope 冻结的 Collection 顺序读取 Object.matrix_world 批量切片。"""
+    try:
+        object_ptr = int(obj.as_pointer())
+        batch_index, object_index = scope.collection_locations[object_ptr]
+        batch = scope.collection_batches[batch_index]
+        start = object_index * 16
+        return batch["matrix_world_f32"][start:start + 16]
+    except Exception:
+        return None
+
+
 def clear_scope_dynamic_rigid_deltas(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
     """
     在重启阶段收集规格前清理动态刚体对象 delta。
@@ -324,6 +336,7 @@ def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjec
                 spec = build_rigid_body_spec(
                     obj,
                     use_authored_transform=restart,
+                    world_matrix_values=_scope_world_matrix_values(scope, obj),
                 )
                 if spec is not None:
                     active_body_ids.add(spec.slot_id)

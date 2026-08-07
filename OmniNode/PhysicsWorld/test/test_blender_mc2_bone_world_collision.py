@@ -172,8 +172,12 @@ try:
     assert request.plan.active_partitions[0].setup_options.collided_by_groups == 0
 
     scene = bpy.context.scene
+    scope_collection = bpy.data.collections.new("MC2BoneWorldCollisionScope")
+    scene.collection.children.link(scope_collection)
+    scope_collection.objects.link(armature)
+    scope_collection.objects.link(collider)
     scope = physics_nodes.physicsObjectScope(
-        [armature, collider],
+        [scope_collection],
         include_passive_collision=True,
         include_bone_collision=True,
         include_rigid_body=False,
@@ -266,6 +270,8 @@ finally:
         world.omni_cache_dispose("MC2 shared simple collision cleanup")
     _remove_object(collider)
     _remove_object(armature)
+    if "scope_collection" in locals() and scope_collection.name in bpy.data.collections:
+        bpy.data.collections.remove(scope_collection)
     if registered_here:
         physics_blender.unregister()
 

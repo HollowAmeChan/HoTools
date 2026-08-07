@@ -4,8 +4,8 @@ physicsWorld.nodes — 对外暴露的通用函数节点
 按 @omni 装饰器格式定义，由 OmniNodeRegister 统一加载注册。
 
 节点列表（Phase 2 通用节点）：
-  physicsObjectsFromCollection — 从 Collection 收集对象列表
-  physicsObjectScope           — 构造 PhysicsObjectScope（objects 为多重输入，无需单独合并节点）
+  physicsObjectsFromScene      — 返回 Scene 根 Collection
+  physicsObjectScope           — 从 Collection 列表构造 PhysicsObjectScope
   physicsWorldBegin            — 物理世界帧开始
   physicsBake                  — 配置、触发并切换 Physics World Mesh Bake
   clearPhysicsBake             — 用户控制的 Action/Mesh Bake 清理
@@ -24,8 +24,7 @@ from ..config import nodeColors
 
 from .types import PhysicsObjectScope, PhysicsWorldCache
 from .scope import (
-    objects_from_collection,
-    objects_from_scene,
+    collection_from_scene,
     make_scope,
 )
 from .world import physicsWorldBegin as _begin, physicsWorldCommit as _commit
@@ -51,74 +50,45 @@ from .bake import (
 @omni(
     enable=True,
     always_run=True,
-    bl_label="物理对象-从集合",
+    bl_label="物理对象-从场景",
     base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
-    _INPUT_NAME=["集合", "递归子集合"],
-    _OUTPUT_NAME=["对象列表"],
+    _INPUT_NAME=["场景"],
+    _OUTPUT_NAME=["场景集合"],
     mute_passthrough=False,
     omni_description="""
-    从 Blender Collection 收集对象列表，供 Physics Object Scope 节点使用。
-
-    始终收集集合内的全部对象（含隐藏），不在此处过滤可见性。
-    可见性策略由下游的 Physics Object Scope 节点统一控制（include_hidden）。
+    返回 Scene 根 Collection，供物理对象范围节点使用。
+    根 Collection 的 all_objects 会递归覆盖整个场景，并作为批量读写边界。
     """,
 )
-def physicsObjectsFromCollection(
-    collection: bpy.types.Collection,
-    recursive: bool = True,
-) -> list[bpy.types.Object]:
-    if collection is None:
-        return []
-    return objects_from_collection(collection, recursive=bool(recursive), include_hidden=True)
+def physicsObjectsFromScene(
+    scene: bpy.types.Scene,
+) -> bpy.types.Collection:
+    return collection_from_scene(scene)
 
 
 @omni(
     enable=True,
     always_run=True,
-    bl_label="物理对象-从场景",
-    base_color=nodeColors.colorCat["GetData"],
-    is_output_node=False,
-    _INPUT_NAME=["场景", "包含隐藏"],
-    _OUTPUT_NAME=["对象列表"],
-    mute_passthrough=False,
-    omni_description="""
-    从整个场景收集所有对象，供 Physics Object Scope 节点使用。
-
-    无需指定集合，一键获取场景内全部对象，适合快速搭建或测试。
-    若需精确控制参与物理的对象范围，改用「物理对象-从集合」并手动组织集合。
-
-    包含隐藏=False（默认）时跳过不可见对象。
-    """,
-)
-def physicsObjectsFromScene(
-    scene: bpy.types.Scene,
-    include_hidden: bool = False,
-) -> list[bpy.types.Object]:
-    return objects_from_scene(scene, include_hidden=bool(include_hidden))
-
-
-@omni(
-    enable=True,
     bl_label="物理对象范围",
     base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        "对象",
+        "集合",
         "简单碰撞",
         "骨骼碰撞",
         "刚体",
         "刚体约束",
-        "包含隐藏",
         "场",
     ],
     _OUTPUT_NAME=["对象范围"],
     mute_passthrough=False,
     omni_description="""
-    把对象列表和物理类型过滤开关封装成 PhysicsObjectScope，传入物理世界-帧开始。
+    把 Collection 列表和物理类型过滤开关封装成 PhysicsObjectScope。
 
-    对象输入为多重输入（方形 socket），可同时接多个 Object 或多个对象列表，
-    无需单独的"合并列表"节点。内部自动去重展平。
+    集合输入为多重输入。每个 Collection 的 all_objects 都会递归展开，并作为
+    帧内批量读取和写回的固定边界。不同输入集合不能包含同一对象；范围内对象
+    始终参与物理，不受视图隐藏状态影响。
 
     各开关对齐 HoTools 统一物理面板的类型名称：
       简单碰撞 — 读取 hotools_object_collision.enabled
@@ -129,21 +99,20 @@ def physicsObjectsFromScene(
     """,
 )
 def physicsObjectScope(
-    objects: list[bpy.types.Object],
+    collections: list[bpy.types.Collection],
     include_passive_collision: bool = True,
     include_bone_collision: bool = True,
     include_rigid_body: bool = True,
     include_rigid_constraint: bool = True,
-    include_hidden: bool = False,
     include_field: bool = True,
 ) -> object:
     return make_scope(
-        objects=objects,
+        collections=collections,
         include_passive_collision=bool(include_passive_collision),
         include_bone_collision=bool(include_bone_collision),
         include_rigid_body=bool(include_rigid_body),
         include_rigid_constraint=bool(include_rigid_constraint),
-        include_hidden=bool(include_hidden),
+        include_hidden=True,
         include_field=bool(include_field),
     )
 

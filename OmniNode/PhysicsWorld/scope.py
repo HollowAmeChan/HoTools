@@ -10,7 +10,12 @@ physicsWorld.scope — object scope 工具函数
 from __future__ import annotations
 
 import bpy
+import numpy as np
 from .types import PhysicsObjectScope, PhysicsColliderSource
+
+
+PHYSICS_SCOPE_COLLECTION_BATCH_CHANNEL = "physics_scope_collection_batch_v1"
+PHYSICS_SCOPE_COLLECTION_BATCH_SCHEMA = "physics_scope_collection_batch_v1"
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +43,16 @@ def _obj_is_visible(obj) -> bool:
         return True  # 无法判断时默认视为可见，不跳过
 
 
+def _collection_is_valid(collection) -> bool:
+    if collection is None or not isinstance(collection, bpy.types.Collection):
+        return False
+    try:
+        collection.as_pointer()
+        return True
+    except (ReferenceError, AttributeError, RuntimeError):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Scope Key
 # ---------------------------------------------------------------------------
@@ -55,6 +70,11 @@ def build_scope_key(scope: PhysicsObjectScope) -> frozenset:
     include_flags 也纳入 key，flag 变化同样触发 restart。
     """
     entries: list[tuple] = []
+    for collection in getattr(scope, "collections", ()):
+        try:
+            entries.append(("collection", int(collection.as_pointer())))
+        except Exception:
+            entries.append(("collection_invalid", id(collection)))
     for obj in scope.objects:
         if not _obj_is_valid(obj):
             # 引用已失效：记录标记值而不是跳过
@@ -121,6 +141,107 @@ def dedupe_objects(objects) -> list:
         seen.add(ptr)
         result.append(obj)
     return result
+
+
+def _flatten_collections(collections) -> list:
+    result = []
+    stack = list(reversed(collections)) if isinstance(collections, (list, tuple)) else (
+        [collections] if collections is not None else []
+    )
+    while stack:
+        item = stack.pop()
+        if isinstance(item, (list, tuple)):
+            stack.extend(reversed(item))
+        else:
+            result.append(item)
+    return result
+
+
+def dedupe_collections(collections) -> list:
+    """展平 Collection 多重输入并按 datablock pointer 保序去重。"""
+    result = []
+    seen = set()
+    for collection in _flatten_collections(collections):
+        if not _collection_is_valid(collection):
+            continue
+        pointer = int(collection.as_pointer())
+        if pointer in seen:
+            continue
+        seen.add(pointer)
+        result.append(collection)
+    return result
+
+
+def _foreach_float(collection_objects, property_name: str, width: int) -> np.ndarray:
+    values = np.empty(len(collection_objects) * int(width), dtype=np.float32)
+    if values.size:
+        collection_objects.foreach_get(property_name, values)
+    return values
+
+
+def build_collection_batches(
+    collections,
+) -> tuple[tuple[dict, ...], dict[int, tuple[int, int]]]:
+    """冻结 Collection.all_objects 顺序及 Object 直接 transform 批量输入。"""
+    batches = []
+    locations = {}
+    seen_objects = {}
+    for batch_index, collection in enumerate(dedupe_collections(collections)):
+        collection_objects = collection.all_objects
+        objects = tuple(collection_objects)
+        object_ptrs = []
+        data_ptrs = []
+        for object_index, obj in enumerate(objects):
+            object_ptr = int(obj.as_pointer())
+            previous = seen_objects.get(object_ptr)
+            if previous is not None:
+                raise ValueError(
+                    "物理对象范围的多个 Collection 包含同一对象："
+                    f"{obj.name_full} 同时属于 {previous} 与 {collection.name_full}"
+                )
+            seen_objects[object_ptr] = collection.name_full
+            data = getattr(obj, "data", None)
+            data_ptr = int(data.as_pointer()) if data is not None else 0
+            object_ptrs.append(object_ptr)
+            data_ptrs.append(data_ptr)
+            locations[object_ptr] = (batch_index, object_index)
+
+        batches.append({
+            "schema": PHYSICS_SCOPE_COLLECTION_BATCH_SCHEMA,
+            "collection": collection,
+            "collection_ptr": int(collection.as_pointer()),
+            "objects": objects,
+            "object_ptrs": tuple(object_ptrs),
+            "data_ptrs": tuple(data_ptrs),
+            "object_count": len(objects),
+            "locations_f32": _foreach_float(collection_objects, "location", 3),
+            "rotation_eulers_f32": _foreach_float(
+                collection_objects, "rotation_euler", 3
+            ),
+            "rotation_quaternions_f32": _foreach_float(
+                collection_objects, "rotation_quaternion", 4
+            ),
+            "rotation_axis_angles_f32": _foreach_float(
+                collection_objects, "rotation_axis_angle", 4
+            ),
+            "matrix_world_f32": _foreach_float(collection_objects, "matrix_world", 16),
+        })
+    return tuple(batches), locations
+
+
+def publish_scope_collection_batches(world, scope: PhysicsObjectScope) -> int:
+    """把当前 Scope 的 Collection 批次发布为帧级 exchange。"""
+    count = 0
+    for batch in getattr(scope, "collection_batches", ()):
+        if not isinstance(batch, dict):
+            continue
+        world.publish_exchange(
+            batch,
+            channel=PHYSICS_SCOPE_COLLECTION_BATCH_CHANNEL,
+            producer="physics_object_scope",
+        )
+        count += 1
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -237,23 +358,51 @@ def objects_from_scene(scene, include_hidden: bool = False) -> list:
     return result
 
 
+def collection_from_scene(scene):
+    """返回 Scene 的根 Collection；其 all_objects 是完整场景批量边界。"""
+    if scene is None:
+        scene = getattr(bpy.context, "scene", None)
+    if scene is None or not isinstance(scene, bpy.types.Scene):
+        return None
+    return scene.collection
+
+
 # ---------------------------------------------------------------------------
 # 构造 PhysicsObjectScope
 # ---------------------------------------------------------------------------
 
 def make_scope(
-    objects,
+    objects=None,
     include_passive_collision: bool = True,
     include_bone_collision: bool = True,
     include_rigid_body: bool = True,
     include_rigid_constraint: bool = True,
     include_hidden: bool = False,
     include_field: bool = True,
+    *,
+    collections=None,
 ) -> PhysicsObjectScope:
-    """从 object 列表构造 PhysicsObjectScope，自动去重。"""
-    deduped = dedupe_objects(objects)
+    """从 Collection 批次构造 Scope；objects 参数仅保留给内部兼容调用。"""
+    collection_values = dedupe_collections(collections) if collections is not None else []
+    if collection_values:
+        collection_batches, collection_locations = build_collection_batches(
+            collection_values
+        )
+        deduped = [
+            obj
+            for batch in collection_batches
+            for obj in batch["objects"]
+        ]
+        include_hidden = True
+    else:
+        collection_batches = ()
+        collection_locations = {}
+        deduped = dedupe_objects(objects)
     return PhysicsObjectScope(
         objects=tuple(deduped),
+        collections=tuple(collection_values),
+        collection_batches=collection_batches,
+        collection_locations=collection_locations,
         include_passive_collision=include_passive_collision,
         include_bone_collision=include_bone_collision,
         include_rigid_body=include_rigid_body,

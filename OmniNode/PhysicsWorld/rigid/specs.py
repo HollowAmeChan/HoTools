@@ -13,6 +13,8 @@ Phase 4 先只收集和调试，不要求 Jolt step 和写回。
 
 from __future__ import annotations
 
+from ..utils.values import matrix_from_16
+
 
 def _normalized_simulation_order_key(value) -> tuple[str, ...]:
     if isinstance(value, str):
@@ -622,6 +624,17 @@ def _world_transform_wxyz(obj) -> tuple[tuple[float, float, float], tuple[float,
             return ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0))
 
 
+def _world_transform_wxyz_from_matrix_values(
+    values,
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    matrix = matrix_from_16(values)
+    loc, rot, _scale = matrix.decompose()
+    return (
+        (float(loc.x), float(loc.y), float(loc.z)),
+        (float(rot.w), float(rot.x), float(rot.y), float(rot.z)),
+    )
+
+
 def _authored_world_transform_wxyz(
     obj,
 ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
@@ -718,6 +731,7 @@ def build_rigid_body_spec(
     obj,
     *,
     use_authored_transform: bool = False,
+    world_matrix_values=None,
 ) -> RigidBodySpec | None:
     """
     从 obj.hotools_rigid_body PropertyGroup 构造 RigidBodySpec。
@@ -738,6 +752,13 @@ def build_rigid_body_spec(
     body_type = str(getattr(props, "body_type", "DYNAMIC"))
     if use_authored_transform and body_type == "DYNAMIC":
         world_position, world_rotation_wxyz = _authored_world_transform_wxyz(obj)
+    elif world_matrix_values is not None:
+        try:
+            world_position, world_rotation_wxyz = (
+                _world_transform_wxyz_from_matrix_values(world_matrix_values)
+            )
+        except Exception:
+            world_position, world_rotation_wxyz = _world_transform_wxyz(obj)
     else:
         world_position, world_rotation_wxyz = _world_transform_wxyz(obj)
     mass = max(float(getattr(props, "mass", 1.0)), 0.001)

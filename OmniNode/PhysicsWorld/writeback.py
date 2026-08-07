@@ -26,6 +26,10 @@ import numpy as np
 
 from .rigid.names import RIGID_BODY_SLOT_KIND
 from .rigid.results import index_rigid_transform_results_by_slot
+from .scope import (
+    PHYSICS_SCOPE_COLLECTION_BATCH_CHANNEL,
+    PHYSICS_SCOPE_COLLECTION_BATCH_SCHEMA,
+)
 from .simple_cloth.output import (
     clear_gn_local_offsets,
     ensure_gn_offset_output,
@@ -53,6 +57,13 @@ _BONE_RECEIPT_SERIAL_KEY = "_writeback_bone_receipt_serial"
 _GN_DIAGNOSTICS_KEY      = "_writeback_gn_diagnostics"
 _GN_RECEIPT_SERIAL_KEY   = "_writeback_gn_receipt_serial"
 _EULER_ORDERS = {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"}
+
+
+def _foreach_float(collection, property_name: str, width: int) -> np.ndarray:
+    values = np.empty(len(collection) * int(width), dtype=np.float32)
+    if values.size:
+        collection.foreach_get(property_name, values)
+    return values
 
 
 class WritebackCleanupResource:
@@ -303,6 +314,165 @@ def clear_all_deltas(world) -> None:
     reset_all_writebacks(world)
 
 
+def _batch_rotation_matrix(batch: dict, index: int, rotation_mode: str) -> mathutils.Matrix:
+    """从 Scope 冻结的基础旋转构造矩阵，不能读取本帧已写入的 delta 结果。"""
+    if rotation_mode == "QUATERNION":
+        values = batch["rotation_quaternions_f32"][index * 4:(index + 1) * 4]
+        quaternion = mathutils.Quaternion(tuple(float(value) for value in values))
+        return quaternion.to_matrix().to_4x4()
+    if rotation_mode == "AXIS_ANGLE":
+        values = batch["rotation_axis_angles_f32"][index * 4:(index + 1) * 4]
+        angle, axis_x, axis_y, axis_z = (float(value) for value in values)
+        axis = mathutils.Vector((axis_x, axis_y, axis_z))
+        if axis.length_squared <= 1.0e-20:
+            axis = mathutils.Vector((0.0, 0.0, 1.0))
+        return mathutils.Quaternion(axis, angle).to_matrix().to_4x4()
+    values = batch["rotation_eulers_f32"][index * 3:(index + 1) * 3]
+    order = rotation_mode if rotation_mode in _EULER_ORDERS else "XYZ"
+    euler = mathutils.Euler(tuple(float(value) for value in values), order)
+    return euler.to_matrix().to_4x4()
+
+
+def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> int | None:
+    """
+    用 Collection.all_objects 的 foreach_set 批量写入刚体 delta。
+
+    返回 None 表示批次已失效，调用方必须退回逐 Object 路径。批次只保存本帧
+    的稳定顺序；删除、重挂集合等编辑会使预检失败，而不是对错误目标批量写入。
+    """
+    batches = world.consume_exchange(
+        PHYSICS_SCOPE_COLLECTION_BATCH_CHANNEL,
+        producer="physics_object_scope",
+    )
+    if not batches:
+        return None
+
+    updates = {}
+    slots_by_object = {}
+    for slot in list(world.solver_slots.values()):
+        if slot.kind != RIGID_BODY_SLOT_KIND:
+            continue
+        spec = slot.data.get("spec")
+        if spec is None or spec.body_type != "DYNAMIC" or spec.obj is None:
+            continue
+        result = results_by_slot.get(slot.slot_id)
+        if result is None:
+            continue
+        object_ptr = int(getattr(spec, "obj_ptr", 0) or 0)
+        if object_ptr <= 0 or object_ptr in updates:
+            return None
+        updates[object_ptr] = (spec, result)
+        slots_by_object[object_ptr] = slot
+
+    if not updates:
+        return 0
+
+    batch_locations = {}
+    for batch in batches:
+        if (
+            not isinstance(batch, dict)
+            or batch.get("schema") != PHYSICS_SCOPE_COLLECTION_BATCH_SCHEMA
+        ):
+            return None
+        collection = batch.get("collection")
+        object_ptrs = tuple(batch.get("object_ptrs") or ())
+        objects = tuple(batch.get("objects") or ())
+        object_count = int(batch.get("object_count", -1))
+        try:
+            live_objects = collection.all_objects
+            if (
+                int(collection.as_pointer()) != int(batch.get("collection_ptr", 0))
+                or len(live_objects) != object_count
+                or len(objects) != object_count
+                or len(object_ptrs) != object_count
+                or tuple(int(obj.as_pointer()) for obj in live_objects) != object_ptrs
+            ):
+                return None
+        except Exception:
+            return None
+        for index, object_ptr in enumerate(object_ptrs):
+            if object_ptr in batch_locations:
+                return None
+            batch_locations[object_ptr] = (batch, index, live_objects)
+
+    if any(object_ptr not in batch_locations for object_ptr in updates):
+        return None
+
+    written = 0
+    for batch in batches:
+        collection = batch["collection"]
+        live_objects = collection.all_objects
+        object_ptrs = tuple(batch["object_ptrs"])
+        objects = tuple(batch["objects"])
+        active_indices = [
+            index for index, object_ptr in enumerate(object_ptrs)
+            if object_ptr in updates
+        ]
+        if not active_indices:
+            continue
+        try:
+            delta_location = _foreach_float(live_objects, "delta_location", 3)
+            delta_euler = _foreach_float(live_objects, "delta_rotation_euler", 3)
+            delta_quaternion = _foreach_float(live_objects, "delta_rotation_quaternion", 4)
+            original_location = delta_location.copy()
+            original_euler = delta_euler.copy()
+            original_quaternion = delta_quaternion.copy()
+
+            for index in active_indices:
+                object_ptr = object_ptrs[index]
+                spec, result = updates[object_ptr]
+                pos_arr = result.get("position")
+                rot_arr = result.get("rotation_wxyz")
+                if pos_arr is None or rot_arr is None:
+                    raise ValueError("刚体结果缺少 position 或 rotation_wxyz")
+                base_location = batch["locations_f32"][index * 3:(index + 1) * 3]
+                jolt_pos = mathutils.Vector(pos_arr)
+                delta_location[index * 3:(index + 1) * 3] = tuple(
+                    float(value) for value in jolt_pos - mathutils.Vector(base_location)
+                )
+
+                obj = objects[index]
+                rotation_mode = str(getattr(obj, "rotation_mode", "XYZ") or "XYZ")
+                rest_rot = _batch_rotation_matrix(batch, index, rotation_mode)
+                q = mathutils.Quaternion(tuple(float(value) for value in rot_arr))
+                delta_mat = rest_rot.inverted() @ q.to_matrix().to_4x4()
+                if rotation_mode in {"QUATERNION", "AXIS_ANGLE"}:
+                    delta_euler[index * 3:(index + 1) * 3] = (0.0, 0.0, 0.0)
+                    delta_quaternion[index * 4:(index + 1) * 4] = delta_mat.to_quaternion()
+                else:
+                    delta_quaternion[index * 4:(index + 1) * 4] = (1.0, 0.0, 0.0, 0.0)
+                    delta_euler[index * 3:(index + 1) * 3] = delta_mat.to_euler(
+                        rotation_mode if rotation_mode in _EULER_ORDERS else "XYZ"
+                    )
+
+            live_objects.foreach_set("delta_location", delta_location)
+            live_objects.foreach_set("delta_rotation_euler", delta_euler)
+            live_objects.foreach_set("delta_rotation_quaternion", delta_quaternion)
+        except Exception:
+            try:
+                live_objects.foreach_set("delta_location", original_location)
+                live_objects.foreach_set("delta_rotation_euler", original_euler)
+                live_objects.foreach_set("delta_rotation_quaternion", original_quaternion)
+            except Exception:
+                pass
+            return None
+
+        for index in active_indices:
+            object_ptr = object_ptrs[index]
+            spec, _result = updates[object_ptr]
+            slot = slots_by_object[object_ptr]
+            obj = objects[index]
+            try:
+                obj.update_tag()
+            except Exception:
+                pass
+            data_ptr = int(getattr(spec, "data_ptr", 0) or 0)
+            touched[(object_ptr, data_ptr)] = (object_ptr, data_ptr)
+            slot.data.pop("_writeback_error", None)
+            written += 1
+    return written
+
+
 def writeback_rigid_body_deltas(world) -> int:
     """
     从 world result stream 读取 DYNAMIC 刚体的当前变换，写入 Blender 对象的
@@ -328,6 +498,11 @@ def writeback_rigid_body_deltas(world) -> int:
         frame=frame,
         generation=generation,
     )
+
+    batch_written = _collection_batch_writeback(world, results_by_slot, touched)
+    if batch_written is not None:
+        return batch_written
+
     object_index = _build_object_pointer_index()
 
     for slot in list(world.solver_slots.values()):

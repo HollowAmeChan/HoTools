@@ -168,6 +168,7 @@ def _measure_case(
     title: str,
     objects: Sequence[object],
     scope,
+    scope_collection,
     warmup: int,
     samples: int,
     max_bodies: int,
@@ -250,6 +251,8 @@ def _measure_case(
         if world is not None:
             world.omni_cache_dispose(f"benchmark:{case_id}")
         harness._del(*objects)
+        if scope_collection.name in harness.bpy.data.collections:
+            harness.bpy.data.collections.remove(scope_collection)
     memory_after = _memory_snapshot()
     working_set_high_water = max(
         working_set_samples,
@@ -293,8 +296,12 @@ def _body_case(harness, count: int, args) -> dict[str, Any]:
     ]
     for obj in objects:
         obj.hotools_rigid_body.allow_sleeping = False
+    scope_collection = harness.bpy.data.collections.new(f"PERF_BodyScope_{count}")
+    harness.bpy.context.scene.collection.children.link(scope_collection)
+    for obj in objects:
+        scope_collection.objects.link(obj)
     scope = harness.make_scope(
-        objects,
+        collections=[scope_collection],
         include_rigid_body=True,
         include_rigid_constraint=False,
         include_passive_collision=False,
@@ -306,6 +313,7 @@ def _body_case(harness, count: int, args) -> dict[str, Any]:
         title=f"{count} 个无接触动态刚体",
         objects=objects,
         scope=scope,
+        scope_collection=scope_collection,
         warmup=args.warmup,
         samples=args.samples,
         max_bodies=count + 16,
@@ -338,8 +346,14 @@ def _constraint_case(harness, count: int, args) -> dict[str, Any]:
         constraint.hotools_rigid_constraint.distance_max = 1.0
         constraints.append(constraint)
     objects = bodies + constraints
+    scope_collection = harness.bpy.data.collections.new(
+        f"PERF_ConstraintScope_{count}"
+    )
+    harness.bpy.context.scene.collection.children.link(scope_collection)
+    for obj in objects:
+        scope_collection.objects.link(obj)
     scope = harness.make_scope(
-        objects,
+        collections=[scope_collection],
         include_rigid_body=True,
         include_rigid_constraint=True,
         include_passive_collision=False,
@@ -351,6 +365,7 @@ def _constraint_case(harness, count: int, args) -> dict[str, Any]:
         title=f"{count} 个 Distance 约束链",
         objects=objects,
         scope=scope,
+        scope_collection=scope_collection,
         warmup=args.warmup,
         samples=args.samples,
         max_bodies=count + 32,
@@ -372,8 +387,12 @@ def _contact_case(harness, count: int, args) -> dict[str, Any]:
     for body in bodies:
         body.hotools_rigid_body.allow_sleeping = False
     objects = [ground] + bodies
+    scope_collection = harness.bpy.data.collections.new(f"PERF_ContactScope_{count}")
+    harness.bpy.context.scene.collection.children.link(scope_collection)
+    for obj in objects:
+        scope_collection.objects.link(obj)
     scope = harness.make_scope(
-        objects,
+        collections=[scope_collection],
         include_rigid_body=True,
         include_rigid_constraint=False,
         include_passive_collision=False,
@@ -385,6 +404,7 @@ def _contact_case(harness, count: int, args) -> dict[str, Any]:
         title=f"{count} 个动态刚体接触地面",
         objects=objects,
         scope=scope,
+        scope_collection=scope_collection,
         warmup=args.warmup,
         samples=args.samples,
         max_bodies=count + 32,

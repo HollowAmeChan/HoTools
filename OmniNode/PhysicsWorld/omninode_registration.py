@@ -15,7 +15,6 @@ from . import registry
 
 
 _LIFECYCLE_FUNCTIONS = (
-    nodes.physicsObjectsFromCollection,
     nodes.physicsObjectsFromScene,
     nodes.physicsObjectScope,
     nodes.physicsWorldBegin,

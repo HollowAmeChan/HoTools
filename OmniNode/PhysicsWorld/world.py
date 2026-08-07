@@ -63,6 +63,7 @@ from .types import (
 from .scope import (
     build_scope_key,
     collect_physics_sources,
+    publish_scope_collection_batches,
 )
 from .utils.geometry import matrix_scale_radius
 from .world_time import scene_raw_dt_seconds, scene_timeline_time_seconds
@@ -507,6 +508,10 @@ def physicsWorldBegin(
         _run_world_restart_handlers(world, object_scope, restart_reason)
         if not jumped or previous_world is None:
             _run_scope_restart_handlers(world, object_scope)
+
+    # Collection 批次只在本帧有效；注册和写回共享同一对象顺序与基础变换。
+    # 必须放在 world 替换之后，不能发布到将被 dispose 的旧 world。
+    publish_scope_collection_batches(world, object_scope)
 
     # 收集 collider sources 并构建快照。
     # 连续帧才保留上帧紧凑快照；restart 帧不沿用旧 pose。

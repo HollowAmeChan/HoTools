@@ -45,8 +45,9 @@ blender_scene = importlib.import_module(
 
 def test_blender_object_sources_refresh_every_evaluation() -> None:
     """Blender 数据源必须主动感知场景对象的新增和删除。"""
-    assert physics_nodes.physicsObjectsFromCollection.__meta["always_run"] is True
+    assert not hasattr(physics_nodes, "physicsObjectsFromCollection")
     assert physics_nodes.physicsObjectsFromScene.__meta["always_run"] is True
+    assert physics_nodes.physicsObjectsFromScene(bpy.context.scene) is bpy.context.scene.collection
 
 
 def test_field_collector_never_forces_depsgraph_update() -> None:
@@ -146,7 +147,7 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
     old_fps_base = float(scene.render.fps_base)
     old_overlay = bool(getattr(scene, "ho_field_overlay_show", False))
     world = None
-    mesh = proxy = field = None
+    mesh = proxy = field = scope_collection = None
     physics_blender.register()
     try:
         scene.render.fps = 60
@@ -156,8 +157,12 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
         field_visualization.register()
         mesh, proxy = mixed._mesh_object("FieldDeleteRuntimeMesh")
         field = field_soak._field_empty("FieldDeleteRuntimeField")
+        scope_collection = bpy.data.collections.new("FieldDeleteRuntimeScope")
+        scene.collection.children.link(scope_collection)
+        scope_collection.objects.link(mesh)
+        scope_collection.objects.link(field)
         scope = physics_nodes.physicsObjectScope(
-            [mesh, field],
+            [scope_collection],
             include_passive_collision=False,
             include_bone_collision=False,
             include_rigid_body=False,
@@ -182,12 +187,19 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
         state = world.solver_slots[slot_id].data["owner"].inspect()["domain"]["kernel"]
         assert state["field_sample_count"] > 0
 
-        # 保留旧 scope 中的 stale RNA 引用，模拟用户在播放/求值期间直接删除 Empty。
+        # 删除后重新求值 Collection 范围，模拟 always_run 节点的实际行为。
         bpy.data.objects.remove(field, do_unlink=True)
         field = None
         bpy.context.view_layer.update()
 
         for frame in (3, 4, 5):
+            scope = physics_nodes.physicsObjectScope(
+                [scope_collection],
+                include_passive_collision=False,
+                include_bone_collision=False,
+                include_rigid_body=False,
+                include_rigid_constraint=False,
+            )
             scene.frame_set(frame)
             bpy.context.view_layer.update()
             world = _step(world, scene, scope, requests)
@@ -212,6 +224,8 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
             world.omni_cache_dispose("field_delete_runtime_cleanup")
         if field is not None and field.name in bpy.data.objects:
             bpy.data.objects.remove(field, do_unlink=True)
+        if scope_collection is not None and scope_collection.name in bpy.data.collections:
+            bpy.data.collections.remove(scope_collection)
         _remove_mesh(mesh)
         _remove_mesh(proxy)
         scene.render.fps = old_fps

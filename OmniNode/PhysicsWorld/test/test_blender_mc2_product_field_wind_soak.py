@@ -274,13 +274,17 @@ def _run_field_wind_matrix(run_index: int):
             x_offset=0.45,
         )
         field = _field_empty(f"MC2FieldWind{run_index}")
+        scope_collection = bpy.data.collections.new(f"MC2FieldScope{run_index}")
+        scene.collection.children.link(scope_collection)
+        for obj in (mesh, cloth, spring, field):
+            scope_collection.objects.link(obj)
         source_names = {
             "mesh_cloth": mesh.name_full,
             "bone_cloth": cloth.name_full,
             "bone_spring": spring.name_full,
         }
         scope = physics_nodes.physicsObjectScope(
-            [mesh, cloth, spring, field],
+            [scope_collection],
             include_passive_collision=False,
             include_bone_collision=False,
             include_rigid_body=False,
@@ -369,6 +373,8 @@ def _run_field_wind_matrix(run_index: int):
             if isinstance(world, world_types.PhysicsWorldCache):
                 world.omni_cache_dispose(f"mc2_field_wind_{scenario}_cleanup")
         _remove_empty(field)
+        if "scope_collection" in locals() and scope_collection.name in bpy.data.collections:
+            bpy.data.collections.remove(scope_collection)
         bone_soak._remove_armature(cloth)
         bone_soak._remove_armature(spring)
         mixed._remove_mesh(mesh)
