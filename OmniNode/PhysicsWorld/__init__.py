@@ -22,6 +22,7 @@ from .types import (
     PhysicsObjectScope,
     PhysicsFrameContext,
     PhysicsColliderSource,
+    PhysicsResultBatch,
     PhysicsSolverSlot,
     PhysicsWorldCache,
 )
@@ -168,6 +169,7 @@ __all__ = [
     "PhysicsObjectScope",
     "PhysicsFrameContext",
     "PhysicsColliderSource",
+    "PhysicsResultBatch",
     "PhysicsSolverSlot",
     "PhysicsWorldCache",
     # scope

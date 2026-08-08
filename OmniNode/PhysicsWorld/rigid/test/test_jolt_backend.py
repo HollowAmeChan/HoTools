@@ -238,6 +238,8 @@ def test_bulk_body_state_and_contact_recording_switch():
     jw = hotools_jolt.JoltWorld(32, 64, 32)
     assert not hasattr(jw, "get_contact_events")
     assert hasattr(jw, "get_contact_events_numpy")
+    assert jw.contact_event_count == 0
+    assert jw.sensor_event_count == 0
     ground = jw.add_body("STATIC", 0, 0.5, 0.0,
                          (0, 0, 0), (1, 0, 0, 0),
                          "BOX", 0.5, 0.5, (5.0, 5.0, 0.1))
@@ -260,6 +262,8 @@ def test_bulk_body_state_and_contact_recording_switch():
     contact_snapshot = jw.get_contact_events_numpy()
     assert len(contact_snapshot) == 14
     assert len(contact_snapshot[0]) == 0
+    assert jw.contact_event_count == 0
+    assert jw.sensor_event_count == 0
     jw.set_record_contact_events(True)
     jw.clear()
 

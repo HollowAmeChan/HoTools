@@ -31,7 +31,7 @@ RIGID_SOLVER_DECLARATION = {
     "solver_id": RIGID_SOLVER_ID,
     "slot_kind": [RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND],
     "stage": "Jolt 刚体纵向切片",
-    "native_strategy": "Jolt 后端 + Python 世界胶水层",
+    "native_strategy": "Jolt 原生世界 + PhysicsResultBatch 惰性批结果；Python 只负责注册、调度与按需物化",
     "nodes": [
         "刚体模拟步",
         "刚体结果-读取状态",
@@ -97,7 +97,7 @@ RIGID_SOLVER_DECLARATION = {
         "body_spec": "generation 或签名变化时同步到 Jolt",
         "constraint_spec": "generation 或签名变化时同步到 Jolt",
         "breakable_constraint": "每次真实 Jolt step 后按 lambda_max_abs 与冲量阈值判定；same-frame 不重复判定",
-        "contact_events": "native callback 只缓存数值快照；每次真实 step 发布，same-frame 重发上一快照",
+        "contact_events": "native callback 缓存数值快照并维护 O(1) 计数；solver 登记惰性批，消费者读取时才映射 slot/物化，same-frame 无变化时重发上一快照",
         "queries": "节点执行时查询当前 Jolt world，不推进时间；native handle 在 adapter 内转换为 slot_id",
         "kinematic_pose": "同帧请求时只更新运动学姿态，不推进时间",
         "jolt_world_settings": "按隐式对象签名同步到 Jolt 适配器",

@@ -343,6 +343,10 @@ public:
             mActiveContacts.clear();
             mDroppedEventCount = 0;
             mPendingDroppedEventCount = 0;
+            mStepEventCount = 0;
+            mPendingEventCount = 0;
+            mStepSensorEventCount = 0;
+            mPendingSensorEventCount = 0;
             mRecordingStep = false;
         }
     }
@@ -365,6 +369,10 @@ public:
             mActiveContacts.clear();
             mDroppedEventCount = 0;
             mPendingDroppedEventCount = 0;
+            mStepEventCount = 0;
+            mPendingEventCount = 0;
+            mStepSensorEventCount = 0;
+            mPendingSensorEventCount = 0;
             mRecordingStep = false;
             return;
         }
@@ -372,6 +380,10 @@ public:
         mPendingEvents.clear();
         mDroppedEventCount = mPendingDroppedEventCount;
         mPendingDroppedEventCount = 0;
+        mStepEventCount = mPendingEventCount;
+        mPendingEventCount = 0;
+        mStepSensorEventCount = mPendingSensorEventCount;
+        mPendingSensorEventCount = 0;
         mRecordingStep = true;
     }
 
@@ -388,6 +400,10 @@ public:
         mBodyHandles.clear();
         mDroppedEventCount = 0;
         mPendingDroppedEventCount = 0;
+        mStepEventCount = 0;
+        mPendingEventCount = 0;
+        mStepSensorEventCount = 0;
+        mPendingSensorEventCount = 0;
         mRecordingStep = false;
     }
 
@@ -399,6 +415,16 @@ public:
     uint32_t GetDroppedEventCount() {
         lock_guard lock(mMutex);
         return mDroppedEventCount;
+    }
+
+    uint32_t GetEventCount() {
+        lock_guard lock(mMutex);
+        return mStepEventCount;
+    }
+
+    uint32_t GetSensorEventCount() {
+        lock_guard lock(mMutex);
+        return mStepSensorEventCount;
     }
 
     void OnContactAdded(
@@ -512,10 +538,18 @@ private:
     void AppendEvent(ContactEventRecord event) {
         std::vector<ContactEventRecord>& target = mRecordingStep ? mStepEvents : mPendingEvents;
         uint32_t& dropped = mRecordingStep ? mDroppedEventCount : mPendingDroppedEventCount;
-        if (target.size() < MAX_EVENTS_PER_STEP)
+        uint32_t& count = mRecordingStep ? mStepEventCount : mPendingEventCount;
+        uint32_t& sensor_count = (
+            mRecordingStep ? mStepSensorEventCount : mPendingSensorEventCount
+        );
+        if (target.size() < MAX_EVENTS_PER_STEP) {
+            if (event.is_sensor)
+                ++sensor_count;
+            ++count;
             target.push_back(std::move(event));
-        else
+        } else {
             ++dropped;
+        }
     }
 
     Mutex mMutex;
@@ -525,6 +559,10 @@ private:
     std::vector<ContactEventRecord> mPendingEvents;
     uint32_t mDroppedEventCount = 0;
     uint32_t mPendingDroppedEventCount = 0;
+    uint32_t mStepEventCount = 0;
+    uint32_t mPendingEventCount = 0;
+    uint32_t mStepSensorEventCount = 0;
+    uint32_t mPendingSensorEventCount = 0;
     bool mRecordingStep = false;
     std::atomic<bool> mRecordingEnabled{true};
 };
@@ -1842,6 +1880,14 @@ public:
         return mContactListener.GetDroppedEventCount();
     }
 
+    uint32_t contact_event_count() {
+        return mContactListener.GetEventCount();
+    }
+
+    uint32_t sensor_event_count() {
+        return mContactListener.GetSensorEventCount();
+    }
+
     void set_record_contact_events(bool enabled) {
         mContactListener.SetRecordingEnabled(enabled);
     }
@@ -2208,6 +2254,8 @@ NB_MODULE(hotools_jolt, m) {
         .def_prop_ro("body_count",       &JoltWorld::body_count)
         .def_prop_ro("constraint_count", &JoltWorld::constraint_count)
         .def_prop_ro("contact_event_overflow_count", &JoltWorld::contact_event_overflow_count)
+        .def_prop_ro("contact_event_count", &JoltWorld::contact_event_count)
+        .def_prop_ro("sensor_event_count", &JoltWorld::sensor_event_count)
         .def("set_record_contact_events", &JoltWorld::set_record_contact_events,
              nb::arg("enabled"),
              "启用或关闭原生接触事件记录。")

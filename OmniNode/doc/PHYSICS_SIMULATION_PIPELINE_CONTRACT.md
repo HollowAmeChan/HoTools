@@ -649,9 +649,9 @@ Geometry Nodes 写回只表示“目标 Mesh 在本帧的最终顶点 offset”�
 
 result channel 的结构约定（以 transform + stats 双通道为例）：
 
-- solver 向 `world.result_streams["<domain>_transform"]` 写每个模拟体的本帧结果，是纯快照 dict/tuple 数据（如 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`），不含 backend handle。
+- solver 向 `world.result_streams["<domain>_transform"]` 发布每个模拟体的本帧逻辑结果；`consume_results()` 的公开返回仍是纯快照 dict/tuple 数据（如 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`），不含 backend handle。高数量域允许在 stream 存储层使用 `PhysicsResultBatch` 保留冻结列式/native 快照并按需物化；批 materializer 不得访问 RNA 或推进 solver，逻辑计数、frame/generation 过滤、same-frame 和 clear/dispose 语义必须与逐项发布相同。
 - solver 同时向 `world.result_streams["<domain>_solver_stats"]` 写本次调用统计（body/constraint 数、step_ms、dt、substeps、same_frame、各类 error count），供 debug/观察节点读取。
-- contact/sensor 等事件输出写入声明过的 result channel，例如 rigid/Jolt 的 `rigid_contact_event` / `rigid_sensor_event`。事件只含稳定 slot id 与普通数值快照，不含 backend body handle；same-frame 重发上一真实 step 快照，不重新触发 native step。
+- contact/sensor 等事件输出写入声明过的 result channel，例如 rigid/Jolt 的 `rigid_contact_event` / `rigid_sensor_event`。事件只含稳定 slot id 与普通数值快照，不含 backend body handle；允许先登记 native 批快照并在消费者读取时映射 slot/展开事件。same-frame 只重发上一真实 step 的同一冻结快照，不重新触发 native step；同帧 body/constraint/command 状态发生变化时必须先使旧事件批失效。
 - rigid/Jolt 在已有 `previous_frame` 的 restart 帧只重建 native world 并发布冷启动姿态，不能执行数值 step；否则统一写回刚清零的 `Object.delta_*` 会被重力等首步结果立即重新污染。首次初始化没有旧帧反馈，可以保持既有首帧推进语义。
 - writeback、solver 自有 debug draw、read-state 节点只消费 result stream 或本 solver 的 slot debug 快照，不读 backend-private handle（如 Jolt adapter 内部字段）。
 - 需要backend中间态的solver debug采用隐式请求：debug节点自动发现world内所属slot，只登记scope/过滤器。substep中间态在下一次真实推进后冻结；若某层观察的是scheduler前的新帧判定（例如Teleport阈值/触发），domain必须显式声明其producer阶段，并允许在zero-substep新帧冻结。same-frame和没有到达声明生产阶段的调用不得伪造新快照。

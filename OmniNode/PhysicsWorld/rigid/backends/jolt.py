@@ -271,7 +271,9 @@ class JoltAdapter:
         self._body_slots_by_handle: dict[int, str] = {}
         self._constraint_handles: dict[str, int] = {}
         self.last_step_ms: float = 0.0
-        self.last_contact_events: list[dict] = []
+        self.last_contact_events: list[dict] | None = []
+        self.last_contact_event_count: int = 0
+        self.last_sensor_event_count: int = 0
         self.last_contact_event_overflow: int = 0
         self.last_command_count: int = 0
         self.last_command_failed: int = 0
@@ -306,7 +308,29 @@ class JoltAdapter:
 
     def _clear_contact_events(self) -> None:
         self.last_contact_events = []
+        self.last_contact_event_count = 0
+        self.last_sensor_event_count = 0
         self.last_contact_event_overflow = 0
+
+    def _stage_contact_events(self) -> None:
+        """只登记 native 本帧快照；逐事件 Python 数据延迟到消费者读取。"""
+        if not self.jolt_record_contact_events:
+            self._clear_contact_events()
+            return
+        self.last_contact_events = None
+        try:
+            self.last_contact_event_count = int(
+                getattr(self._jw, "contact_event_count")
+            )
+            self.last_sensor_event_count = int(
+                getattr(self._jw, "sensor_event_count")
+            )
+            self.last_contact_event_overflow = int(
+                getattr(self._jw, "contact_event_overflow_count", 0) or 0
+            )
+        except Exception:
+            # 旧 ABI 没有 O(1) 计数时保守物化；正式构建不会进入此路径。
+            self._refresh_contact_events()
 
     # ---- Body 管理 --------------------------------------------------------
 
@@ -908,14 +932,15 @@ class JoltAdapter:
         """执行模拟步，返回耗时（ms）。"""
         if timing is None:
             self.last_step_ms = self._jw.step(dt, substeps)
-            self._refresh_contact_events()
+            self._stage_contact_events()
             return self.last_step_ms
         started = time.perf_counter()
         self.last_step_ms = self._jw.step(dt, substeps)
         timing["native_step_ms"] = (time.perf_counter() - started) * 1000.0
         started = time.perf_counter()
-        self._refresh_contact_events()
-        timing["contact_snapshot_decode_ms"] = (time.perf_counter() - started) * 1000.0
+        self._stage_contact_events()
+        timing["contact_snapshot_stage_ms"] = (time.perf_counter() - started) * 1000.0
+        timing["contact_snapshot_decode_ms"] = 0.0
         return self.last_step_ms
 
     def _refresh_contact_events(self) -> None:
@@ -923,8 +948,12 @@ class JoltAdapter:
         if not self.jolt_record_contact_events:
             self._clear_contact_events()
             return
+        if self.last_contact_events is not None:
+            return
         if not hasattr(self._jw, "get_contact_events_numpy"):
             self.last_contact_events = []
+            self.last_contact_event_count = 0
+            self.last_sensor_event_count = 0
             self.last_contact_event_overflow = 0
             return
 
@@ -976,6 +1005,10 @@ class JoltAdapter:
                         "sub_shape_b": int(sub_shapes_b[index]),
                     })
                 self.last_contact_events = events
+                self.last_contact_event_count = len(events)
+                self.last_sensor_event_count = sum(
+                    1 for event in events if bool(event.get("is_sensor", False))
+                )
                 self.last_contact_event_overflow = int(
                     getattr(self._jw, "contact_event_overflow_count", 0) or 0
                 )
@@ -986,7 +1019,8 @@ class JoltAdapter:
         """返回上一真实模拟步的 HoTools 接触事件快照。"""
         if not self.jolt_record_contact_events:
             return []
-        return self.last_contact_events
+        self._refresh_contact_events()
+        return self.last_contact_events or []
 
     # ---- Writeback -------------------------------------------------------
 

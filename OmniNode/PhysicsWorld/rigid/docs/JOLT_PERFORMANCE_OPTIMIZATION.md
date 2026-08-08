@@ -27,7 +27,8 @@ Python 负责物理世界注册、调度和结果发布，native 负责 Jolt 运
 | `constraint_sync_ms` | 显式约束同步 |
 | `command_apply_ms` | 当前帧刚体命令交换区消费 |
 | `native_step_ms` | `JoltWorld.step` 调用边界，包含 Jolt 原生模拟 |
-| `contact_snapshot_decode_ms` | 接触列式快照读取、句柄映射和 Python 事件字典构建 |
+| `contact_snapshot_stage_ms` | O(1) 读取 native 接触/传感器事件数量并登记本帧快照 |
+| `contact_snapshot_decode_ms` | solver 热路径不再解码，固定为 0；真实解码只发生在结果消费者读取时 |
 | `breakable_policy_ms` | 可断裂约束策略 |
 | `transform_publish_ms` | 刚体 transform 结果发布 |
 | `constraint_publish_ms` | 约束状态结果发布 |
@@ -76,6 +77,18 @@ Python 负责物理世界注册、调度和结果发布，native 负责 Jolt 运
 - solver velocity/position iterations、sleep、broad phase 和 contact cache 设置。
 
 所有候选都必须保留结果流语义、重置语义和调试可观测性；不能以绕过 PhysicsWorld 或直接写 Blender 对象换取局部 benchmark 数字。
+
+## 6. Native 惰性批结果（2026-08-09）
+
+Jolt transform 与 contact/sensor 已改用 Physics World 通用 `PhysicsResultBatch`：
+
+- transform 每帧只从 native 取得一次列式数组，solver 在结果流登记一个批 owner；Collection 写回直接消费同一列并在 `hotools_native.compute_rigid_delta_columns_v2` 中反算 delta，不创建逐刚体结果字典；读取状态、调试或通用结果节点实际消费时才展开公开 dict。
+- contact listener 在 C++ 侧维护本步事件数、sensor 数和 overflow 数。solver 只读取三个 O(1) 计数并登记 native 快照；`get_contact_events_numpy()`、handle 到 slot 映射和逐事件 dict 只在 contact/sensor 消费者真实读取时执行，两个通道共享一次解码缓存。
+- same-frame 无待处理工作时可重发同一批快照；同帧结构或命令发生变化时旧接触批立即失效。restart/dispose 仍沿公共 Physics World 生命周期清理。
+
+Blender 5.2 后台、1536 个动态刚体接触地面的 25 帧探索基准（约 2988–2994 条接触事件）：pipeline P50 `30.68 ms`，writeback P50 `7.99 ms`，native step P50 `2.88 ms`。改动前同一类基线分别约为 `43.48 ms`、`20.26 ms`、`2.94 ms`。
+
+开启热点计时的独立复核中，`transform_publish_ms` P50 为 `1.00 ms`，`contact_snapshot_stage_ms` P50 为 `0.0066 ms`，`contact_publish_ms` P50 为 `0.0077 ms`，`contact_snapshot_decode_ms` 为 `0`。这说明 Jolt 模拟步节点内原先主要的逐项 Python 物化已经从默认路径移除；剩余 pipeline 时间主要位于 Physics World Begin/Commit、Blender frame/depsgraph 和写回，而不是 Jolt result publication。
 ## 4.2 5.2 synthetic contact baseline (2026-08-08)
 
 Using Blender 5.2 background mode and the existing rigid benchmark with 1536 bodies:

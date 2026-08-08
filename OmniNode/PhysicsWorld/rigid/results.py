@@ -8,6 +8,8 @@ these results instead of reaching into backend-private Jolt handles.
 
 from __future__ import annotations
 
+from ..types import PhysicsResultBatch
+
 from .names import (
     RIGID_CONTACT_EVENT_CHANNEL,
     RIGID_CONSTRAINT_STATE_CHANNEL,
@@ -21,6 +23,75 @@ from .names import (
 # 当前帧列式结果的临时缓存键。它只服务于同一 PhysicsWorld 写回事务，
 # 不属于公开结果协议，world dispose 时随 backend_resources 一起清理。
 RIGID_TRANSFORM_COLUMNS_CACHE_KEY = "_rigid_transform_columns"
+
+
+def publish_rigid_transform_batch(
+    world,
+    *,
+    entries,
+    columns,
+    frame: int,
+    generation: int,
+    backend: str = "jolt",
+) -> PhysicsResultBatch | None:
+    """登记一份列式 transform 快照，按需展开公开逐刚体结果。"""
+    frozen_entries = tuple(entries)
+    (
+        positions,
+        rotations,
+        linear_velocities,
+        angular_velocities,
+        active_values,
+        sleeping_values,
+        _slot_indices,
+    ) = columns
+
+    def materialize():
+        results = []
+        for slot_id, obj_ptr, data_ptr, body_type, native_index in frozen_entries:
+            position_offset = int(native_index) * 3
+            rotation_offset = int(native_index) * 4
+            results.append({
+                "backend": str(backend),
+                "slot_id": str(slot_id),
+                "obj_ptr": int(obj_ptr),
+                "data_ptr": int(data_ptr),
+                "body_type": str(body_type),
+                "position": (
+                    float(positions[position_offset]),
+                    float(positions[position_offset + 1]),
+                    float(positions[position_offset + 2]),
+                ),
+                "rotation_wxyz": (
+                    float(rotations[rotation_offset]),
+                    float(rotations[rotation_offset + 1]),
+                    float(rotations[rotation_offset + 2]),
+                    float(rotations[rotation_offset + 3]),
+                ),
+                "linear_velocity": (
+                    float(linear_velocities[position_offset]),
+                    float(linear_velocities[position_offset + 1]),
+                    float(linear_velocities[position_offset + 2]),
+                ),
+                "angular_velocity": (
+                    float(angular_velocities[position_offset]),
+                    float(angular_velocities[position_offset + 1]),
+                    float(angular_velocities[position_offset + 2]),
+                ),
+                "active": bool(active_values[native_index]),
+                "sleeping": bool(sleeping_values[native_index]),
+            })
+        return results
+
+    return world.publish_result_batch(PhysicsResultBatch(
+        channel=RIGID_TRANSFORM_CHANNEL,
+        solver=RIGID_SOLVER_ID,
+        frame=frame,
+        generation=generation,
+        item_count=len(frozen_entries),
+        materializer=materialize,
+        schema="rigid_transform_native_batch_v1",
+    ))
 
 
 def _float3(value) -> tuple[float, float, float]:
@@ -406,6 +477,77 @@ def iter_rigid_contact_event_results(
 def clear_rigid_contact_event_results(world) -> None:
     world.clear_results(RIGID_CONTACT_EVENT_CHANNEL, solver=RIGID_SOLVER_ID)
     world.clear_results(RIGID_SENSOR_EVENT_CHANNEL, solver=RIGID_SOLVER_ID)
+
+
+class _RigidContactFrameSnapshot:
+    """共享一次 native 接触读取，供普通/传感器两个公开通道按需展开。"""
+
+    def __init__(self, adapter, frame: int, generation: int, backend: str) -> None:
+        self.adapter = adapter
+        self.frame = int(frame)
+        self.generation = int(generation)
+        self.backend = str(backend)
+        self._events: tuple[dict, ...] | None = None
+
+    def events(self) -> tuple[dict, ...]:
+        if self._events is None:
+            self._events = tuple(self.adapter.get_contact_events())
+        return self._events
+
+    def materialize(self, channel: str) -> list[dict]:
+        sensor_only = channel == RIGID_SENSOR_EVENT_CHANNEL
+        return [
+            make_rigid_contact_event_result(
+                event,
+                frame=self.frame,
+                generation=self.generation,
+                event_index=event_index,
+                channel=channel,
+                backend=self.backend,
+            )
+            for event_index, event in enumerate(self.events())
+            if not sensor_only or bool(event.get("is_sensor", False))
+        ]
+
+
+def publish_rigid_contact_event_batches(
+    world,
+    adapter,
+    *,
+    frame: int,
+    generation: int,
+    contact_count: int,
+    sensor_count: int,
+    backend: str = "jolt",
+) -> tuple[int, int]:
+    """登记 native 接触快照，不在 solver 热路径创建逐事件 Python dict。"""
+    clear_rigid_contact_event_results(world)
+    contact_count = max(0, int(contact_count))
+    sensor_count = max(0, int(sensor_count))
+    if contact_count <= 0:
+        return 0, 0
+
+    snapshot = _RigidContactFrameSnapshot(adapter, frame, generation, backend)
+    world.publish_result_batch(PhysicsResultBatch(
+        channel=RIGID_CONTACT_EVENT_CHANNEL,
+        solver=RIGID_SOLVER_ID,
+        frame=frame,
+        generation=generation,
+        item_count=contact_count,
+        materializer=lambda: snapshot.materialize(RIGID_CONTACT_EVENT_CHANNEL),
+        schema="rigid_contact_native_batch_v1",
+    ))
+    if sensor_count > 0:
+        world.publish_result_batch(PhysicsResultBatch(
+            channel=RIGID_SENSOR_EVENT_CHANNEL,
+            solver=RIGID_SOLVER_ID,
+            frame=frame,
+            generation=generation,
+            item_count=sensor_count,
+            materializer=lambda: snapshot.materialize(RIGID_SENSOR_EVENT_CHANNEL),
+            schema="rigid_sensor_native_batch_v1",
+        ))
+    return contact_count, sensor_count
 
 
 def make_rigid_solver_stats_result(

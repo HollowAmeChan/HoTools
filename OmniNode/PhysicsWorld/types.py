@@ -18,6 +18,74 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# PhysicsResultBatch
+# ---------------------------------------------------------------------------
+
+class PhysicsResultBatch(dict):
+    """本帧结果流中的惰性批快照。
+
+    result stream 内只保存一个轻量批描述；普通消费者通过
+    :meth:`PhysicsWorldCache.consume_results` 读取时，才把它展开成既有的纯
+    dict item。materializer 不得读取 Blender RNA，也不得推进 solver 时间。
+    """
+
+    def __init__(
+        self,
+        *,
+        channel: str,
+        solver: str,
+        frame: int,
+        generation: int,
+        item_count: int,
+        materializer,
+        schema: str = "physics_result_batch_v1",
+    ) -> None:
+        super().__init__(
+            schema=str(schema),
+            channel=str(channel),
+            solver=str(solver),
+            frame=int(frame),
+            generation=int(generation),
+            item_count=max(0, int(item_count)),
+        )
+        if not callable(materializer):
+            raise TypeError("result batch materializer must be callable")
+        self._materializer = materializer
+        self._materialized_items: tuple[dict, ...] | None = None
+
+    @property
+    def logical_count(self) -> int:
+        return int(self.get("item_count", 0) or 0)
+
+    def materialize(self) -> tuple[dict, ...]:
+        cached = self._materialized_items
+        if cached is not None:
+            return cached
+
+        channel = str(self.get("channel") or "")
+        solver = str(self.get("solver") or "unknown")
+        frame = int(self.get("frame", 0) or 0)
+        generation = int(self.get("generation", 0) or 0)
+        items = []
+        for raw in self._materializer() or ():
+            if not isinstance(raw, dict):
+                continue
+            raw["channel"] = channel
+            raw.setdefault("solver", solver)
+            raw.setdefault("frame", frame)
+            raw.setdefault("generation", generation)
+            items.append(raw)
+        cached = tuple(items)
+        self._materialized_items = cached
+        self["item_count"] = len(cached)
+        return cached
+
+    def release_materialized(self) -> None:
+        """释放可重建的 Python item；原生/列式快照所有权不受影响。"""
+        self._materialized_items = None
+
+
+# ---------------------------------------------------------------------------
 # PhysicsObjectScope
 # ---------------------------------------------------------------------------
 
@@ -594,6 +662,16 @@ class PhysicsWorldCache:
         self.result_streams.setdefault(ch, []).append(item)
         return item
 
+    def publish_result_batch(self, batch: PhysicsResultBatch) -> PhysicsResultBatch | None:
+        """发布惰性批结果；逻辑 item 仅在消费者读取时物化。"""
+        if not isinstance(batch, PhysicsResultBatch):
+            return None
+        ch = str(batch.get("channel") or "").strip()
+        if not ch:
+            return None
+        self.result_streams.setdefault(ch, []).append(batch)
+        return batch
+
     def consume_results(
         self,
         channel: str | None = None,
@@ -603,19 +681,32 @@ class PhysicsWorldCache:
     ) -> list[dict]:
         """读取 result stream item。此操作不删除 item。"""
         if channel is None:
-            items = [item for bucket in self.result_streams.values() for item in bucket]
+            stored = [item for bucket in self.result_streams.values() for item in bucket]
         else:
-            items = list(self.result_streams.get(str(channel), ()))
-        if solver is not None:
-            items = [item for item in items if item.get("solver") == solver]
-        if frame is not None:
-            items = [item for item in items if int(item.get("frame", -1)) == int(frame)]
-        if generation is not None:
-            items = [item for item in items if int(item.get("generation", -1)) == int(generation)]
+            stored = list(self.result_streams.get(str(channel), ()))
+
+        items = []
+        for item in stored:
+            if solver is not None and item.get("solver") != solver:
+                continue
+            if frame is not None and int(item.get("frame", -1)) != int(frame):
+                continue
+            if generation is not None and int(item.get("generation", -1)) != int(generation):
+                continue
+            if isinstance(item, PhysicsResultBatch):
+                items.extend(item.materialize())
+            else:
+                items.append(item)
         return items
 
     def result_stream_counts(self) -> dict[str, int]:
-        return {str(channel): len(items) for channel, items in self.result_streams.items()}
+        return {
+            str(channel): sum(
+                item.logical_count if isinstance(item, PhysicsResultBatch) else 1
+                for item in items
+            )
+            for channel, items in self.result_streams.items()
+        }
 
     # ---- 持久引用门禁协议 ----------------------------------------------
 
@@ -727,6 +818,7 @@ class PhysicsWorldCache:
         except Exception as e:
             solver_declarations = {"error": str(e)}
 
+        result_channels = self.result_stream_counts()
         return {
             "kind": self.kind,
             "schema": self.schema,
@@ -751,8 +843,8 @@ class PhysicsWorldCache:
             "implicit_object_count": len(self.implicit_objects),
             "exchange_channels": self.exchange_counts(),
             "exchange_item_count": sum(len(items) for items in self.exchange.values()),
-            "result_channels": self.result_stream_counts(),
-            "result_item_count": sum(len(items) for items in self.result_streams.values()),
+            "result_channels": result_channels,
+            "result_item_count": sum(result_channels.values()),
             "solver_declarations": solver_declarations,
             "solver_slots": slot_snapshots,
             "backend_resources": list(self.backend_resources.keys()),

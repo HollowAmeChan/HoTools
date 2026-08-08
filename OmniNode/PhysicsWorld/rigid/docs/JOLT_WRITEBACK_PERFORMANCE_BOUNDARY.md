@@ -6,7 +6,7 @@
 
 ## 当前路径
 
-Jolt 的 `get_body_states_numpy()` 在求解器发布阶段返回连续的 position/rotation 列。solver 将本帧列和 `obj_ptr -> native row` 映射放入 `world.backend_resources["_rigid_transform_columns"]` 的瞬时缓存，写回仍然消费公开的逐 slot result stream；缓存只消除从结果字典重新组装 solved 数组的重复转换。
+Jolt 的 `get_body_states_numpy()` 在求解器发布阶段返回连续的 position/rotation 列。solver 将本帧列、逻辑 slot 条目和 `obj_ptr -> native row` 映射放入 `world.backend_resources["_rigid_transform_columns"]` 的瞬时缓存，并向 result stream 登记一个 `PhysicsResultBatch`。Collection 写回直接消费该列式快照，不再为了确认目标而预先物化逐 slot result；只有批预检或 native 反算失败时才通过公开结果回退。读取状态、debug 和导出调用 `consume_results()` 时仍获得原有逐 slot 纯数据结果。
 
 Collection 写回分为两条路径：
 

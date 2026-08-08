@@ -33,6 +33,8 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 
 每帧固定开销常来自快照深拷贝、递归扫描、重复格式转换和 Python/native 边界搬运。逐帧「读 -> 原地改 -> 写回同一对象」的大状态若走默认快照隔离，会重复复制和遍历。确认业务可以接受共享可变 owner 后，才使用第 7 节的零拷贝资源值语义；需要事务隔离的状态继续使用普通值快照。
 
+result stream 允许使用 `PhysicsResultBatch` 表达本帧只读的惰性批快照。存储层只保留一个带 channel/solver/frame/generation/逻辑数量的批 owner，`PhysicsWorldCache.consume_results()` 才把它展开为既有纯 dict item；`result_stream_counts()` 必须返回逻辑 item 数而不是批容器数。materializer 只能读取已经冻结的普通列或 native 快照，不得访问 Blender RNA、推进 solver、改变 frame/generation 或暴露 backend handle。writeback 若有经过验证的列式公共路径，可以直接消费同一批快照而不触发逐项物化；调试、读取状态和导出仍通过 `consume_results()` 获得普通结果。批 owner 只活在当前 world 的当前帧结果中，下一次 clear/restart/dispose 后不得继续使用。
+
 ### 引擎侧（engine/redraw）：固有成本，不该在 addon 里找优化
 
 帧调试器报告里的 `engine/redraw = frame - handler` 是**反推值**，覆盖 `frame_change_post` 返回后 Blender 在 C 层完成的 depsgraph 求值、modifier、视口重绘等工作。Python 计时无法继续拆分这些成本。先用隐藏对象、关闭视口、缩小测试资产等隔离实验判断成本归属；当 handler 已不是主要占比时，不要用 addon 层微优化解释 Blender 引擎成本。

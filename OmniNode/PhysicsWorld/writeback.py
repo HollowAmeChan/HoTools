@@ -473,7 +473,13 @@ def _native_rigid_delta_columns(
     )
 
 
-def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> int | None:
+def _collection_batch_writeback(
+    world,
+    results_by_slot: dict | None,
+    touched: dict,
+    *,
+    column_cache: dict | None = None,
+) -> int | None:
     """
     按 Collection 批次写入刚体 delta；稠密和稀疏目标都走列式 API。
 
@@ -501,20 +507,40 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
 
     updates = {}
     slots_by_object = {}
-    # 结果索引已经是本帧 solver 的发布集合，直接遍历它，避免再次扫描整个 slot 表。
-    for slot_id, result in results_by_slot.items():
-        slot = world.solver_slots.get(slot_id)
-        if slot is None or slot.kind != RIGID_BODY_SLOT_KIND:
-            continue
-        spec = slot.data.get("spec")
-        if spec is None or spec.body_type != "DYNAMIC" or spec.obj is None:
-            continue
-        object_ptr = int(getattr(spec, "obj_ptr", 0) or 0)
-        if object_ptr <= 0 or object_ptr in updates:
-            diagnostics["fallback_reason"] = "invalid_or_duplicate_target"
-            return None
-        updates[object_ptr] = (spec, result)
-        slots_by_object[object_ptr] = slot
+    if isinstance(column_cache, dict):
+        # Jolt 原生批快照已经给出本帧真实发布集合；这里不触发逐刚体结果物化。
+        for slot_id, object_ptr, _data_ptr, body_type, _native_index in (
+            column_cache.get("entries") or ()
+        ):
+            if str(body_type) != "DYNAMIC":
+                continue
+            slot = world.solver_slots.get(slot_id)
+            if slot is None or slot.kind != RIGID_BODY_SLOT_KIND:
+                continue
+            spec = slot.data.get("spec")
+            if spec is None or spec.obj is None:
+                continue
+            object_ptr = int(object_ptr or 0)
+            if object_ptr <= 0 or object_ptr in updates:
+                diagnostics["fallback_reason"] = "invalid_or_duplicate_target"
+                return None
+            updates[object_ptr] = (spec, None)
+            slots_by_object[object_ptr] = slot
+    else:
+        # 兼容非列式 backend：消费已经物化的公开结果索引。
+        for slot_id, result in (results_by_slot or {}).items():
+            slot = world.solver_slots.get(slot_id)
+            if slot is None or slot.kind != RIGID_BODY_SLOT_KIND:
+                continue
+            spec = slot.data.get("spec")
+            if spec is None or spec.body_type != "DYNAMIC" or spec.obj is None:
+                continue
+            object_ptr = int(getattr(spec, "obj_ptr", 0) or 0)
+            if object_ptr <= 0 or object_ptr in updates:
+                diagnostics["fallback_reason"] = "invalid_or_duplicate_target"
+                return None
+            updates[object_ptr] = (spec, result)
+            slots_by_object[object_ptr] = slot
 
     if not updates:
         return 0
@@ -581,7 +607,6 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
 
             native_columns = None
             try:
-                column_cache = world.backend_resources.get(RIGID_TRANSFORM_COLUMNS_CACHE_KEY)
                 fc = getattr(world, "frame_context", None)
                 if (
                     not isinstance(column_cache, dict)
@@ -598,7 +623,7 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
                 )
             except Exception:
                 diagnostics["fallback_reason"] = "native_delta_failed"
-                native_columns = None
+                return None
             if native_columns is not None:
                 (
                     native_locations,
@@ -712,12 +737,28 @@ def writeback_rigid_body_deltas(world) -> int:
     touched = _get_touched_set(world)
     updated = set()
     written = 0
+    column_cache = world.backend_resources.get(RIGID_TRANSFORM_COLUMNS_CACHE_KEY)
+    if (
+        not isinstance(column_cache, dict)
+        or int(column_cache.get("frame", -1)) != frame
+        or int(column_cache.get("generation", -1)) != generation
+    ):
+        column_cache = None
+
+    batch_written = _collection_batch_writeback(
+        world,
+        None,
+        touched,
+        column_cache=column_cache,
+    )
+    if batch_written is not None:
+        return batch_written
+
     results_by_slot = index_rigid_transform_results_by_slot(
         world,
         frame=frame,
         generation=generation,
     )
-
     batch_written = _collection_batch_writeback(world, results_by_slot, touched)
     if batch_written is not None:
         return batch_written

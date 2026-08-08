@@ -1510,6 +1510,10 @@ def test_rigid_collection_batch_writeback_avoids_global_object_index():
     body_count, _step_ms = step_rigid_bodies(world, enabled=True)
     assert body_count == len(bodies)
     assert len(world.consume_exchange("physics_scope_collection_batch_v1")) == 1
+    transform_batches = world.result_streams.get("rigid_transform", ())
+    assert len(transform_batches) == 1
+    assert transform_batches[0].get("schema") == "rigid_transform_native_batch_v1"
+    assert transform_batches[0]._materialized_items is None
 
     writeback_module = _pw("writeback")
     original_build_index = writeback_module._build_object_pointer_index
@@ -1532,6 +1536,9 @@ def test_rigid_collection_batch_writeback_avoids_global_object_index():
     assert diagnostics["dense_collection_count"] == 1
     assert diagnostics["dense_object_count"] == len(bodies)
     assert diagnostics["sparse_collection_count"] == 0
+    assert transform_batches[0]._materialized_items is None, (
+        "Collection 原生列式写回不应触发逐刚体结果物化"
+    )
     world.omni_cache_dispose("test_collection_batch_writeback")
     _del(*bodies)
     bpy.data.collections.remove(collection)
@@ -2485,7 +2492,12 @@ def test_scope_enumeration_order_is_simulation_stable():
                 bool(item["active"]),
                 bool(item["sleeping"]),
             )
-            for item in world.result_streams.get("rigid_transform", ())
+            for item in world.consume_results(
+                "rigid_transform",
+                solver="rigid",
+                frame=scene.frame_current,
+                generation=world.generation,
+            )
         ))
         constraint_states = tuple(sorted(
             (

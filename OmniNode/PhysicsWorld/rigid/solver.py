@@ -17,7 +17,6 @@ from .names import (
     RIGID_BODY_SLOT_KIND,
     RIGID_CONSTRAINT_REGISTER_WRITER_ID,
     RIGID_CONSTRAINT_SLOT_KIND,
-    RIGID_SENSOR_EVENT_CHANNEL,
 )
 from ..types import PhysicsWorldCache
 from .specs import (
@@ -33,12 +32,11 @@ from .implicit_objects import (
     sync_rigid_jolt_world_settings,
 )
 from .results import (
-    clear_rigid_contact_event_results,
     clear_rigid_constraint_state_results,
     clear_rigid_transform_results,
-    publish_owned_rigid_contact_event_result,
-    publish_rigid_contact_event_result,
+    publish_rigid_contact_event_batches,
     publish_rigid_constraint_state_result,
+    publish_rigid_transform_batch,
     publish_rigid_transform_result,
     publish_rigid_solver_stats_result,
     RIGID_TRANSFORM_COLUMNS_CACHE_KEY,
@@ -453,9 +451,6 @@ def _publish_rigid_transform_results(
     if timing is not None:
         timing["transform_state_fetch_ms"] = (time.perf_counter() - started) * 1000.0
 
-    # 保留当前帧的原生列式结果，供公共写回直接透传，避免从结果字典重新组装。
-    # 公开 result_stream 仍然按对象发布；缓存只在本次 world 生命周期内有效。
-    column_object_indices = {}
     if batch_columns is None:
         world.backend_resources.pop(RIGID_TRANSFORM_COLUMNS_CACHE_KEY, None)
 
@@ -463,6 +458,49 @@ def _publish_rigid_transform_results(
         ordered_slots = _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND)
     if timing is not None:
         started = time.perf_counter()
+
+    if batch_columns is not None:
+        slot_indices = batch_columns[6]
+        entries = []
+        column_object_indices = {}
+        for slot_id, slot in ordered_slots:
+            spec = slot.data.get("spec")
+            if spec is None:
+                continue
+            native_index = slot_indices.get(slot_id)
+            if native_index is None:
+                continue
+            object_ptr = int(getattr(spec, "obj_ptr", 0) or 0)
+            data_ptr = int(getattr(spec, "data_ptr", 0) or 0)
+            body_type = str(getattr(spec, "body_type", "DYNAMIC") or "DYNAMIC")
+            native_index = int(native_index)
+            entries.append((slot_id, object_ptr, data_ptr, body_type, native_index))
+            if object_ptr > 0:
+                column_object_indices[object_ptr] = native_index
+            slot.data.pop("_result_error", None)
+
+        world.backend_resources[RIGID_TRANSFORM_COLUMNS_CACHE_KEY] = {
+            "frame": frame,
+            "generation": int(world.generation),
+            "columns": batch_columns,
+            "entries": tuple(entries),
+            "object_indices": column_object_indices,
+        }
+        batch = publish_rigid_transform_batch(
+            world,
+            entries=entries,
+            columns=batch_columns,
+            frame=frame,
+            generation=world.generation,
+            backend=getattr(adapter, "BACKEND", "jolt"),
+        )
+        published = len(entries) if batch is not None else 0
+        if timing is not None:
+            timing["transform_result_loop_ms"] = (
+                time.perf_counter() - started
+            ) * 1000.0
+        return published
+
     for slot_id, slot in ordered_slots:
         spec = slot.data.get("spec")
         if spec is None:
@@ -474,48 +512,7 @@ def _publish_rigid_transform_results(
             angular_velocity = None
             active = None
             sleeping = None
-            if batch_columns is not None:
-                (
-                    positions,
-                    rotations,
-                    linear_velocities,
-                    angular_velocities,
-                    active_values,
-                    sleeping_values,
-                    slot_indices,
-                ) = batch_columns
-                native_index = slot_indices.get(slot_id)
-                if native_index is None:
-                    continue
-                object_ptr = int(getattr(spec, "obj_ptr", 0) or 0)
-                if object_ptr > 0:
-                    column_object_indices[object_ptr] = int(native_index)
-                position_offset = native_index * 3
-                rotation_offset = native_index * 4
-                pos_arr = (
-                    float(positions[position_offset]),
-                    float(positions[position_offset + 1]),
-                    float(positions[position_offset + 2]),
-                )
-                rot_arr = (
-                    float(rotations[rotation_offset]),
-                    float(rotations[rotation_offset + 1]),
-                    float(rotations[rotation_offset + 2]),
-                    float(rotations[rotation_offset + 3]),
-                )
-                linear_velocity = (
-                    float(linear_velocities[position_offset]),
-                    float(linear_velocities[position_offset + 1]),
-                    float(linear_velocities[position_offset + 2]),
-                )
-                angular_velocity = (
-                    float(angular_velocities[position_offset]),
-                    float(angular_velocities[position_offset + 1]),
-                    float(angular_velocities[position_offset + 2]),
-                )
-                active = bool(active_values[native_index])
-                sleeping = bool(sleeping_values[native_index])
-            elif batch_states is not None:
+            if batch_states is not None:
                 state = batch_states.get(slot_id)
                 if state is None:
                     continue
@@ -564,14 +561,6 @@ def _publish_rigid_transform_results(
 
     if timing is not None:
         timing["transform_result_loop_ms"] = (time.perf_counter() - started) * 1000.0
-
-    if batch_columns is not None:
-        world.backend_resources[RIGID_TRANSFORM_COLUMNS_CACHE_KEY] = {
-            "frame": frame,
-            "generation": int(world.generation),
-            "columns": batch_columns,
-            "object_indices": column_object_indices,
-        }
 
     return published
 
@@ -625,37 +614,24 @@ def _publish_rigid_contact_event_results(
     world: PhysicsWorldCache,
     adapter,
 ) -> tuple[int, int]:
-    """发布 native 轻量 contact 快照；sensor 同时进入独立结果通道。"""
+    """登记 native contact 批快照；逐事件结果只在消费者读取时展开。"""
     frame = int(getattr(world.frame_context, "frame", 0) or 0)
-    clear_rigid_contact_event_results(world)
-    contact_count = 0
-    sensor_count = 0
-    for event_index, event in enumerate(adapter.get_contact_events()):
-        result = publish_owned_rigid_contact_event_result(
-            world,
-            event=event,
-            frame=frame,
-            generation=world.generation,
-            event_index=event_index,
-            backend=getattr(adapter, "BACKEND", "jolt"),
-        )
-        if result is None:
-            continue
-        contact_count += 1
-        if not bool(event.get("is_sensor", False)):
-            continue
-        sensor_result = publish_rigid_contact_event_result(
-            world,
-            event=event,
-            frame=frame,
-            generation=world.generation,
-            event_index=event_index,
-            channel=RIGID_SENSOR_EVENT_CHANNEL,
-            backend=getattr(adapter, "BACKEND", "jolt"),
-        )
-        if sensor_result is not None:
-            sensor_count += 1
-    return contact_count, sensor_count
+    contact_count = getattr(adapter, "last_contact_event_count", None)
+    sensor_count = getattr(adapter, "last_sensor_event_count", None)
+    if contact_count is None or sensor_count is None:
+        # 非 Jolt 测试适配器/旧 ABI 没有原生计数时保留兼容读取。
+        events = list(adapter.get_contact_events())
+        contact_count = len(events)
+        sensor_count = sum(1 for event in events if bool(event.get("is_sensor", False)))
+    return publish_rigid_contact_event_batches(
+        world,
+        adapter,
+        frame=frame,
+        generation=world.generation,
+        contact_count=int(contact_count or 0),
+        sensor_count=int(sensor_count or 0),
+        backend=getattr(adapter, "BACKEND", "jolt"),
+    )
 
 
 def _apply_breakable_constraint_policy(world: PhysicsWorldCache, adapter, ordered_slots=None) -> int:
@@ -797,6 +773,13 @@ def step_rigid_bodies(
     if adapter is None:
         # hotools_jolt 未编译，静默降级
         return 0, 0.0
+
+    # same-frame 只有在完全无待处理工作时才允许重发上一真实 step 的接触快照。
+    # 走到这里说明 body/constraint/command 等状态即将变化，旧接触必须立即失效。
+    if same_frame:
+        clear_contacts = getattr(adapter, "_clear_contact_events", None)
+        if callable(clear_contacts):
+            clear_contacts()
 
     solver_id = JOLT_STEP_WRITER_ID
     world.acquire_write(solver_id)
