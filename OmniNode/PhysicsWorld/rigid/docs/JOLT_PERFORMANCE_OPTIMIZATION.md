@@ -76,3 +76,21 @@ Python 负责物理世界注册、调度和结果发布，native 负责 Jolt 运
 - solver velocity/position iterations、sleep、broad phase 和 contact cache 设置。
 
 所有候选都必须保留结果流语义、重置语义和调试可观测性；不能以绕过 PhysicsWorld 或直接写 Blender 对象换取局部 benchmark 数字。
+## 4.2 5.2 synthetic contact baseline (2026-08-08)
+
+Using Blender 5.2 background mode and the existing rigid benchmark with 1536 bodies:
+
+- body-only: native P50 0.169 ms, pipeline P50 31.14 ms, writeback P50 16.19 ms;
+- contact-heavy: native P50 2.942 ms, pipeline P50 43.48 ms, writeback P50 20.26 ms, about 2994 contact events.
+
+This is evidence that the current published Jolt step is not the 100 ms hotspot in this fixture. Further work should profile result publication/writeback and the actual project settings before changing Jolt solver switches.
+
+When hotspot timing is enabled, `transform_publish_ms` is additionally split into
+`transform_clear_ms`, `transform_state_fetch_ms`, and `transform_result_loop_ms`.
+These fields are diagnostic only and are absent from the default path.
+
+The first Jolt switch evaluation is therefore deferred: the current native ABI only
+exposes world capacity, worker count, solver iterations, gravity and contact recording.
+Speculative contact distance, manifold reduction, large-island splitting and allocator
+size remain advanced candidates, but none is enabled or changed until a contact-heavy
+measurement shows that native `step_ms` is the limiting segment.
