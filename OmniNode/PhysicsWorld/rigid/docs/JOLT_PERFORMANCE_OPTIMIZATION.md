@@ -107,3 +107,49 @@ exposes world capacity, worker count, solver iterations, gravity and contact rec
 Speculative contact distance, manifold reduction, large-island splitting and allocator
 size remain advanced candidates, but none is enabled or changed until a contact-heavy
 measurement shows that native `step_ms` is the limiting segment.
+
+## 7. 下一阶段：原生稳定刚体表与批同步（暂停）
+
+当前优化停在 Native 惰性批结果完成之后。本节只记录下一阶段的设计方向，当前不修改 ABI、不改 Python/C++ 实现，也不重新编译 native 模块；恢复工作前应先重新核对本文、Physics World 流水线契约和 OmniNode 总体架构。
+
+### 7.1 现状与目标
+
+在 1537 个刚体的稳定帧测量中，`transform_publish_ms` 已降至约 `1.00 ms`，接触快照注册与发布已接近可忽略；Jolt 模拟步内部剩余较明确的 Python 热点是 `body_sync_ms`，P50 约 `1.94 ms`。下一阶段的目标是让稳定帧不再由 Python 扫描并逐个同步全部刚体，而是由 native 长期持有一张与 Physics World slot 对齐的稳定刚体表：
+
+- 冷启动或结构变化时一次性提交完整刚体表；
+- 稳定帧只批量提交运动学位姿、运行时脏属性和命令；
+- 输出行与稳定表保持一致，避免每帧重建 `slot_id -> native row` 映射；
+- 将 Python/C++ 往返次数收敛为少量批调用，同时保留现有结果流、重置和同帧重发语义。
+
+### 7.2 权责边界
+
+- Python 继续负责 Blender RNA 读取、Physics World 注册、帧调度、稳定 slot 身份和结构脏判定。
+- C++ 只持有 POD/列式镜像数据、稳定行索引和 Jolt handle；native 工作线程不得访问 Blender RNA、依赖图或 Python 对象。
+- Jolt 不直接写回 Blender。所有变换仍经公共 Physics World 结果流和三种统一写回模式发布。
+- `generation`、restart、dispose、跳帧重置、same-frame 重发和缓存失效语义不得改变。
+- 静态、动态、运动学类型互换原则上视为结构替换；刚体替换时必须在同一事务中处理引用它的 Jolt 约束。
+
+### 7.3 建议实施阶段
+
+1. **稳定表 ABI**：以稳定 slot/内部 handle 建立 native body row，记录表版本和行 generation；删除、替换或重建时使旧行立即失效。
+2. **稳定帧批输入**：用一次调用提交运动学位置、旋转和时间步；用另一次调用提交运行时脏属性或命令。无结构变化时不得在 Python 侧全量扫描刚体 slot。
+3. **结构事务**：新增、删除、类型变化和形状重建统一形成结构补丁或完整重建，并保证依赖约束与 body handle 同步更新。
+4. **结果映射复用**：只在表版本变化时重建 `object_ptr/slot_id/native row` 映射；稳定帧直接复用既有列和映射。
+5. **验证后再评估 Jolt 开关**：只有 `body_sync_ms` 收敛且真实接触密集工程证明 native step 成为主要瓶颈后，才继续测试 Jolt 特殊优化设置。
+
+### 7.4 待确认问题
+
+- 脏数据由对象范围收集器直接产出，还是由 solver 保留上一帧 manifest 后比较，需要以 Physics World 所有权边界和实际测量决定。
+- 结构补丁与全表重建的切换阈值尚未确定，不能仅凭刚体数量静态决定。
+- 命令交换区是否在第一阶段并入统一批输入，取决于它是否仍构成可测热点。
+- 删除与替换必须同时验证 row generation，防止旧 handle、旧约束或延迟结果访问已释放刚体。
+- 稳定表必须保持确定性排序，不能因哈希容器遍历顺序改变模拟和结果发布顺序。
+
+### 7.5 暂定验收线
+
+- 约 1500 个稳定刚体时，`body_sync_ms` 暂定目标为 P50 不高于 `0.5 ms`、P95 不高于 `1.0 ms`；冷注册成本单独计量，不得隐藏进稳定帧数据。
+- native trace、刚体/约束/接触结果计数和确定性不得退化。
+- py311、py313 的 Jolt backend 测试均通过，完整 rigid 回归不得新增失败。
+- 最终使用 `C:\Users\hhh12\Desktop\模拟.blend` 复核 100 帧后的接触密集阶段；若工程节点签名已经陈旧，应先显式迁移或重新编译节点树，不能把兼容失败混入性能结论。
+
+本阶段到此暂停。恢复前不创建稳定表接口、不改 solver 热路径，也不编译覆盖 `.pyd`。
