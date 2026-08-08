@@ -85,7 +85,7 @@ def publish_rigid_transform_result(
         sleeping=sleeping,
         backend=backend,
     )
-    return world.publish_result(result, channel=RIGID_TRANSFORM_CHANNEL, solver=RIGID_SOLVER_ID)
+    return world.publish_result_owned(result, channel=RIGID_TRANSFORM_CHANNEL, solver=RIGID_SOLVER_ID)
 
 
 def iter_rigid_transform_results(
@@ -208,7 +208,7 @@ def publish_rigid_constraint_state_result(
         state=state,
         backend=backend,
     )
-    return world.publish_result(
+    return world.publish_result_owned(
         result,
         channel=RIGID_CONSTRAINT_STATE_CHANNEL,
         solver=RIGID_SOLVER_ID,
