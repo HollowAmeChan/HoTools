@@ -77,6 +77,7 @@ JPH_SUPPRESS_WARNINGS
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -562,7 +563,25 @@ public:
         // ensure_jolt_initialized() 已在模块加载时调用，此处为保险再调一次（幂等）
         ensure_jolt_initialized();
         mGroupFilter = new HoCollisionGroupFilter();
-        mTempAllocator = std::make_unique<TempAllocatorImpl>(8 * 1024 * 1024);
+        // Jolt 的临时分配器按帧承载 broad phase、接触求解和岛拆分的工作区。
+        // 固定 8 MiB 在约 2.3k 刚体时就会耗尽并触发原生断言；容量应随世界
+        // 配置增长，否则大场景会在 step() 内直接闪退而不是给出可诊断错误。
+        const size_t body_workspace = static_cast<size_t>(max_bodies) * 4096u;
+        const size_t pair_workspace = static_cast<size_t>(max_body_pairs) * 256u;
+        const size_t contact_workspace = static_cast<size_t>(max_contact_constraints) * 256u;
+        const size_t temp_allocator_bytes = (std::max)({
+            size_t(8u * 1024u * 1024u),
+            body_workspace,
+            pair_workspace,
+            contact_workspace,
+        });
+        const size_t bounded_temp_allocator_bytes = (std::min)(
+            temp_allocator_bytes,
+            static_cast<size_t>((std::numeric_limits<uint>::max)())
+        );
+        mTempAllocator = std::make_unique<TempAllocatorImpl>(
+            static_cast<uint>(bounded_temp_allocator_bytes)
+        );
         // 0 明确表示单线程；正数直接使用 Jolt 原生线程池。
         if (worker_threads == 0) {
             mJobSystem = std::make_unique<JobSystemSingleThreaded>(cMaxPhysicsJobs);
