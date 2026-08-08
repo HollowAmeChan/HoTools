@@ -365,7 +365,7 @@ def _rigid_delta_components(batch: dict, index: int, obj, result: dict):
 
 def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> int | None:
     """
-    按 Collection 批次选择刚体 delta 的稠密或稀疏写入 API。
+    按 Collection 批次写入刚体 delta；稠密和稀疏目标都走列式 API。
 
     返回 None 表示批次已失效，调用方必须退回逐 Object 路径。批次只保存本帧
     的稳定顺序；删除、重挂集合等编辑会使预检失败，而不是对错误目标批量写入。
@@ -457,48 +457,6 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
         if not active_indices:
             continue
         dense_batch = len(active_indices) == len(object_ptrs)
-        if not dense_batch:
-            diagnostics["sparse_collection_count"] += 1
-            for index in active_indices:
-                object_ptr = object_ptrs[index]
-                spec, result = updates[object_ptr]
-                slot = slots_by_object[object_ptr]
-                obj = objects[index]
-                previous = (
-                    tuple(obj.delta_location),
-                    tuple(obj.delta_rotation_euler),
-                    tuple(obj.delta_rotation_quaternion),
-                )
-                try:
-                    location, euler, quaternion = _rigid_delta_components(
-                        batch,
-                        index,
-                        obj,
-                        result,
-                    )
-                    obj.delta_location = location
-                    obj.delta_rotation_euler = euler
-                    obj.delta_rotation_quaternion = quaternion
-                    data_ptr = int(getattr(spec, "data_ptr", 0) or 0)
-                    touched[(object_ptr, data_ptr)] = (object_ptr, data_ptr)
-                    slot.data.pop("_writeback_error", None)
-                    diagnostics["sparse_object_count"] += 1
-                    written += 1
-                except Exception as exc:
-                    try:
-                        obj.delta_location = previous[0]
-                        obj.delta_rotation_euler = previous[1]
-                        obj.delta_rotation_quaternion = previous[2]
-                    except Exception:
-                        pass
-                    slot.data["_writeback_error"] = str(exc)
-                    continue
-                try:
-                    obj.update_tag()
-                except Exception:
-                    pass
-            continue
-
         try:
             delta_location = _foreach_float(live_objects, "delta_location", 3)
             delta_euler = _foreach_float(live_objects, "delta_rotation_euler", 3)
@@ -531,11 +489,15 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
                 live_objects.foreach_set("delta_rotation_quaternion", original_quaternion)
             except Exception:
                 pass
-            diagnostics["fallback_reason"] = "dense_collection_write_failed"
+            diagnostics["fallback_reason"] = "collection_bulk_write_failed"
             return None
 
-        diagnostics["dense_collection_count"] += 1
-        diagnostics["dense_object_count"] += len(active_indices)
+        if dense_batch:
+            diagnostics["dense_collection_count"] += 1
+            diagnostics["dense_object_count"] += len(active_indices)
+        else:
+            diagnostics["sparse_collection_count"] += 1
+            diagnostics["sparse_object_count"] += len(active_indices)
 
         for index in active_indices:
             object_ptr = object_ptrs[index]
