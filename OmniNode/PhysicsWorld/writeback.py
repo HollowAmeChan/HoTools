@@ -58,6 +58,17 @@ _GN_DIAGNOSTICS_KEY      = "_writeback_gn_diagnostics"
 _RIGID_DIAGNOSTICS_KEY   = "_writeback_rigid_diagnostics"
 _GN_RECEIPT_SERIAL_KEY   = "_writeback_gn_receipt_serial"
 _EULER_ORDERS = {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"}
+_RIGID_ROTATION_MODE_CODES = {
+    "XYZ": 0,
+    "XZY": 1,
+    "YXZ": 2,
+    "YZX": 3,
+    "ZXY": 4,
+    "ZYX": 5,
+    "QUATERNION": 6,
+    "AXIS_ANGLE": 7,
+}
+_RIGID_DELTA_NATIVE = None
 
 
 def _foreach_float(collection, property_name: str, width: int) -> np.ndarray:
@@ -65,6 +76,23 @@ def _foreach_float(collection, property_name: str, width: int) -> np.ndarray:
     if values.size:
         collection.foreach_get(property_name, values)
     return values
+
+
+def _get_rigid_delta_native():
+    """惰性获取公共 native 刚体反算函数；未编译时保持 Python 兼容路径。"""
+    global _RIGID_DELTA_NATIVE
+    if _RIGID_DELTA_NATIVE is False:
+        return None
+    if _RIGID_DELTA_NATIVE is not None:
+        return _RIGID_DELTA_NATIVE
+    try:
+        import hotools_native
+
+        function = getattr(hotools_native, "compute_rigid_delta_columns_v2", None)
+        _RIGID_DELTA_NATIVE = function if callable(function) else False
+    except Exception:
+        _RIGID_DELTA_NATIVE = False
+    return None if _RIGID_DELTA_NATIVE is False else _RIGID_DELTA_NATIVE
 
 
 class WritebackCleanupResource:
@@ -363,6 +391,58 @@ def _rigid_delta_components(batch: dict, index: int, obj, result: dict):
     )
 
 
+def _native_rigid_delta_columns(
+    batch: dict,
+    active_indices: list[int],
+    objects,
+    updates: dict,
+):
+    """使用公共 C++ 列式反算；返回 None 表示当前 ABI 不可用。"""
+    native = _get_rigid_delta_native()
+    if native is None or not active_indices:
+        return None
+    count = len(active_indices)
+    solved_positions = np.empty((count, 3), dtype=np.float32)
+    solved_rotations = np.empty((count, 4), dtype=np.float32)
+    rotation_modes = np.empty(count, dtype=np.int32)
+    for row, index in enumerate(active_indices):
+        object_ptr = int(batch["object_ptrs"][index])
+        _spec, result = updates[object_ptr]
+        position = result.get("position")
+        rotation = result.get("rotation_wxyz")
+        if position is None or rotation is None:
+            raise ValueError("刚体结果缺少 position 或 rotation_wxyz")
+        solved_positions[row, :] = tuple(float(value) for value in position)
+        solved_rotations[row, :] = tuple(float(value) for value in rotation)
+        mode = str(getattr(objects[index], "rotation_mode", "XYZ") or "XYZ")
+        rotation_modes[row] = _RIGID_ROTATION_MODE_CODES.get(mode, 0)
+
+    base_locations = np.asarray(batch["locations_f32"], dtype=np.float32).reshape(-1, 3)
+    base_eulers = np.asarray(batch["rotation_eulers_f32"], dtype=np.float32).reshape(-1, 3)
+    base_quaternions = np.asarray(
+        batch["rotation_quaternions_f32"], dtype=np.float32
+    ).reshape(-1, 4)
+    base_axis_angles = np.asarray(
+        batch["rotation_axis_angles_f32"], dtype=np.float32
+    ).reshape(-1, 4)
+    object_indices = np.asarray(active_indices, dtype=np.int32)
+    delta_locations, delta_eulers, delta_quaternions = native(
+        base_locations,
+        base_eulers,
+        base_quaternions,
+        base_axis_angles,
+        solved_positions,
+        solved_rotations,
+        object_indices,
+        rotation_modes,
+    )
+    return (
+        np.asarray(delta_locations, dtype=np.float32),
+        np.asarray(delta_eulers, dtype=np.float32),
+        np.asarray(delta_quaternions, dtype=np.float32),
+    )
+
+
 def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> int | None:
     """
     按 Collection 批次写入刚体 delta；稠密和稀疏目标都走列式 API。
@@ -465,19 +545,41 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
             original_euler = delta_euler.copy()
             original_quaternion = delta_quaternion.copy()
 
-            for index in active_indices:
-                object_ptr = object_ptrs[index]
-                _spec, result = updates[object_ptr]
-                obj = objects[index]
-                location, euler, quaternion = _rigid_delta_components(
+            native_columns = None
+            try:
+                native_columns = _native_rigid_delta_columns(
                     batch,
-                    index,
-                    obj,
-                    result,
+                    active_indices,
+                    objects,
+                    updates,
                 )
-                delta_location[index * 3:(index + 1) * 3] = location
-                delta_euler[index * 3:(index + 1) * 3] = euler
-                delta_quaternion[index * 4:(index + 1) * 4] = quaternion
+            except Exception:
+                diagnostics["fallback_reason"] = "native_delta_failed"
+                native_columns = None
+            if native_columns is not None:
+                (
+                    native_locations,
+                    native_eulers,
+                    native_quaternions,
+                ) = native_columns
+                active = np.asarray(active_indices, dtype=np.intp)
+                delta_location.reshape(-1, 3)[active, :] = native_locations
+                delta_euler.reshape(-1, 3)[active, :] = native_eulers
+                delta_quaternion.reshape(-1, 4)[active, :] = native_quaternions
+            else:
+                for index in active_indices:
+                    object_ptr = object_ptrs[index]
+                    _spec, result = updates[object_ptr]
+                    obj = objects[index]
+                    location, euler, quaternion = _rigid_delta_components(
+                        batch,
+                        index,
+                        obj,
+                        result,
+                    )
+                    delta_location[index * 3:(index + 1) * 3] = location
+                    delta_euler[index * 3:(index + 1) * 3] = euler
+                    delta_quaternion[index * 4:(index + 1) * 4] = quaternion
 
             live_objects.foreach_set("delta_location", delta_location)
             live_objects.foreach_set("delta_rotation_euler", delta_euler)

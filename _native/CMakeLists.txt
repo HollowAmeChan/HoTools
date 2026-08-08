@@ -274,6 +274,8 @@ nanobind_add_module(hotools_native
     src/spring_bone_vrm.cpp
     src/spring_bone_vrm_bindings.cpp
     src/property_curve.cpp
+    src/rigid_writeback.cpp
+    src/rigid_writeback.hpp
 )
 
 # These translation units construct shared native view structs. Keep their
