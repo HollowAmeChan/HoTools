@@ -98,6 +98,10 @@ def test_adapter_batch_body_registration():
     states = adapter.get_body_states()
     assert set(states) == {"rigid:test"}
     assert len(states["rigid:test"]["position"]) == 3
+    columns = adapter.get_body_state_columns()
+    assert columns is not None
+    assert len(columns) == 7
+    assert columns[-1] == {"rigid:test": 0}
     adapter.dispose("adapter-batch-test")
 
 def test_add_remove_bodies():

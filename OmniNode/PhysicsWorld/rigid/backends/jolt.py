@@ -556,6 +556,43 @@ class JoltAdapter:
             }
         return states
 
+    def get_body_state_columns(self):
+        """返回 native 列式状态，避免为每个刚体构造临时状态字典。
+
+        返回位置、旋转、线速度、角速度、激活/睡眠列以及 ``slot_id -> 行号``
+        索引。列数据由 native 返回；适配器不复制列，也不把 Blender 引用交给
+        native。旧 ABI 或不支持列式状态时返回 ``None``，调用方继续使用兼容路径。
+        """
+        numpy_getter = getattr(self._jw, "get_body_states_numpy", None)
+        if not callable(numpy_getter):
+            return None
+        raw_numpy = numpy_getter()
+        if not isinstance(raw_numpy, (tuple, list)) or len(raw_numpy) != 7:
+            return None
+        (
+            handles,
+            positions,
+            rotations,
+            linear_velocities,
+            angular_velocities,
+            active,
+            sleeping,
+        ) = raw_numpy
+        slot_indices: dict[str, int] = {}
+        for index in range(len(handles)):
+            slot_id = self._body_slots_by_handle.get(int(handles[index]), "")
+            if slot_id:
+                slot_indices[slot_id] = index
+        return (
+            positions,
+            rotations,
+            linear_velocities,
+            angular_velocities,
+            active,
+            sleeping,
+            slot_indices,
+        )
+
     def ray_cast(
         self,
         origin=(0.0, 0.0, 0.0),

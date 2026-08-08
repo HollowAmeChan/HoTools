@@ -441,9 +441,13 @@ def _publish_rigid_transform_results(
     if timing is not None:
         timing["transform_clear_ms"] = (time.perf_counter() - started) * 1000.0
         started = time.perf_counter()
+    batch_columns = None
+    get_body_state_columns = getattr(adapter, "get_body_state_columns", None)
+    if callable(get_body_state_columns):
+        batch_columns = get_body_state_columns()
     batch_states = None
     get_body_states = getattr(adapter, "get_body_states", None)
-    if callable(get_body_states):
+    if batch_columns is None and callable(get_body_states):
         batch_states = get_body_states()
     if timing is not None:
         timing["transform_state_fetch_ms"] = (time.perf_counter() - started) * 1000.0
@@ -459,14 +463,68 @@ def _publish_rigid_transform_results(
 
         try:
             state = None
-            if batch_states is not None:
+            linear_velocity = None
+            angular_velocity = None
+            active = None
+            sleeping = None
+            if batch_columns is not None:
+                (
+                    positions,
+                    rotations,
+                    linear_velocities,
+                    angular_velocities,
+                    active_values,
+                    sleeping_values,
+                    slot_indices,
+                ) = batch_columns
+                native_index = slot_indices.get(slot_id)
+                if native_index is None:
+                    continue
+                position_offset = native_index * 3
+                rotation_offset = native_index * 4
+                pos_arr = (
+                    float(positions[position_offset]),
+                    float(positions[position_offset + 1]),
+                    float(positions[position_offset + 2]),
+                )
+                rot_arr = (
+                    float(rotations[rotation_offset]),
+                    float(rotations[rotation_offset + 1]),
+                    float(rotations[rotation_offset + 2]),
+                    float(rotations[rotation_offset + 3]),
+                )
+                linear_velocity = (
+                    float(linear_velocities[position_offset]),
+                    float(linear_velocities[position_offset + 1]),
+                    float(linear_velocities[position_offset + 2]),
+                )
+                angular_velocity = (
+                    float(angular_velocities[position_offset]),
+                    float(angular_velocities[position_offset + 1]),
+                    float(angular_velocities[position_offset + 2]),
+                )
+                active = bool(active_values[native_index])
+                sleeping = bool(sleeping_values[native_index])
+            elif batch_states is not None:
                 state = batch_states.get(slot_id)
-            elif hasattr(adapter, "get_body_state"):
-                state = adapter.get_body_state(slot_id)
-
-            if state is not None:
+                if state is None:
+                    continue
                 pos_arr = state.get("position")
                 rot_arr = state.get("rotation_wxyz")
+                linear_velocity = state.get("linear_velocity")
+                angular_velocity = state.get("angular_velocity")
+                active = state.get("active")
+                sleeping = state.get("sleeping")
+            elif hasattr(adapter, "get_body_state"):
+                state = adapter.get_body_state(slot_id)
+                if state is None:
+                    continue
+                pos_arr = state.get("position")
+                rot_arr = state.get("rotation_wxyz")
+                linear_velocity = state.get("linear_velocity")
+                angular_velocity = state.get("angular_velocity")
+                active = state.get("active")
+                sleeping = state.get("sleeping")
             else:
                 result = adapter.get_body_transform(slot_id)
                 if result is None:
@@ -481,10 +539,10 @@ def _publish_rigid_transform_results(
                 generation=world.generation,
                 position=pos_arr,
                 rotation_wxyz=rot_arr,
-                linear_velocity=state.get("linear_velocity") if state else None,
-                angular_velocity=state.get("angular_velocity") if state else None,
-                active=state.get("active") if state else None,
-                sleeping=state.get("sleeping") if state else None,
+                linear_velocity=linear_velocity,
+                angular_velocity=angular_velocity,
+                active=active,
+                sleeping=sleeping,
                 backend=getattr(adapter, "BACKEND", "jolt"),
             )
             if published_result is None:
