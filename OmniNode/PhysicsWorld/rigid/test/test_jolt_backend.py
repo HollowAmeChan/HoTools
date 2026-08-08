@@ -200,6 +200,13 @@ def test_bulk_body_state_and_contact_recording_switch():
     states = jw.get_body_states()
     assert {item[0] for item in states} == {ground, ball}
     assert all(len(item[1]) == 3 and len(item[2]) == 4 for item in states)
+    assert hasattr(jw, "get_body_states_numpy")
+    columns = jw.get_body_states_numpy()
+    assert len(columns) == 7
+    assert len(columns[0]) == 2
+    assert len(columns[1]) == 6 and len(columns[2]) == 8
+    assert len(columns[3]) == 6 and len(columns[4]) == 6
+    assert len(columns[5]) == 2 and len(columns[6]) == 2
 
     jw.set_record_contact_events(False)
     jw.step(1 / 60.0, 1)

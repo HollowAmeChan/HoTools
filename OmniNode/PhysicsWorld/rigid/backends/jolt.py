@@ -483,6 +483,53 @@ class JoltAdapter:
 
     def get_body_states(self) -> dict[str, dict]:
         """一次跨 native 边界读取所有刚体状态，按公开 slot id 返回。"""
+        numpy_getter = getattr(self._jw, "get_body_states_numpy", None)
+        if callable(numpy_getter):
+            raw_numpy = numpy_getter()
+            if isinstance(raw_numpy, (tuple, list)) and len(raw_numpy) == 7:
+                (
+                    handles,
+                    positions,
+                    rotations,
+                    linear_velocities,
+                    angular_velocities,
+                    active,
+                    sleeping,
+                ) = raw_numpy
+                states: dict[str, dict] = {}
+                for index in range(len(handles)):
+                    slot_id = self._body_slots_by_handle.get(int(handles[index]), "")
+                    if not slot_id:
+                        continue
+                    position_offset = index * 3
+                    rotation_offset = index * 4
+                    states[slot_id] = {
+                        "position": (
+                            float(positions[position_offset]),
+                            float(positions[position_offset + 1]),
+                            float(positions[position_offset + 2]),
+                        ),
+                        "rotation_wxyz": (
+                            float(rotations[rotation_offset]),
+                            float(rotations[rotation_offset + 1]),
+                            float(rotations[rotation_offset + 2]),
+                            float(rotations[rotation_offset + 3]),
+                        ),
+                        "linear_velocity": (
+                            float(linear_velocities[position_offset]),
+                            float(linear_velocities[position_offset + 1]),
+                            float(linear_velocities[position_offset + 2]),
+                        ),
+                        "angular_velocity": (
+                            float(angular_velocities[position_offset]),
+                            float(angular_velocities[position_offset + 1]),
+                            float(angular_velocities[position_offset + 2]),
+                        ),
+                        "active": bool(active[index]),
+                        "sleeping": bool(sleeping[index]),
+                    }
+                return states
+
         getter = getattr(self._jw, "get_body_states", None)
         if not callable(getter):
             return {

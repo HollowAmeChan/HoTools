@@ -64,6 +64,8 @@ Python 负责物理世界注册、调度和结果发布，native 负责 Jolt 运
 
 在复用帧内 slot 顺序后，常态帧大致为：native `0.4–3.4 ms`、刚体同步 `1.8–2.4 ms`、transform 发布 `4–6 ms`；仍有偶发的 transform 发布峰值约 `47–52 ms`，说明下一步应继续检查 Python 分配/垃圾回收和结果流批量表示，而不是先调整 Jolt solver 参数。首帧批量注册约 `9 ms`。
 
+已补充 `get_body_states_numpy()` 列式 native ABI，并让 Python 适配器优先使用它；17 项 Jolt backend 回归在 Blender 4.5.8 与 5.2.0 均通过。短基准的常态 transform 发布没有明显变化，说明主要峰值不在 nanobind tuple 转换，后续应直接评估结果流的批量表示和 Python 分配峰值。
+
 ## 5. 后续候选
 
 在有基线后再逐项验证：

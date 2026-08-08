@@ -872,6 +872,66 @@ public:
         return {from_vec3(pos), from_quat(rot)};
     }
 
+    nb::tuple get_body_states_numpy() const {
+        std::vector<uint32_t> handles;
+        std::vector<float> positions;
+        std::vector<float> rotations;
+        std::vector<float> linear_velocities;
+        std::vector<float> angular_velocities;
+        std::vector<uint8_t> active;
+        std::vector<uint8_t> sleeping;
+
+        const size_t count = mBodies.size();
+        handles.reserve(count);
+        positions.reserve(count * 3u);
+        rotations.reserve(count * 4u);
+        linear_velocities.reserve(count * 3u);
+        angular_velocities.reserve(count * 3u);
+        active.reserve(count);
+        sleeping.reserve(count);
+
+        auto& lif = mPhysicsSystem->GetBodyLockInterface();
+        for (const auto& [handle, record] : mBodies) {
+            BodyLockRead lock(lif, record.id);
+            if (!lock.Succeeded())
+                continue;
+            const Body& body = lock.GetBody();
+            const RVec3 position = body.GetPosition();
+            const Quat rotation = body.GetRotation();
+            const Vec3 linear = body.GetLinearVelocity();
+            const Vec3 angular = body.GetAngularVelocity();
+            handles.emplace_back(handle);
+            positions.emplace_back(static_cast<float>(position.GetX()));
+            positions.emplace_back(static_cast<float>(position.GetY()));
+            positions.emplace_back(static_cast<float>(position.GetZ()));
+            rotations.emplace_back(rotation.GetW());
+            rotations.emplace_back(rotation.GetX());
+            rotations.emplace_back(rotation.GetY());
+            rotations.emplace_back(rotation.GetZ());
+            linear_velocities.emplace_back(linear.GetX());
+            linear_velocities.emplace_back(linear.GetY());
+            linear_velocities.emplace_back(linear.GetZ());
+            angular_velocities.emplace_back(angular.GetX());
+            angular_velocities.emplace_back(angular.GetY());
+            angular_velocities.emplace_back(angular.GetZ());
+            const bool is_active = body.IsActive();
+            active.emplace_back(is_active ? 1u : 0u);
+            sleeping.emplace_back(
+                body.GetMotionType() == EMotionType::Dynamic && !is_active ? 1u : 0u
+            );
+        }
+
+        return nb::make_tuple(
+            owned_contact_array(std::move(handles)),
+            owned_contact_array(std::move(positions)),
+            owned_contact_array(std::move(rotations)),
+            owned_contact_array(std::move(linear_velocities)),
+            owned_contact_array(std::move(angular_velocities)),
+            owned_contact_array(std::move(active)),
+            owned_contact_array(std::move(sleeping))
+        );
+    }
+
     std::tuple<
         std::array<float,3>,
         std::array<float,4>,
@@ -1974,6 +2034,9 @@ NB_MODULE(hotools_jolt, m) {
 
         .def("get_body_states", &JoltWorld::get_body_states,
              "批量返回当前所有刚体状态，元组首项为 native handle。")
+
+        .def("get_body_states_numpy", &JoltWorld::get_body_states_numpy,
+             "以列式 native-owned 数组批量返回刚体状态，避免逐刚体 tuple 转换。")
 
         .def("cast_ray", &JoltWorld::cast_ray,
              nb::arg("origin"),
