@@ -31,6 +31,12 @@ DEFAULT_RIGID_JOLT_VELOCITY_STEPS = 10
 DEFAULT_RIGID_JOLT_POSITION_STEPS = 2
 DEFAULT_RIGID_JOLT_WORKER_THREADS = 1
 DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS = True
+DEFAULT_RIGID_JOLT_DETERMINISTIC_SIMULATION = True
+DEFAULT_RIGID_JOLT_CONSTRAINT_WARM_START = True
+DEFAULT_RIGID_JOLT_BODY_PAIR_CONTACT_CACHE = True
+DEFAULT_RIGID_JOLT_MANIFOLD_REDUCTION = True
+DEFAULT_RIGID_JOLT_LARGE_ISLAND_SPLITTER = True
+DEFAULT_RIGID_JOLT_ALLOW_SLEEPING = True
 DEFAULT_RIGID_JOLT_WORLD_SETTING_SIGNATURE = "default"
 _PI = 3.141592653589793
 
@@ -207,6 +213,12 @@ def make_rigid_jolt_world_setting_properties(
     position_steps: int = DEFAULT_RIGID_JOLT_POSITION_STEPS,
     worker_threads: int = DEFAULT_RIGID_JOLT_WORKER_THREADS,
     record_contact_events: bool = DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS,
+    deterministic_simulation: bool = DEFAULT_RIGID_JOLT_DETERMINISTIC_SIMULATION,
+    constraint_warm_start: bool = DEFAULT_RIGID_JOLT_CONSTRAINT_WARM_START,
+    use_body_pair_contact_cache: bool = DEFAULT_RIGID_JOLT_BODY_PAIR_CONTACT_CACHE,
+    use_manifold_reduction: bool = DEFAULT_RIGID_JOLT_MANIFOLD_REDUCTION,
+    use_large_island_splitter: bool = DEFAULT_RIGID_JOLT_LARGE_ISLAND_SPLITTER,
+    allow_sleeping: bool = DEFAULT_RIGID_JOLT_ALLOW_SLEEPING,
 ) -> list[dict]:
     """构造一个可注册的 Jolt 刚体世界设置对象。"""
     bodies, pairs, contacts = _jolt_capacity_tuple(
@@ -224,6 +236,12 @@ def make_rigid_jolt_world_setting_properties(
         "position_steps": _positive_int(position_steps, DEFAULT_RIGID_JOLT_POSITION_STEPS, 1, 255),
         "worker_threads": _nonnegative_int(worker_threads, DEFAULT_RIGID_JOLT_WORKER_THREADS, 64),
         "record_contact_events": bool(record_contact_events),
+        "deterministic_simulation": bool(deterministic_simulation),
+        "constraint_warm_start": bool(constraint_warm_start),
+        "use_body_pair_contact_cache": bool(use_body_pair_contact_cache),
+        "use_manifold_reduction": bool(use_manifold_reduction),
+        "use_large_island_splitter": bool(use_large_island_splitter),
+        "allow_sleeping": bool(allow_sleeping),
         "enabled": bool(enabled),
         "source_id": str(source_id or "default"),
         "priority": int(priority),
@@ -246,6 +264,12 @@ def _copy_jolt_world_setting_object(item: dict) -> dict:
         "position_steps": _positive_int(item.get("position_steps", DEFAULT_RIGID_JOLT_POSITION_STEPS), DEFAULT_RIGID_JOLT_POSITION_STEPS, 1, 255),
         "worker_threads": _nonnegative_int(item.get("worker_threads", DEFAULT_RIGID_JOLT_WORKER_THREADS), DEFAULT_RIGID_JOLT_WORKER_THREADS, 64),
         "record_contact_events": bool(item.get("record_contact_events", DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS)),
+        "deterministic_simulation": bool(item.get("deterministic_simulation", DEFAULT_RIGID_JOLT_DETERMINISTIC_SIMULATION)),
+        "constraint_warm_start": bool(item.get("constraint_warm_start", DEFAULT_RIGID_JOLT_CONSTRAINT_WARM_START)),
+        "use_body_pair_contact_cache": bool(item.get("use_body_pair_contact_cache", DEFAULT_RIGID_JOLT_BODY_PAIR_CONTACT_CACHE)),
+        "use_manifold_reduction": bool(item.get("use_manifold_reduction", DEFAULT_RIGID_JOLT_MANIFOLD_REDUCTION)),
+        "use_large_island_splitter": bool(item.get("use_large_island_splitter", DEFAULT_RIGID_JOLT_LARGE_ISLAND_SPLITTER)),
+        "allow_sleeping": bool(item.get("allow_sleeping", DEFAULT_RIGID_JOLT_ALLOW_SLEEPING)),
         "enabled": bool(item.get("enabled", True)),
         "source_id": str(item.get("source_id", "default") or "default"),
         "priority": int(item.get("priority", 0) or 0),
@@ -280,6 +304,12 @@ def rigid_jolt_world_setting_signature(item: dict) -> str:
         int(item.get("position_steps", DEFAULT_RIGID_JOLT_POSITION_STEPS) or DEFAULT_RIGID_JOLT_POSITION_STEPS),
         int(item.get("worker_threads", DEFAULT_RIGID_JOLT_WORKER_THREADS) or 0),
         "1" if bool(item.get("record_contact_events", DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS)) else "0",
+        "1" if bool(item.get("deterministic_simulation", DEFAULT_RIGID_JOLT_DETERMINISTIC_SIMULATION)) else "0",
+        "1" if bool(item.get("constraint_warm_start", DEFAULT_RIGID_JOLT_CONSTRAINT_WARM_START)) else "0",
+        "1" if bool(item.get("use_body_pair_contact_cache", DEFAULT_RIGID_JOLT_BODY_PAIR_CONTACT_CACHE)) else "0",
+        "1" if bool(item.get("use_manifold_reduction", DEFAULT_RIGID_JOLT_MANIFOLD_REDUCTION)) else "0",
+        "1" if bool(item.get("use_large_island_splitter", DEFAULT_RIGID_JOLT_LARGE_ISLAND_SPLITTER)) else "0",
+        "1" if bool(item.get("allow_sleeping", DEFAULT_RIGID_JOLT_ALLOW_SLEEPING)) else "0",
     ]
     return stable_short_hash(payload, 16)
 
@@ -360,6 +390,12 @@ def selected_rigid_jolt_world_setting(world: PhysicsWorldCache) -> dict | None:
         "position_steps": int(item.get("position_steps", DEFAULT_RIGID_JOLT_POSITION_STEPS) or DEFAULT_RIGID_JOLT_POSITION_STEPS),
         "worker_threads": int(item.get("worker_threads", DEFAULT_RIGID_JOLT_WORKER_THREADS) or 0),
         "record_contact_events": bool(item.get("record_contact_events", DEFAULT_RIGID_JOLT_RECORD_CONTACT_EVENTS)),
+        "deterministic_simulation": bool(item.get("deterministic_simulation", DEFAULT_RIGID_JOLT_DETERMINISTIC_SIMULATION)),
+        "constraint_warm_start": bool(item.get("constraint_warm_start", DEFAULT_RIGID_JOLT_CONSTRAINT_WARM_START)),
+        "use_body_pair_contact_cache": bool(item.get("use_body_pair_contact_cache", DEFAULT_RIGID_JOLT_BODY_PAIR_CONTACT_CACHE)),
+        "use_manifold_reduction": bool(item.get("use_manifold_reduction", DEFAULT_RIGID_JOLT_MANIFOLD_REDUCTION)),
+        "use_large_island_splitter": bool(item.get("use_large_island_splitter", DEFAULT_RIGID_JOLT_LARGE_ISLAND_SPLITTER)),
+        "allow_sleeping": bool(item.get("allow_sleeping", DEFAULT_RIGID_JOLT_ALLOW_SLEEPING)),
         "source_id": str(item.get("source_id", "default") or "default"),
         "priority": int(item.get("priority", 0) or 0),
         "stable_id": str(entry.get("stable_id") or rigid_jolt_world_setting_stable_id(item)),

@@ -551,7 +551,13 @@ public:
     explicit JoltWorld(uint32_t max_bodies = 2048,
                        uint32_t max_body_pairs = 4096,
                        uint32_t max_contact_constraints = 2048,
-                       uint32_t worker_threads = 0)
+                       uint32_t worker_threads = 0,
+                       bool deterministic_simulation = true,
+                       bool constraint_warm_start = true,
+                       bool use_body_pair_contact_cache = true,
+                       bool use_manifold_reduction = true,
+                       bool use_large_island_splitter = true,
+                       bool allow_sleeping = true)
     {
         // ensure_jolt_initialized() 已在模块加载时调用，此处为保险再调一次（幂等）
         ensure_jolt_initialized();
@@ -576,6 +582,14 @@ public:
             mObjLayerFilter
         );
         mPhysicsSystem->SetContactListener(&mContactListener);
+        set_optimization_switches(
+            deterministic_simulation,
+            constraint_warm_start,
+            use_body_pair_contact_cache,
+            use_manifold_reduction,
+            use_large_island_splitter,
+            allow_sleeping
+        );
         // Blender 使用 Z-up 坐标系，重力沿 -Z 轴
         mPhysicsSystem->SetGravity(Vec3(0.f, 0.f, -9.81f));
     }
@@ -588,6 +602,24 @@ public:
         PhysicsSettings settings = mPhysicsSystem->GetPhysicsSettings();
         settings.mNumVelocitySteps = std::clamp(velocity_steps, 1u, 255u);
         settings.mNumPositionSteps = std::clamp(position_steps, 1u, 255u);
+        mPhysicsSystem->SetPhysicsSettings(settings);
+    }
+
+    void set_optimization_switches(
+        bool deterministic_simulation,
+        bool constraint_warm_start,
+        bool use_body_pair_contact_cache,
+        bool use_manifold_reduction,
+        bool use_large_island_splitter,
+        bool allow_sleeping
+    ) {
+        PhysicsSettings settings = mPhysicsSystem->GetPhysicsSettings();
+        settings.mDeterministicSimulation = deterministic_simulation;
+        settings.mConstraintWarmStart = constraint_warm_start;
+        settings.mUseBodyPairContactCache = use_body_pair_contact_cache;
+        settings.mUseManifoldReduction = use_manifold_reduction;
+        settings.mUseLargeIslandSplitter = use_large_island_splitter;
+        settings.mAllowSleeping = allow_sleeping;
         mPhysicsSystem->SetPhysicsSettings(settings);
     }
 
@@ -1928,17 +1960,32 @@ NB_MODULE(hotools_jolt, m) {
     ensure_jolt_initialized();
 
     nb::class_<JoltWorld>(m, "JoltWorld")
-        .def(nb::init<uint32_t, uint32_t, uint32_t, uint32_t>(),
+        .def(nb::init<uint32_t, uint32_t, uint32_t, uint32_t, bool, bool, bool, bool, bool, bool>(),
              nb::arg("max_bodies")              = 2048,
              nb::arg("max_body_pairs")          = 4096,
              nb::arg("max_contact_constraints") = 2048,
              nb::arg("worker_threads")           = 0,
+             nb::arg("deterministic_simulation") = true,
+             nb::arg("constraint_warm_start") = true,
+             nb::arg("use_body_pair_contact_cache") = true,
+             nb::arg("use_manifold_reduction") = true,
+             nb::arg("use_large_island_splitter") = true,
+             nb::arg("allow_sleeping") = true,
              "创建 Jolt PhysicsSystem 实例；worker_threads 为 0 时单线程，正数时启用原生线程池。")
         .def_prop_ro("worker_threads", &JoltWorld::worker_threads)
         .def("set_solver_iterations", &JoltWorld::set_solver_iterations,
              nb::arg("velocity_steps"),
              nb::arg("position_steps"),
              "设置 Jolt 世界级速度与位置求解迭代数。")
+
+        .def("set_optimization_switches", &JoltWorld::set_optimization_switches,
+             nb::arg("deterministic_simulation"),
+             nb::arg("constraint_warm_start"),
+             nb::arg("use_body_pair_contact_cache"),
+             nb::arg("use_manifold_reduction"),
+             nb::arg("use_large_island_splitter"),
+             nb::arg("allow_sleeping"),
+             "设置 Jolt 物理系统级优化开关。默认值保持 Jolt 默认语义。")
 
         // body
         .def("add_body", &JoltWorld::add_body,

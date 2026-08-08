@@ -63,6 +63,14 @@ def test_worker_threads():
     single.clear()
     threaded.clear()
 
+def test_optimization_switches():
+    """Jolt 世界级优化开关应可显式设置，并保持逐项布尔语义。"""
+    jw = hotools_jolt.JoltWorld(32, 64, 32)
+    assert hasattr(jw, "set_optimization_switches")
+    jw.set_optimization_switches(False, False, False, False, False, False)
+    jw.set_optimization_switches(True, True, True, True, True, True)
+    jw.clear()
+
 def test_node_worker_setting_replacement():
     world = PhysicsWorldCache()
     single_props = make_rigid_jolt_world_setting_properties(
@@ -79,6 +87,23 @@ def test_node_worker_setting_replacement():
     assert threaded.jolt_worker_threads == 2
     assert threaded._jw.worker_threads == 2
     threaded.dispose("worker-test")
+
+def test_node_optimization_setting_replacement():
+    world = PhysicsWorldCache()
+    default_props = make_rigid_jolt_world_setting_properties(source_id="optimization-test")
+    register_rigid_jolt_world_setting_objects(world, default_props)
+    default = ensure_jolt_adapter(world)
+    assert default is not None and default.jolt_constraint_warm_start is True
+
+    tuned_props = make_rigid_jolt_world_setting_properties(
+        source_id="optimization-test",
+        constraint_warm_start=False,
+    )
+    register_rigid_jolt_world_setting_objects(world, tuned_props)
+    tuned = ensure_jolt_adapter(world)
+    assert tuned is not None and tuned is not default
+    assert tuned.jolt_constraint_warm_start is False
+    tuned.dispose("optimization-test")
 
 def test_adapter_batch_body_registration():
     world = PhysicsWorldCache()
@@ -340,7 +365,9 @@ if __name__ == "__main__":
     tests = [
         ("batch body registration",       test_batch_body_registration),
         ("Jolt worker_threads",            test_worker_threads),
+        ("Jolt optimization switches",     test_optimization_switches),
         ("node worker setting replacement", test_node_worker_setting_replacement),
+        ("node optimization setting replacement", test_node_optimization_setting_replacement),
         ("adapter body batch registration", test_adapter_batch_body_registration),
         ("创建 JoltWorld",          test_create_world),
         ("添加/删除刚体",           test_add_remove_bodies),

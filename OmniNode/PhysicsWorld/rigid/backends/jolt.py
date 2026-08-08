@@ -201,6 +201,12 @@ class JoltAdapter:
         position_steps: int = 2,
         worker_threads: int = 1,
         record_contact_events: bool = True,
+        deterministic_simulation: bool = True,
+        constraint_warm_start: bool = True,
+        use_body_pair_contact_cache: bool = True,
+        use_manifold_reduction: bool = True,
+        use_large_island_splitter: bool = True,
+        allow_sleeping: bool = True,
     ):
         native = _load_native()
         if native is None:
@@ -237,6 +243,22 @@ class JoltAdapter:
             getattr(self._jw, "worker_threads", max(0, min(64, int(worker_threads))))
         )
         self.jolt_record_contact_events: bool = bool(record_contact_events)
+        self.jolt_deterministic_simulation: bool = bool(deterministic_simulation)
+        self.jolt_constraint_warm_start: bool = bool(constraint_warm_start)
+        self.jolt_use_body_pair_contact_cache: bool = bool(use_body_pair_contact_cache)
+        self.jolt_use_manifold_reduction: bool = bool(use_manifold_reduction)
+        self.jolt_use_large_island_splitter: bool = bool(use_large_island_splitter)
+        self.jolt_allow_sleeping: bool = bool(allow_sleeping)
+        set_optimization = getattr(self._jw, "set_optimization_switches", None)
+        if callable(set_optimization):
+            set_optimization(
+                self.jolt_deterministic_simulation,
+                self.jolt_constraint_warm_start,
+                self.jolt_use_body_pair_contact_cache,
+                self.jolt_use_manifold_reduction,
+                self.jolt_use_large_island_splitter,
+                self.jolt_allow_sleeping,
+            )
         set_recording = getattr(self._jw, "set_record_contact_events", None)
         if callable(set_recording):
             set_recording(self.jolt_record_contact_events)
@@ -1038,6 +1060,12 @@ def ensure_jolt_adapter(world) -> "JoltAdapter | None":
         int(setting.get("position_steps", 2) or 2),
         int(setting.get("worker_threads", 1) or 0),
         bool(setting.get("record_contact_events", True)),
+        bool(setting.get("deterministic_simulation", True)),
+        bool(setting.get("constraint_warm_start", True)),
+        bool(setting.get("use_body_pair_contact_cache", True)),
+        bool(setting.get("use_manifold_reduction", True)),
+        bool(setting.get("use_large_island_splitter", True)),
+        bool(setting.get("allow_sleeping", True)),
     )
     desired_signature = (desired_capacity, desired_runtime)
     existing = world.backend_resources.get(RIGID_BACKEND_RESOURCE_KEY)
@@ -1074,6 +1102,12 @@ def ensure_jolt_adapter(world) -> "JoltAdapter | None":
             position_steps=desired_runtime[1],
             worker_threads=desired_runtime[2],
             record_contact_events=desired_runtime[3],
+            deterministic_simulation=desired_runtime[4],
+            constraint_warm_start=desired_runtime[5],
+            use_body_pair_contact_cache=desired_runtime[6],
+            use_manifold_reduction=desired_runtime[7],
+            use_large_island_splitter=desired_runtime[8],
+            allow_sleeping=desired_runtime[9],
         )
         adapter._jolt_runtime_signature = desired_signature
         fc = world.frame_context if world.frame_context else None
