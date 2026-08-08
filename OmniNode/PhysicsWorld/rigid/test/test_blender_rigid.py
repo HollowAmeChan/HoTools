@@ -477,6 +477,50 @@ def test_rigid_body_commands_exchange():
     _del(ball)
 
 
+def test_rigid_hotspot_timing_optional():
+    scene = bpy.context.scene
+    ball = _make_obj("T3B_HotspotTimingBall", (0, 0, 5), body_type="DYNAMIC")
+    scope = make_scope(
+        [ball],
+        include_rigid_body=True,
+        include_rigid_constraint=False,
+        include_passive_collision=False,
+        include_bone_collision=False,
+    )
+    try:
+        scene.frame_set(1)
+        world, _, _, _ = physicsWorldBegin(
+            cache_state=None, scene=scene, object_scope=scope, enabled=True
+        )
+        step_rigid_bodies(world, enabled=True)
+        stats = get_rigid_solver_stats_result(
+            world, frame=scene.frame_current, generation=world.generation
+        )
+        assert stats is not None
+        assert "timing" not in stats
+        cache_state, _, _ = physicsWorldCommit(world, enabled=True)
+
+        scene.frame_set(2)
+        world2, _, _, _ = physicsWorldBegin(
+            cache_state=cache_state, scene=scene, object_scope=scope, enabled=True
+        )
+        step_rigid_bodies(world2, enabled=True, hotspot_timing=True)
+        stats2 = get_rigid_solver_stats_result(
+            world2, frame=scene.frame_current, generation=world2.generation
+        )
+        assert stats2 is not None
+        timing = stats2.get("timing")
+        assert timing is not None
+        assert timing["schema"] == "jolt_rigid_step_timing_v1"
+        assert timing["unit"] == "ms"
+        assert timing["transform_clear_ms"] >= 0.0
+        assert timing["transform_state_fetch_ms"] >= 0.0
+        assert timing["transform_result_loop_ms"] >= 0.0
+        world2.omni_cache_dispose("test_hotspot_timing")
+    finally:
+        _del(ball)
+
+
 def test_rigid_body_command_nodes():
     scene = bpy.context.scene
     ball = _make_obj("T3C_CommandNodeBall", (0, 0, 5), body_type="DYNAMIC")
@@ -2561,6 +2605,7 @@ if __name__ == "__main__":
     check("rigid jolt world settings implicit object pipeline", test_rigid_jolt_world_settings_implicit_object_pipeline)
     check("刚体容量溢出隔离与诊断", test_rigid_body_capacity_overflow_isolated_and_reported)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
+    check("Jolt 热点计时默认关闭与可选开启", test_rigid_hotspot_timing_optional)
     check("刚体写回线性索引", test_rigid_writeback_builds_linear_indexes_once)
     check("Collection 批量刚体写回", test_rigid_collection_batch_writeback_avoids_global_object_index)
     check("异构 Collection 稀疏刚体写回", test_rigid_mixed_collection_uses_sparse_target_writeback)
