@@ -18,6 +18,11 @@ from .names import (
 )
 
 
+# 当前帧列式结果的临时缓存键。它只服务于同一 PhysicsWorld 写回事务，
+# 不属于公开结果协议，world dispose 时随 backend_resources 一起清理。
+RIGID_TRANSFORM_COLUMNS_CACHE_KEY = "_rigid_transform_columns"
+
+
 def _float3(value) -> tuple[float, float, float]:
     return (float(value[0]), float(value[1]), float(value[2]))
 

@@ -25,7 +25,10 @@ import mathutils
 import numpy as np
 
 from .rigid.names import RIGID_BODY_SLOT_KIND
-from .rigid.results import index_rigid_transform_results_by_slot
+from .rigid.results import (
+    RIGID_TRANSFORM_COLUMNS_CACHE_KEY,
+    index_rigid_transform_results_by_slot,
+)
 from .scope import (
     PHYSICS_SCOPE_COLLECTION_BATCH_CHANNEL,
     PHYSICS_SCOPE_COLLECTION_BATCH_SCHEMA,
@@ -396,6 +399,7 @@ def _native_rigid_delta_columns(
     active_indices: list[int],
     objects,
     updates: dict,
+    column_cache: dict | None = None,
 ):
     """使用公共 C++ 列式反算；返回 None 表示当前 ABI 不可用。"""
     native = _get_rigid_delta_native()
@@ -405,15 +409,41 @@ def _native_rigid_delta_columns(
     solved_positions = np.empty((count, 3), dtype=np.float32)
     solved_rotations = np.empty((count, 4), dtype=np.float32)
     rotation_modes = np.empty(count, dtype=np.int32)
+    cache_used = False
+    if isinstance(column_cache, dict):
+        object_indices_by_ptr = column_cache.get("object_indices")
+        columns = column_cache.get("columns")
+        if isinstance(object_indices_by_ptr, dict) and isinstance(columns, (tuple, list)):
+            try:
+                positions = np.asarray(columns[0], dtype=np.float32).reshape(-1, 3)
+                rotations = np.asarray(columns[1], dtype=np.float32).reshape(-1, 4)
+                object_indices = np.fromiter(
+                    (
+                        int(object_indices_by_ptr.get(int(batch["object_ptrs"][index]), -1))
+                        for index in active_indices
+                    ),
+                    dtype=np.int32,
+                    count=count,
+                )
+                if np.all(object_indices >= 0):
+                    solved_positions[:, :] = positions[object_indices]
+                    solved_rotations[:, :] = rotations[object_indices]
+                    cache_used = True
+            except Exception:
+                cache_used = False
+
+    if not cache_used:
+        for row, index in enumerate(active_indices):
+            object_ptr = int(batch["object_ptrs"][index])
+            _spec, result = updates[object_ptr]
+            position = result.get("position")
+            rotation = result.get("rotation_wxyz")
+            if position is None or rotation is None:
+                raise ValueError("刚体结果缺少 position 或 rotation_wxyz")
+            solved_positions[row, :] = tuple(float(value) for value in position)
+            solved_rotations[row, :] = tuple(float(value) for value in rotation)
+
     for row, index in enumerate(active_indices):
-        object_ptr = int(batch["object_ptrs"][index])
-        _spec, result = updates[object_ptr]
-        position = result.get("position")
-        rotation = result.get("rotation_wxyz")
-        if position is None or rotation is None:
-            raise ValueError("刚体结果缺少 position 或 rotation_wxyz")
-        solved_positions[row, :] = tuple(float(value) for value in position)
-        solved_rotations[row, :] = tuple(float(value) for value in rotation)
         mode = str(getattr(objects[index], "rotation_mode", "XYZ") or "XYZ")
         rotation_modes[row] = _RIGID_ROTATION_MODE_CODES.get(mode, 0)
 
@@ -463,20 +493,21 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
         "dense_object_count": 0,
         "sparse_collection_count": 0,
         "sparse_object_count": 0,
+        "changed_object_count": 0,
+        "skipped_object_count": 0,
         "fallback_reason": "",
     }
     world.backend_resources[_RIGID_DIAGNOSTICS_KEY] = diagnostics
 
     updates = {}
     slots_by_object = {}
-    for slot in list(world.solver_slots.values()):
-        if slot.kind != RIGID_BODY_SLOT_KIND:
+    # 结果索引已经是本帧 solver 的发布集合，直接遍历它，避免再次扫描整个 slot 表。
+    for slot_id, result in results_by_slot.items():
+        slot = world.solver_slots.get(slot_id)
+        if slot is None or slot.kind != RIGID_BODY_SLOT_KIND:
             continue
         spec = slot.data.get("spec")
         if spec is None or spec.body_type != "DYNAMIC" or spec.obj is None:
-            continue
-        result = results_by_slot.get(slot.slot_id)
-        if result is None:
             continue
         object_ptr = int(getattr(spec, "obj_ptr", 0) or 0)
         if object_ptr <= 0 or object_ptr in updates:
@@ -537,21 +568,33 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
         if not active_indices:
             continue
         dense_batch = len(active_indices) == len(object_ptrs)
+        original_location = None
+        original_euler = None
+        original_quaternion = None
         try:
             delta_location = _foreach_float(live_objects, "delta_location", 3)
             delta_euler = _foreach_float(live_objects, "delta_rotation_euler", 3)
             delta_quaternion = _foreach_float(live_objects, "delta_rotation_quaternion", 4)
-            original_location = delta_location.copy()
-            original_euler = delta_euler.copy()
-            original_quaternion = delta_quaternion.copy()
+            original_location = delta_location.copy() if dense_batch else None
+            original_euler = delta_euler.copy() if dense_batch else None
+            original_quaternion = delta_quaternion.copy() if dense_batch else None
 
             native_columns = None
             try:
+                column_cache = world.backend_resources.get(RIGID_TRANSFORM_COLUMNS_CACHE_KEY)
+                fc = getattr(world, "frame_context", None)
+                if (
+                    not isinstance(column_cache, dict)
+                    or int(column_cache.get("frame", -1)) != int(getattr(fc, "frame", -2))
+                    or int(column_cache.get("generation", -1)) != int(getattr(world, "generation", -2))
+                ):
+                    column_cache = None
                 native_columns = _native_rigid_delta_columns(
                     batch,
                     active_indices,
                     objects,
                     updates,
+                    column_cache=column_cache,
                 )
             except Exception:
                 diagnostics["fallback_reason"] = "native_delta_failed"
@@ -581,16 +624,40 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
                     delta_euler[index * 3:(index + 1) * 3] = euler
                     delta_quaternion[index * 4:(index + 1) * 4] = quaternion
 
-            live_objects.foreach_set("delta_location", delta_location)
-            live_objects.foreach_set("delta_rotation_euler", delta_euler)
-            live_objects.foreach_set("delta_rotation_quaternion", delta_quaternion)
+            active = np.asarray(active_indices, dtype=np.intp)
+            if dense_batch:
+                original_location_rows = original_location.reshape(-1, 3)[active, :]
+                original_euler_rows = original_euler.reshape(-1, 3)[active, :]
+                original_quaternion_rows = original_quaternion.reshape(-1, 4)[active, :]
+                location_rows = delta_location.reshape(-1, 3)[active, :]
+                euler_rows = delta_euler.reshape(-1, 3)[active, :]
+                quaternion_rows = delta_quaternion.reshape(-1, 4)[active, :]
+                location_changed = np.any(location_rows != original_location_rows, axis=1)
+                euler_changed = np.any(euler_rows != original_euler_rows, axis=1)
+                quaternion_changed = np.any(
+                    quaternion_rows != original_quaternion_rows,
+                    axis=1,
+                )
+                changed_rows = location_changed | euler_changed | quaternion_changed
+                if np.any(location_changed):
+                    live_objects.foreach_set("delta_location", delta_location)
+                if np.any(euler_changed):
+                    live_objects.foreach_set("delta_rotation_euler", delta_euler)
+                if np.any(quaternion_changed):
+                    live_objects.foreach_set("delta_rotation_quaternion", delta_quaternion)
+            else:
+                live_objects.foreach_set("delta_location", delta_location)
+                live_objects.foreach_set("delta_rotation_euler", delta_euler)
+                live_objects.foreach_set("delta_rotation_quaternion", delta_quaternion)
+                changed_rows = np.ones(len(active_indices), dtype=bool)
         except Exception:
-            try:
-                live_objects.foreach_set("delta_location", original_location)
-                live_objects.foreach_set("delta_rotation_euler", original_euler)
-                live_objects.foreach_set("delta_rotation_quaternion", original_quaternion)
-            except Exception:
-                pass
+            if original_location is not None:
+                try:
+                    live_objects.foreach_set("delta_location", original_location)
+                    live_objects.foreach_set("delta_rotation_euler", original_euler)
+                    live_objects.foreach_set("delta_rotation_quaternion", original_quaternion)
+                except Exception:
+                    pass
             diagnostics["fallback_reason"] = "collection_bulk_write_failed"
             return None
 
@@ -601,7 +668,16 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
             diagnostics["sparse_collection_count"] += 1
             diagnostics["sparse_object_count"] += len(active_indices)
 
-        for index in active_indices:
+        changed_indices = [
+            active_indices[row]
+            for row, changed in enumerate(changed_rows)
+            if bool(changed)
+        ]
+        diagnostics["changed_object_count"] += len(changed_indices)
+        diagnostics["skipped_object_count"] += len(active_indices) - len(changed_indices)
+        written += len(active_indices)
+
+        for index in changed_indices:
             object_ptr = object_ptrs[index]
             spec, _result = updates[object_ptr]
             slot = slots_by_object[object_ptr]
@@ -613,7 +689,6 @@ def _collection_batch_writeback(world, results_by_slot: dict, touched: dict) -> 
             data_ptr = int(getattr(spec, "data_ptr", 0) or 0)
             touched[(object_ptr, data_ptr)] = (object_ptr, data_ptr)
             slot.data.pop("_writeback_error", None)
-            written += 1
     return written
 
 

@@ -1,0 +1,36 @@
+# Jolt 刚体写回性能边界
+
+## 目的
+
+本文记录 `PhysicsWorld` 公共刚体写回的实测边界，以及已经确认的优化取舍。写回属于物理世界公共事务，不能为了 Jolt 单独绕开统一写回协议。
+
+## 当前路径
+
+Jolt 的 `get_body_states_numpy()` 在求解器发布阶段返回连续的 position/rotation 列。solver 将本帧列和 `obj_ptr -> native row` 映射放入 `world.backend_resources["_rigid_transform_columns"]` 的瞬时缓存，写回仍然消费公开的逐 slot result stream；缓存只消除从结果字典重新组装 solved 数组的重复转换。
+
+Collection 写回分为两条路径：
+
+- dense Collection：比较本帧输出与当前 delta，只对实际变化的列调用 `foreach_set`，只对变化对象调用 `update_tag()`；
+- sparse Collection：保留原有三个 `foreach_set` 和逐目标通知。实测 sparse 的 changed-only/update_tag 筛选会变慢，因此不能泛化 dense 优化。
+
+缓存只接受 frame 和 world generation 同时匹配的结果；不匹配时自动回退原有结果字典路径。公开结果协议、reset/dispose 的 touched 语义不变。
+
+Native 反算内核还对常见的全零 rest Euler 和单位旋转增量走快速路径。一般 Euler、Quaternion、Axis-Angle 姿态仍走完整数学路径，native 不访问 Blender RNA。
+
+## Blender 5.2 实测
+
+测试方式：无头 Blender 5.2，合成 10,000 个刚体，零重力无接触，预热 2 帧、采样 5 帧。
+
+| 阶段 | P50 |
+| --- | ---: |
+| Jolt native step | 约 0.9-1.3 ms |
+| 写回（列缓存 + C++ 快速路径） | 约 19.9-24.5 ms |
+| 列缓存接入前写回 | 约 36.5 ms |
+
+剩余写回时间主要来自 Python 事务/索引准备和 Blender RNA 批量访问；`update_tag()` 不是 10k 刚体场景的主热点。下一步只有在接触密集工程的可选 timing 明确显示 `native_step_ms` 占主导时，才进入 Jolt solver 开关调优。
+
+## 后续边界
+
+1. 保持公共结果流和统一三种写回模式，不引入 Jolt 专用写回旁路。
+2. 若需要继续降低 Blender 侧开销，应优先减少 Python 事务对象构造和重复索引；不要重新启用已验证变慢的 sparse 通知筛选。
+3. 任何进一步优化都必须同时验证跳帧、reset、dispose、scope 重建和动态目标删除后的 delta 清理。

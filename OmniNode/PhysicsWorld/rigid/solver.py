@@ -41,6 +41,7 @@ from .results import (
     publish_rigid_constraint_state_result,
     publish_rigid_transform_result,
     publish_rigid_solver_stats_result,
+    RIGID_TRANSFORM_COLUMNS_CACHE_KEY,
 )
 from .declaration import RIGID_SOLVER_DECLARATION
 from .debug import install_rigid_slot_debug_snapshot
@@ -452,6 +453,12 @@ def _publish_rigid_transform_results(
     if timing is not None:
         timing["transform_state_fetch_ms"] = (time.perf_counter() - started) * 1000.0
 
+    # 保留当前帧的原生列式结果，供公共写回直接透传，避免从结果字典重新组装。
+    # 公开 result_stream 仍然按对象发布；缓存只在本次 world 生命周期内有效。
+    column_object_indices = {}
+    if batch_columns is None:
+        world.backend_resources.pop(RIGID_TRANSFORM_COLUMNS_CACHE_KEY, None)
+
     if ordered_slots is None:
         ordered_slots = _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND)
     if timing is not None:
@@ -480,6 +487,9 @@ def _publish_rigid_transform_results(
                 native_index = slot_indices.get(slot_id)
                 if native_index is None:
                     continue
+                object_ptr = int(getattr(spec, "obj_ptr", 0) or 0)
+                if object_ptr > 0:
+                    column_object_indices[object_ptr] = int(native_index)
                 position_offset = native_index * 3
                 rotation_offset = native_index * 4
                 pos_arr = (
@@ -554,6 +564,14 @@ def _publish_rigid_transform_results(
 
     if timing is not None:
         timing["transform_result_loop_ms"] = (time.perf_counter() - started) * 1000.0
+
+    if batch_columns is not None:
+        world.backend_resources[RIGID_TRANSFORM_COLUMNS_CACHE_KEY] = {
+            "frame": frame,
+            "generation": int(world.generation),
+            "columns": batch_columns,
+            "object_indices": column_object_indices,
+        }
 
     return published
 

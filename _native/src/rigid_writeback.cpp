@@ -248,10 +248,14 @@ void bind_rigid_writeback(nb::module_& module) {
 
                 Quaternion rest;
                 if (mode <= 5) {
-                    rest = euler_quaternion(
-                        base_rotation_eulers.data() + base * 3u,
-                        mode
-                    );
+                    const float* euler = base_rotation_eulers.data() + base * 3u;
+                    // Blender 默认姿态通常是全零；直接使用单位四元数，
+                    // 避免每个刚体重复执行三次 sin/cos。
+                    if (euler[0] == 0.0f && euler[1] == 0.0f && euler[2] == 0.0f) {
+                        rest = {1.0f, 0.0f, 0.0f, 0.0f};
+                    } else {
+                        rest = euler_quaternion(euler, mode);
+                    }
                 } else if (mode == 6) {
                     const float* values = base_rotation_quaternions.data() + base * 4u;
                     rest = normalize({values[0], values[1], values[2], values[3]});
@@ -263,8 +267,16 @@ void bind_rigid_writeback(nb::module_& module) {
                 const float* solved = solved_rotations_wxyz.data() + row * 4u;
                 const Quaternion current = normalize({solved[0], solved[1], solved[2], solved[3]});
                 const Quaternion delta = normalize(multiply(conjugated(rest), current));
-                if (mode <= 5)
-                    quaternion_to_euler(delta, mode, delta_eulers.data() + row * 3u);
+                if (mode <= 5) {
+                    // 单位旋转的 Euler 增量就是零，避免静止刚体的 atan2 路径。
+                    const bool identity_delta =
+                        std::fabs(std::fabs(delta.w) - 1.0f) <= 1.0e-7f
+                        && std::fabs(delta.x) <= 1.0e-7f
+                        && std::fabs(delta.y) <= 1.0e-7f
+                        && std::fabs(delta.z) <= 1.0e-7f;
+                    if (!identity_delta)
+                        quaternion_to_euler(delta, mode, delta_eulers.data() + row * 3u);
+                }
                 float* delta_rotation = delta_quaternions.data() + row * 4u;
                 delta_rotation[0] = delta.w;
                 delta_rotation[1] = delta.x;
