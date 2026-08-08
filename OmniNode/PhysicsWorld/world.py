@@ -513,7 +513,10 @@ def physicsWorldBegin(
         else:
             restart_reason = "initialization"
         _run_world_restart_handlers(world, object_scope, restart_reason)
-        if not jumped or previous_world is None:
+        if jumped and previous_world is not None:
+            # 跳帧会替换 world owner；旧 owner 仍负责清理其 scope 写回状态。
+            _run_scope_restart_handlers(previous_world, object_scope)
+        else:
             _run_scope_restart_handlers(world, object_scope)
 
     # Collection 批次只在本帧有效；注册和写回共享同一对象顺序与基础变换。

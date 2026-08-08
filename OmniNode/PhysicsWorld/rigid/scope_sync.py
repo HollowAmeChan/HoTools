@@ -61,6 +61,24 @@ def _scope_world_matrix_values(scope: PhysicsObjectScope, obj):
         return None
 
 
+def _active_rigid_body_slot_ids(scope: PhysicsObjectScope) -> set[str]:
+    """快速读取当前 scope 的启用刚体身份，不解析完整 spec。"""
+    active_ids: set[str] = set()
+    for obj in _flatten(getattr(scope, "objects", ())):
+        props = getattr(obj, "hotools_rigid_body", None)
+        if props is None or not bool(getattr(props, "enabled", False)):
+            continue
+        try:
+            obj_ptr = int(obj.as_pointer())
+            data = getattr(obj, "data", None)
+            data_ptr = int(data.as_pointer()) if data is not None else 0
+        except Exception:
+            continue
+        if obj_ptr:
+            active_ids.add(f"rigid:{obj_ptr}:{data_ptr}")
+    return active_ids
+
+
 def clear_scope_dynamic_rigid_deltas(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
     """
     在重启阶段收集规格前清理动态刚体对象 delta。
@@ -84,6 +102,8 @@ def clear_scope_dynamic_rigid_deltas(world: PhysicsWorldCache, scope: PhysicsObj
         try:
             obj.delta_location = (0.0, 0.0, 0.0)
             obj.delta_rotation_euler = (0.0, 0.0, 0.0)
+            obj.delta_rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+            obj.delta_scale = (1.0, 1.0, 1.0)
             updated.add(obj)
         except Exception:
             pass
@@ -330,6 +350,13 @@ def reset_rigid_world_runtime(
     _mark_all_rigid_slots_for_resync(world)
     adapter = world.backend_resources.get(RIGID_BACKEND_RESOURCE_KEY)
     if adapter is not None:
+        reset_fn = getattr(adapter, "reset_for_restart", None)
+        if callable(reset_fn):
+            reset_fn(_reason)
+        else:
+            flush_fn = getattr(adapter, "_flush_handles", None)
+            if callable(flush_fn):
+                flush_fn()
         adapter._last_generation = int(world.generation)
 
 
@@ -369,6 +396,14 @@ def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjec
 
     frame_context = getattr(world, "frame_context", None)
     if not bool(getattr(frame_context, "registration_refresh_required", True)):
+        active_body_ids = _active_rigid_body_slot_ids(scope)
+        active_constraint_ids = {
+            slot_id
+            for slot_id, slot in world.solver_slots.items()
+            if slot.kind == RIGID_CONSTRAINT_SLOT_KIND
+        }
+        if _prune_stale_rigid_slots(world, active_body_ids, active_constraint_ids):
+            world.replace_required = True
         _sync_kinematic_poses_from_scope(world, scope)
         return
 

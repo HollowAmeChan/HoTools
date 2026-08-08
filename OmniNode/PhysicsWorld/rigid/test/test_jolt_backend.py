@@ -27,6 +27,7 @@ from OmniNode.PhysicsWorld.rigid.implicit_objects import (
     register_rigid_jolt_world_setting_objects,
 )
 from OmniNode.PhysicsWorld.rigid.backends.jolt import ensure_jolt_adapter
+from OmniNode.PhysicsWorld.rigid.scope_sync import reset_rigid_world_runtime
 from OmniNode.PhysicsWorld.rigid.specs import RigidBodySpec
 
 PASS = "[PASS]"
@@ -104,6 +105,23 @@ def test_node_optimization_setting_replacement():
     assert tuned is not None and tuned is not default
     assert tuned.jolt_constraint_warm_start is False
     tuned.dispose("optimization-test")
+
+def test_restart_flushes_native_bodies():
+    world = PhysicsWorldCache()
+    adapter = ensure_jolt_adapter(world)
+    spec = RigidBodySpec(
+        obj=None,
+        obj_ptr=2,
+        data_ptr=2,
+        simulation_order_key=("test", "restart"),
+        world_position=(0.0, 0.0, 3.0),
+        shape_type="SPHERE",
+    )
+    assert adapter.sync_bodies_batch([("rigid:restart", spec)]) == {}
+    assert adapter.body_count == 1
+    reset_rigid_world_runtime(world, None, "test_restart")
+    assert adapter.body_count == 0
+    adapter.dispose("restart-test")
 
 def test_adapter_batch_body_registration():
     world = PhysicsWorldCache()
@@ -368,6 +386,7 @@ if __name__ == "__main__":
         ("Jolt optimization switches",     test_optimization_switches),
         ("node worker setting replacement", test_node_worker_setting_replacement),
         ("node optimization setting replacement", test_node_optimization_setting_replacement),
+        ("Jolt restart flushes native bodies", test_restart_flushes_native_bodies),
         ("adapter body batch registration", test_adapter_batch_body_registration),
         ("创建 JoltWorld",          test_create_world),
         ("添加/删除刚体",           test_add_remove_bodies),

@@ -296,6 +296,14 @@ class JoltAdapter:
         self._body_slots_by_handle.clear()
         self._clear_contact_events()
 
+    def reset_for_restart(self, reason: str = "world_restart") -> None:
+        """清空同一 adapter 内的 native 世界，供公共 restart/reset 协议调用。"""
+        self._flush_handles()
+        self.last_step_ms = 0.0
+        self.last_command_count = 0
+        self.last_command_failed = 0
+        self.last_command_errors = []
+
     def _clear_contact_events(self) -> None:
         self.last_contact_events = []
         self.last_contact_event_overflow = 0
