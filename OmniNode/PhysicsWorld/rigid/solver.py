@@ -7,6 +7,8 @@ Phase 5：step_rigid_bodies — 接入 Jolt adapter，执行模拟步。
 
 from __future__ import annotations
 
+import time
+
 from .names import (
     JOLT_STEP_WRITER_ID,
     RIGID_BACKEND_RESOURCE_KEY,
@@ -605,6 +607,7 @@ def _publish_rigid_solver_stats(
     transform_count: int,
     contact_event_count: int = 0,
     sensor_event_count: int = 0,
+    timing: dict | None = None,
 ) -> dict | None:
     fc = world.frame_context
     sync_error_count, result_error_count = _rigid_slot_error_counts(world)
@@ -630,6 +633,7 @@ def _publish_rigid_solver_stats(
         command_errors=list(getattr(adapter, "last_command_errors", []) or []),
         sync_error_count=sync_error_count,
         result_error_count=result_error_count,
+        timing=timing,
         backend=getattr(adapter, "BACKEND", "jolt"),
     )
 
@@ -641,6 +645,7 @@ def _publish_rigid_solver_stats(
 def step_rigid_bodies(
     world: PhysicsWorldCache,
     enabled: bool = True,
+    hotspot_timing: bool = False,
 ) -> tuple[int, float]:
     """
     Phase 5 核心：驱动 Jolt 模拟一帧。
@@ -660,6 +665,11 @@ def step_rigid_bodies(
     if not enabled or world is None or not isinstance(world, PhysicsWorldCache):
         return 0, 0.0
 
+    timing = (
+        {"schema": "jolt_rigid_step_timing_v1", "unit": "ms"}
+        if bool(hotspot_timing)
+        else None
+    )
     fc = world.frame_context
     same_frame = bool(getattr(fc, "same_frame", False)) if fc is not None else False
     if same_frame and not _has_pending_jolt_work(world):
@@ -673,7 +683,9 @@ def step_rigid_bodies(
             _publish_rigid_constraint_state_results(world, adapter)
             contact_count, sensor_count = _publish_rigid_contact_event_results(world, adapter)
             _publish_rigid_solver_stats(
-                world, adapter, 0.0, transform_count, contact_count, sensor_count)
+                world, adapter, 0.0, transform_count, contact_count, sensor_count,
+                timing=timing,
+            )
         return body_count, 0.0
 
     from .backends.jolt import ensure_jolt_adapter
@@ -697,10 +709,16 @@ def step_rigid_bodies(
             pass
         # Jolt rigid-world settings and generated constraints are persistent implicit objects.
         # Apply Jolt rigid-world settings first, then materialize generated constraints as regular slots.
+        if timing is not None:
+            started = time.perf_counter()
         sync_rigid_jolt_world_settings(world, adapter)
         sync_generated_constraint_slots(world, adapter=adapter)
+        if timing is not None:
+            timing["settings_sync_ms"] = (time.perf_counter() - started) * 1000.0
 
         # --- sync rigid bodies ---
+        if timing is not None:
+            started = time.perf_counter()
         pending_body_sync = []
         for slot_id, slot in _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND):
             spec = slot.data.get("spec")
@@ -725,8 +743,12 @@ def step_rigid_bodies(
                 slot.data["_jolt_generation"] = world.generation
                 slot.data.pop("_jolt_kinematic_pose_dirty", None)
                 slot.data.pop("_jolt_error", None)
+        if timing is not None:
+            timing["body_sync_ms"] = (time.perf_counter() - started) * 1000.0
 
         # --- sync constraints ---
+        if timing is not None:
+            started = time.perf_counter()
         for slot_id, slot in _ordered_constraint_slots(world):
             spec = slot.data["spec"]
 
@@ -740,8 +762,14 @@ def step_rigid_bodies(
                     slot.data.pop("_jolt_error", None)
                 except Exception as e:
                     slot.data["_jolt_error"] = str(e)
+        if timing is not None:
+            timing["constraint_sync_ms"] = (time.perf_counter() - started) * 1000.0
 
+        if timing is not None:
+            started = time.perf_counter()
         _apply_rigid_body_commands(world, adapter)
+        if timing is not None:
+            timing["command_apply_ms"] = (time.perf_counter() - started) * 1000.0
 
         restart = bool(getattr(fc, "restart_required", True)) if fc is not None else True
         # 非连续 restart 只发布冷启动姿态，避免本帧刚清零的 Object.delta_*
@@ -752,17 +780,37 @@ def step_rigid_bodies(
             _publish_rigid_constraint_state_results(world, adapter)
             contact_count, sensor_count = _publish_rigid_contact_event_results(world, adapter)
             _publish_rigid_solver_stats(
-                world, adapter, 0.0, transform_count, contact_count, sensor_count)
+                world, adapter, 0.0, transform_count, contact_count, sensor_count,
+                timing=timing,
+            )
             return adapter.body_count, 0.0
 
         # --- step ---
-        step_ms = adapter.step(dt, substeps)
+        if timing is None:
+            step_ms = adapter.step(dt, substeps)
+        else:
+            step_ms = adapter.step(dt, substeps, timing=timing)
+        if timing is not None:
+            started = time.perf_counter()
         _apply_breakable_constraint_policy(world, adapter)
+        if timing is not None:
+            timing["breakable_policy_ms"] = (time.perf_counter() - started) * 1000.0
+            started = time.perf_counter()
         transform_count = _publish_rigid_transform_results(world, adapter)
+        if timing is not None:
+            timing["transform_publish_ms"] = (time.perf_counter() - started) * 1000.0
+            started = time.perf_counter()
         _publish_rigid_constraint_state_results(world, adapter)
+        if timing is not None:
+            timing["constraint_publish_ms"] = (time.perf_counter() - started) * 1000.0
+            started = time.perf_counter()
         contact_count, sensor_count = _publish_rigid_contact_event_results(world, adapter)
+        if timing is not None:
+            timing["contact_publish_ms"] = (time.perf_counter() - started) * 1000.0
         _publish_rigid_solver_stats(
-            world, adapter, step_ms, transform_count, contact_count, sensor_count)
+            world, adapter, step_ms, transform_count, contact_count, sensor_count,
+            timing=timing,
+        )
 
         # 注意：写回由下游 Physics Writeback 节点统一处理。
         # adapter.writeback_transforms 不在此处调用，以便写回节点能先捕获 frame=0 初始位置。

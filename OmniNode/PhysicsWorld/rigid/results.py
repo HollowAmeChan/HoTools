@@ -422,9 +422,10 @@ def make_rigid_solver_stats_result(
     command_errors: list[str] | None = None,
     sync_error_count: int = 0,
     result_error_count: int = 0,
+    timing: dict | None = None,
     backend: str = "jolt",
 ) -> dict:
-    return {
+    result = {
         "channel": RIGID_SOLVER_STATS_CHANNEL,
         "solver": RIGID_SOLVER_ID,
         "backend": str(backend),
@@ -447,6 +448,9 @@ def make_rigid_solver_stats_result(
         "sync_error_count": int(sync_error_count),
         "result_error_count": int(result_error_count),
     }
+    if timing is not None:
+        result["timing"] = dict(timing)
+    return result
 
 
 def publish_rigid_solver_stats_result(
@@ -469,6 +473,7 @@ def publish_rigid_solver_stats_result(
     command_errors: list[str] | None = None,
     sync_error_count: int = 0,
     result_error_count: int = 0,
+    timing: dict | None = None,
     backend: str = "jolt",
 ) -> dict | None:
     world.clear_results(RIGID_SOLVER_STATS_CHANNEL, solver=RIGID_SOLVER_ID)
@@ -491,6 +496,7 @@ def publish_rigid_solver_stats_result(
         command_errors=command_errors,
         sync_error_count=sync_error_count,
         result_error_count=result_error_count,
+        timing=timing,
         backend=backend,
     )
     return world.publish_result(result, channel=RIGID_SOLVER_STATS_CHANNEL, solver=RIGID_SOLVER_ID)

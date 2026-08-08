@@ -790,10 +790,18 @@ class JoltAdapter:
 
     # ---- Simulation step -------------------------------------------------
 
-    def step(self, dt: float, substeps: int = 1) -> float:
+    def step(self, dt: float, substeps: int = 1, timing: dict | None = None) -> float:
         """执行模拟步，返回耗时（ms）。"""
+        if timing is None:
+            self.last_step_ms = self._jw.step(dt, substeps)
+            self._refresh_contact_events()
+            return self.last_step_ms
+        started = time.perf_counter()
         self.last_step_ms = self._jw.step(dt, substeps)
+        timing["native_step_ms"] = (time.perf_counter() - started) * 1000.0
+        started = time.perf_counter()
         self._refresh_contact_events()
+        timing["contact_snapshot_decode_ms"] = (time.perf_counter() - started) * 1000.0
         return self.last_step_ms
 
     def _refresh_contact_events(self) -> None:

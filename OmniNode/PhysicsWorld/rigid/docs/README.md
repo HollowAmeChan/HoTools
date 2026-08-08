@@ -1,5 +1,7 @@
 # PhysicsWorld 刚体文档
 
+性能基线与优化顺序见 [Jolt 性能优化契约](JOLT_PERFORMANCE_OPTIMIZATION.md)。
+
 这里是 `PhysicsWorld/rigid` 随代码维护的中文文档。当前刚体求解器使用 Jolt；PMX 2.0 作为现有刚体域的 source adapter 接入，不增加第二个 backend。
 
 ## 现有 Jolt 文档

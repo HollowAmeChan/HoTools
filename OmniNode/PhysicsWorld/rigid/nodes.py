@@ -146,7 +146,13 @@ def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
     bl_label="刚体模拟步",
     base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界"],
+    _INPUT_NAME=["物理世界", "热点耗时调试"],
+    input_init={
+        "hotspot_timing": {
+            "default_value": False,
+            "description": "仅打开时采集 Jolt 模拟步分段耗时；关闭时不读取时钟或创建计时数据",
+        },
+    },
     _OUTPUT_NAME=["物理世界", "刚体数量", "耗时ms"],
     omni_description="""
     执行 Jolt 刚体模拟步，刚体与约束状态分别发布到
@@ -168,8 +174,9 @@ def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
 )
 def physicsRigidSolver(
     world: object,
+    hotspot_timing: bool = False,
 ) -> tuple[object, int, float]:
-    body_count, step_ms = step_rigid_bodies(world, True)
+    body_count, step_ms = step_rigid_bodies(world, True, hotspot_timing=bool(hotspot_timing))
     return world, body_count, float(step_ms)
 
 
