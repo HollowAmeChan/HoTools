@@ -420,7 +420,11 @@ def _apply_rigid_body_commands(world: PhysicsWorldCache, adapter) -> tuple[int, 
     return applied, failed
 
 
-def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
+def _publish_rigid_transform_results(
+    world: PhysicsWorldCache,
+    adapter,
+    ordered_slots=None,
+) -> int:
     """
     从 backend 采样本帧刚体 transform，写入 world result stream。
 
@@ -436,7 +440,9 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
     if callable(get_body_states):
         batch_states = get_body_states()
 
-    for slot_id, slot in _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND):
+    if ordered_slots is None:
+        ordered_slots = _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND)
+    for slot_id, slot in ordered_slots:
         spec = slot.data.get("spec")
         if spec is None:
             continue
@@ -481,14 +487,20 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
     return published
 
 
-def _publish_rigid_constraint_state_results(world: PhysicsWorldCache, adapter) -> int:
+def _publish_rigid_constraint_state_results(
+    world: PhysicsWorldCache,
+    adapter,
+    ordered_slots=None,
+) -> int:
     """发布本帧约束状态；结果不得暴露 native constraint handle。"""
     fc = world.frame_context
     frame = int(getattr(fc, "frame", 0) or 0)
     published = 0
     clear_rigid_constraint_state_results(world)
 
-    for slot_id, slot in _ordered_constraint_slots(world):
+    if ordered_slots is None:
+        ordered_slots = _ordered_constraint_slots(world)
+    for slot_id, slot in ordered_slots:
         spec = slot.data.get("spec")
         if spec is None:
             continue
@@ -557,10 +569,12 @@ def _publish_rigid_contact_event_results(
     return contact_count, sensor_count
 
 
-def _apply_breakable_constraint_policy(world: PhysicsWorldCache, adapter) -> int:
+def _apply_breakable_constraint_policy(world: PhysicsWorldCache, adapter, ordered_slots=None) -> int:
     """在 Jolt step 后按每步约束冲量禁用超过阈值的约束。"""
     broken_count = 0
-    for slot_id, slot in _ordered_constraint_slots(world):
+    if ordered_slots is None:
+        ordered_slots = _ordered_constraint_slots(world)
+    for slot_id, slot in ordered_slots:
         spec = slot.data.get("spec")
         if spec is None or not bool(getattr(spec, "breakable", False)):
             continue
@@ -719,8 +733,9 @@ def step_rigid_bodies(
         # --- sync rigid bodies ---
         if timing is not None:
             started = time.perf_counter()
+        ordered_body_slots = _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND)
         pending_body_sync = []
-        for slot_id, slot in _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND):
+        for slot_id, slot in ordered_body_slots:
             spec = slot.data.get("spec")
             if spec is None:
                 continue
@@ -749,7 +764,8 @@ def step_rigid_bodies(
         # --- sync constraints ---
         if timing is not None:
             started = time.perf_counter()
-        for slot_id, slot in _ordered_constraint_slots(world):
+        ordered_constraint_slots = _ordered_constraint_slots(world)
+        for slot_id, slot in ordered_constraint_slots:
             spec = slot.data["spec"]
 
             needs_sync = slot.data.get("_jolt_generation") != world.generation
@@ -776,8 +792,8 @@ def step_rigid_bodies(
         # 被重力等首步结果立即重新写入；首次初始化仍保持历史首帧推进语义。
         restart_without_step = restart and getattr(fc, "previous_frame", None) is not None
         if same_frame or restart_without_step:
-            transform_count = _publish_rigid_transform_results(world, adapter)
-            _publish_rigid_constraint_state_results(world, adapter)
+            transform_count = _publish_rigid_transform_results(world, adapter, ordered_body_slots)
+            _publish_rigid_constraint_state_results(world, adapter, ordered_constraint_slots)
             contact_count, sensor_count = _publish_rigid_contact_event_results(world, adapter)
             _publish_rigid_solver_stats(
                 world, adapter, 0.0, transform_count, contact_count, sensor_count,
@@ -792,15 +808,15 @@ def step_rigid_bodies(
             step_ms = adapter.step(dt, substeps, timing=timing)
         if timing is not None:
             started = time.perf_counter()
-        _apply_breakable_constraint_policy(world, adapter)
+        _apply_breakable_constraint_policy(world, adapter, ordered_constraint_slots)
         if timing is not None:
             timing["breakable_policy_ms"] = (time.perf_counter() - started) * 1000.0
             started = time.perf_counter()
-        transform_count = _publish_rigid_transform_results(world, adapter)
+        transform_count = _publish_rigid_transform_results(world, adapter, ordered_body_slots)
         if timing is not None:
             timing["transform_publish_ms"] = (time.perf_counter() - started) * 1000.0
             started = time.perf_counter()
-        _publish_rigid_constraint_state_results(world, adapter)
+        _publish_rigid_constraint_state_results(world, adapter, ordered_constraint_slots)
         if timing is not None:
             timing["constraint_publish_ms"] = (time.perf_counter() - started) * 1000.0
             started = time.perf_counter()
