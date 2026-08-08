@@ -424,6 +424,7 @@ def _publish_rigid_transform_results(
     world: PhysicsWorldCache,
     adapter,
     ordered_slots=None,
+    timing=None,
 ) -> int:
     """
     从 backend 采样本帧刚体 transform，写入 world result stream。
@@ -434,14 +435,23 @@ def _publish_rigid_transform_results(
     fc = world.frame_context
     frame = int(getattr(fc, "frame", 0) or 0)
     published = 0
+    if timing is not None:
+        started = time.perf_counter()
     clear_rigid_transform_results(world)
+    if timing is not None:
+        timing["transform_clear_ms"] = (time.perf_counter() - started) * 1000.0
+        started = time.perf_counter()
     batch_states = None
     get_body_states = getattr(adapter, "get_body_states", None)
     if callable(get_body_states):
         batch_states = get_body_states()
+    if timing is not None:
+        timing["transform_state_fetch_ms"] = (time.perf_counter() - started) * 1000.0
 
     if ordered_slots is None:
         ordered_slots = _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND)
+    if timing is not None:
+        started = time.perf_counter()
     for slot_id, slot in ordered_slots:
         spec = slot.data.get("spec")
         if spec is None:
@@ -483,6 +493,9 @@ def _publish_rigid_transform_results(
             published += 1
         except Exception as exc:
             slot.data["_result_error"] = str(exc)
+
+    if timing is not None:
+        timing["transform_result_loop_ms"] = (time.perf_counter() - started) * 1000.0
 
     return published
 
@@ -693,7 +706,7 @@ def step_rigid_bodies(
             adapter.last_command_count = 0
             adapter.last_command_failed = 0
             adapter.last_command_errors = []
-            transform_count = _publish_rigid_transform_results(world, adapter)
+            transform_count = _publish_rigid_transform_results(world, adapter, timing=timing)
             _publish_rigid_constraint_state_results(world, adapter)
             contact_count, sensor_count = _publish_rigid_contact_event_results(world, adapter)
             _publish_rigid_solver_stats(
@@ -792,7 +805,9 @@ def step_rigid_bodies(
         # 被重力等首步结果立即重新写入；首次初始化仍保持历史首帧推进语义。
         restart_without_step = restart and getattr(fc, "previous_frame", None) is not None
         if same_frame or restart_without_step:
-            transform_count = _publish_rigid_transform_results(world, adapter, ordered_body_slots)
+            transform_count = _publish_rigid_transform_results(
+                world, adapter, ordered_body_slots, timing=timing
+            )
             _publish_rigid_constraint_state_results(world, adapter, ordered_constraint_slots)
             contact_count, sensor_count = _publish_rigid_contact_event_results(world, adapter)
             _publish_rigid_solver_stats(
@@ -812,7 +827,9 @@ def step_rigid_bodies(
         if timing is not None:
             timing["breakable_policy_ms"] = (time.perf_counter() - started) * 1000.0
             started = time.perf_counter()
-        transform_count = _publish_rigid_transform_results(world, adapter, ordered_body_slots)
+        transform_count = _publish_rigid_transform_results(
+            world, adapter, ordered_body_slots, timing=timing
+        )
         if timing is not None:
             timing["transform_publish_ms"] = (time.perf_counter() - started) * 1000.0
             started = time.perf_counter()
