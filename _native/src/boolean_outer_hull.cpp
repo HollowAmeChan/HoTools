@@ -2,6 +2,7 @@
 #include <nanobind/ndarray.h>
 
 #include <igl/copyleft/cgal/outer_hull.h>
+#include <igl/copyleft/cgal/mesh_boolean.h>
 
 #include <Eigen/Core>
 
@@ -52,7 +53,7 @@ struct CoordinateHash {
 
 std::uint64_t coordinate_bits(double value) {
     if (value == 0.0) {
-        value = 0.0;  // Canonicalize negative zero.
+        value = 0.0;  // 统一负零表示。
     }
     std::uint64_t bits = 0;
     static_assert(sizeof(bits) == sizeof(value));
@@ -83,6 +84,43 @@ nb::ndarray<nb::numpy, T> make_numpy(
         delete static_cast<ArrayStorage<T>*>(pointer);
     });
     return nb::ndarray<nb::numpy, T>(data, shape, owner);
+}
+
+nb::dict boolean_mesh(
+    const VertexInput& vertices_a,
+    const TriangleInput& faces_a,
+    const VertexInput& vertices_b,
+    const TriangleInput& faces_b,
+    const std::int32_t operation
+) {
+    if (operation < 0 || operation > 2) {
+        throw std::invalid_argument("布尔运算类型必须为 0（交集）、1（并集）或 2（差集）");
+    }
+    Eigen::Map<const MatrixXdR> va(vertices_a.data(), vertices_a.shape(0), 3);
+    Eigen::Map<const MatrixXiR> fa(reinterpret_cast<const int*>(faces_a.data()), faces_a.shape(0), 3);
+    Eigen::Map<const MatrixXdR> vb(vertices_b.data(), vertices_b.shape(0), 3);
+    Eigen::Map<const MatrixXiR> fb(reinterpret_cast<const int*>(faces_b.data()), faces_b.shape(0), 3);
+    MatrixXdR vc;
+    MatrixXiR fc;
+    Eigen::VectorXi j;
+    const auto type = operation == 0
+        ? igl::MESH_BOOLEAN_TYPE_INTERSECT
+        : operation == 1
+            ? igl::MESH_BOOLEAN_TYPE_UNION
+            : igl::MESH_BOOLEAN_TYPE_MINUS;
+    {
+        nb::gil_scoped_release release;
+        igl::copyleft::cgal::mesh_boolean(va, fa, vb, fb, type, vc, fc, j);
+    }
+    std::vector<double> out_vertices(vc.data(), vc.data() + vc.size());
+    std::vector<std::int32_t> out_faces(
+        reinterpret_cast<const std::int32_t*>(fc.data()),
+        reinterpret_cast<const std::int32_t*>(fc.data()) + fc.size()
+    );
+    nb::dict result;
+    result["vertices"] = make_numpy<double>(std::move(out_vertices), {static_cast<std::size_t>(vc.rows()), 3U});
+    result["faces"] = make_numpy<std::int32_t>(std::move(out_faces), {static_cast<std::size_t>(fc.rows()), 3U});
+    return result;
 }
 
 void validate_inputs(
@@ -396,7 +434,17 @@ nb::dict outer_hull(
 
 NB_MODULE(hotools_boolean, module) {
     module.doc() =
-        "Exact self-union/outer-hull reconstruction for HoTools (CGAL/libigl).";
+        "HoTools 的 CGAL/libigl 精确布尔运算模块。";
+    module.def(
+        "boolean",
+        &boolean_mesh,
+        nb::arg("vertices_a").noconvert(),
+        nb::arg("faces_a").noconvert(),
+        nb::arg("vertices_b").noconvert(),
+        nb::arg("faces_b").noconvert(),
+        nb::arg("operation").noconvert(),
+        "执行交集、并集或差集布尔运算。"
+    );
     module.def(
         "outer_hull",
         &outer_hull,
