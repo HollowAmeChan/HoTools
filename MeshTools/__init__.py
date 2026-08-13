@@ -3,6 +3,7 @@ import bpy
 from . import boolean
 from .bone_chain import OP_CreatBoneChainByMeshFlow
 from .hole_fill import OP_ModalFillMeshHole
+from .visual_boolean import OP_VisualBooleanCut
 from .placement import (
     OP_AutoPlaceObjectBottom,
     OP_AutoSnapFaceOrthogonal,
@@ -63,6 +64,7 @@ cls = [
     OP_AlignViewToAvgNormal,
     OP_CreatBoneChainByMeshFlow,
     OP_ModalFillMeshHole,
+    OP_VisualBooleanCut,
     VIEW3D_MT_edit_mesh_hotools,
 ]
 

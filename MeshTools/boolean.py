@@ -370,6 +370,8 @@ class VIEW3D_MT_object_hotools_bool(bpy.types.Menu):
         layout.operator(OP_BooleanUnion.bl_idname, icon='MOD_BOOLEAN')
         layout.operator(OP_BooleanDifference.bl_idname, icon='MOD_BOOLEAN')
         layout.separator()
+        layout.operator("ho.visual_boolean_cut", icon='MOD_BOOLEAN')
+        layout.separator()
         layout.operator(OP_BooleanAutoOptimize.bl_idname, icon='MOD_REMESH')
         layout.separator()
         layout.operator(OP_BooleanUnionReconstruction.bl_idname, icon='MOD_REMESH')
