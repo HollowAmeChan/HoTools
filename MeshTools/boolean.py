@@ -3,7 +3,7 @@ import sys
 
 import bpy
 import numpy as np
-from mathutils import Matrix, Vector
+from mathutils import Vector
 from bpy.types import Operator
 from bpy.props import BoolProperty
 
@@ -119,7 +119,7 @@ def _build_mesh(source_mesh, result):
 
 class OP_BooleanUnionReconstruction(Operator):
     bl_idname = "ho.boolean_union_reconstruction"
-    bl_label = "布尔并集重构"
+    bl_label = "并集重构"
     bl_description = "删除内部相交面和封闭空腔，仅在布尔交线附近生成三角面"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -186,9 +186,35 @@ def _triangle_arrays(obj, matrix):
     return np.ascontiguousarray(vertices), np.ascontiguousarray(faces)
 
 
-def _build_boolean_mesh(source_mesh, result):
+def _polygon_arrays(obj, matrix):
+    mesh = obj.data
+    vertices = np.empty((len(mesh.vertices), 3), dtype=np.float64)
+    mesh.vertices.foreach_get("co", vertices.ravel())
+    vertices = np.asarray([matrix @ Vector(v) for v in vertices], dtype=np.float64)
+    loop_vertices = np.empty(len(mesh.loops), dtype=np.int32)
+    polygon_starts = np.empty(len(mesh.polygons), dtype=np.int32)
+    polygon_totals = np.empty(len(mesh.polygons), dtype=np.int32)
+    mesh.loops.foreach_get("vertex_index", loop_vertices)
+    mesh.polygons.foreach_get("loop_start", polygon_starts)
+    mesh.polygons.foreach_get("loop_total", polygon_totals)
+    offsets = np.empty(len(mesh.polygons) + 1, dtype=np.int32)
+    offsets[0] = 0
+    np.cumsum(polygon_totals, out=offsets[1:])
+    polygon_vertices = np.empty(offsets[-1], dtype=np.int32)
+    for index, (start, total) in enumerate(zip(polygon_starts, polygon_totals)):
+        begin = offsets[index]
+        polygon_vertices[begin:begin + total] = loop_vertices[start:start + total]
+    return (
+        np.ascontiguousarray(vertices),
+        np.ascontiguousarray(polygon_vertices),
+        np.ascontiguousarray(offsets),
+    )
+
+
+def _build_boolean_mesh(source_mesh, result, to_local):
     vertices = np.asarray(result["vertices"], dtype=np.float64)
     faces = np.asarray(result["faces"], dtype=np.int32)
+    vertices = np.asarray([to_local @ Vector(vertex) for vertex in vertices], dtype=np.float64)
     if vertices.size == 0 or faces.size == 0:
         raise RuntimeError("布尔运算没有生成有效网格")
     output = bpy.data.meshes.new(f"{source_mesh.name}_布尔结果")
@@ -199,11 +225,59 @@ def _build_boolean_mesh(source_mesh, result):
     return output
 
 
+def _build_optimized_mesh(source_mesh, result, to_local):
+    vertices = np.asarray(result["vertices"], dtype=np.float64)
+    faces = np.asarray(result["faces"], dtype=np.int32)
+    vertices = np.asarray([to_local @ Vector(vertex) for vertex in vertices], dtype=np.float64)
+    if vertices.size == 0 or faces.size == 0:
+        raise RuntimeError("自动优化没有生成有效网格")
+    output = bpy.data.meshes.new(f"{source_mesh.name}_自动优化")
+    output.from_pydata(vertices.tolist(), [], faces.tolist())
+    for material in source_mesh.materials:
+        output.materials.append(material)
+    output.update(calc_edges=True)
+    return output
+
+
+class OP_BooleanAutoOptimize(Operator):
+    bl_idname = "ho.boolean_auto_optimize"
+    bl_label = "自动优化"
+    bl_description = "使用 CGAL 合并重复点、修复方向、自交和空洞，并检查封闭流形"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and context.object.type == 'MESH'
+
+    def execute(self, context):
+        obj = context.object
+        try:
+            native = _load_native_boolean()
+            vertices, polygon_vertices, polygon_offsets = _polygon_arrays(obj, obj.matrix_world)
+            result = native.auto_optimize(vertices, polygon_vertices, polygon_offsets)
+            output_mesh = _build_optimized_mesh(obj.data, result, obj.matrix_world.inverted())
+            source_mesh = obj.data
+            obj.data = output_mesh
+            if source_mesh.users == 0:
+                bpy.data.meshes.remove(source_mesh)
+        except Exception as exc:
+            self.report({'ERROR'}, f"自动优化失败: {exc}")
+            return {'CANCELLED'}
+        self.report(
+            {'INFO'},
+            f"自动优化完成：填洞 {result['filled_holes']}，"
+            f"自交 {'已排除' if result['self_intersections_fixed'] else '仍存在'}，"
+            f"封闭 {'是' if result['closed'] else '否'}，"
+            f"流形 {'是' if result['manifold'] else '否'}",
+        )
+        return {'FINISHED'}
+
+
 class OP_BooleanModifier(Operator):
     """使用 CGAL 精确布尔运算。"""
 
     bl_options = {'REGISTER', 'UNDO'}
-    keep_cutter: BoolProperty(default=True, name="保留非活动物体")
+    remove_cutter: BoolProperty(default=False, name="删除非活动物体")
     operation = 'DIFFERENCE'
     operation_label = "差集"
 
@@ -220,18 +294,20 @@ class OP_BooleanModifier(Operator):
             active, cutters = _active_and_cutters(context)
             native = _load_native_boolean()
             source_mesh = active.data
+            active_world = active.matrix_world.copy()
+            world_to_active = active_world.inverted()
             result = None
             for cutter in cutters:
-                vertices_a, faces_a = _triangle_arrays(active, Matrix.Identity(4))
-                vertices_b, faces_b = _triangle_arrays(cutter, active.matrix_world.inverted() @ cutter.matrix_world)
+                vertices_a, faces_a = _triangle_arrays(active, active_world)
+                vertices_b, faces_b = _triangle_arrays(cutter, cutter.matrix_world)
                 result = native.boolean(vertices_a, faces_a, vertices_b, faces_b, self.operation)
-                output_mesh = _build_boolean_mesh(source_mesh, result)
+                output_mesh = _build_boolean_mesh(source_mesh, result, world_to_active)
                 active.data = output_mesh
                 if source_mesh.users == 0:
                     bpy.data.meshes.remove(source_mesh)
                 source_mesh = output_mesh
 
-            if not self.keep_cutter:
+            if self.remove_cutter:
                 for cutter in cutters:
                     if cutter.name in bpy.data.objects:
                         bpy.data.objects.remove(cutter, do_unlink=True)
@@ -248,21 +324,27 @@ class OP_BooleanModifier(Operator):
 
 class OP_BooleanIntersection(OP_BooleanModifier):
     bl_idname = "ho.boolean_intersection"
-    bl_label = "布尔交集"
+    bl_options = {'REGISTER', 'UNDO'}
+    remove_cutter: BoolProperty(default=False, name="删除非活动物体")
+    bl_label = "交集"
     operation = 0
     operation_label = "布尔交集"
 
 
 class OP_BooleanUnion(OP_BooleanModifier):
     bl_idname = "ho.boolean_union"
-    bl_label = "布尔并集"
+    bl_options = {'REGISTER', 'UNDO'}
+    remove_cutter: BoolProperty(default=False, name="删除非活动物体")
+    bl_label = "并集"
     operation = 1
     operation_label = "布尔并集"
 
 
 class OP_BooleanDifference(OP_BooleanModifier):
     bl_idname = "ho.boolean_difference"
-    bl_label = "布尔差集"
+    bl_options = {'REGISTER', 'UNDO'}
+    remove_cutter: BoolProperty(default=False, name="删除非活动物体")
+    bl_label = "差集"
     operation = 2
     operation_label = "布尔差集"
 
@@ -288,6 +370,8 @@ class VIEW3D_MT_object_hotools_bool(bpy.types.Menu):
         layout.operator(OP_BooleanUnion.bl_idname, icon='MOD_BOOLEAN')
         layout.operator(OP_BooleanDifference.bl_idname, icon='MOD_BOOLEAN')
         layout.separator()
+        layout.operator(OP_BooleanAutoOptimize.bl_idname, icon='MOD_REMESH')
+        layout.separator()
         layout.operator(OP_BooleanUnionReconstruction.bl_idname, icon='MOD_REMESH')
 
 
@@ -296,6 +380,7 @@ cls = [
     OP_BooleanIntersection,
     OP_BooleanUnion,
     OP_BooleanDifference,
+    OP_BooleanAutoOptimize,
     VIEW3D_MT_object_hotools_bool,
 ]
 

@@ -4,6 +4,21 @@
 #include <igl/copyleft/cgal/outer_hull.h>
 #include <igl/copyleft/cgal/mesh_boolean.h>
 
+#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+#include <CGAL/Surface_mesh.h>
+#include <CGAL/boost/graph/helpers.h>
+#include <CGAL/Polygon_mesh_processing/border.h>
+#include <CGAL/Polygon_mesh_processing/manifoldness.h>
+#include <CGAL/Polygon_mesh_processing/orientation.h>
+#include <CGAL/Polygon_mesh_processing/orient_polygon_soup.h>
+#include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
+#include <CGAL/Polygon_mesh_processing/repair.h>
+#include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
+#include <CGAL/Polygon_mesh_processing/repair_self_intersections.h>
+#include <CGAL/Polygon_mesh_processing/self_intersections.h>
+#include <CGAL/Polygon_mesh_processing/triangulate_faces.h>
+#include <CGAL/Polygon_mesh_processing/triangulate_hole.h>
+
 #include <Eigen/Core>
 
 #include <algorithm>
@@ -11,7 +26,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
+#include <queue>
+#include <string>
 #include <stdexcept>
+#include <unordered_set>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -31,6 +50,11 @@ using IndexInput = nb::ndarray<const std::int32_t, nb::numpy, nb::shape<-1>,
 using MatrixXdR = Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>;
 using MatrixXiR = Eigen::Matrix<int, Eigen::Dynamic, 3, Eigen::RowMajor>;
 static_assert(sizeof(int) == sizeof(std::int32_t));
+
+using RepairKernel = CGAL::Exact_predicates_inexact_constructions_kernel;
+using RepairPoint = RepairKernel::Point_3;
+using RepairMesh = CGAL::Surface_mesh<RepairPoint>;
+namespace PMP = CGAL::Polygon_mesh_processing;
 
 struct CoordinateKey {
     std::array<std::uint64_t, 3> bits{};
@@ -100,6 +124,36 @@ nb::dict boolean_mesh(
     Eigen::Map<const MatrixXiR> fa(reinterpret_cast<const int*>(faces_a.data()), faces_a.shape(0), 3);
     Eigen::Map<const MatrixXdR> vb(vertices_b.data(), vertices_b.shape(0), 3);
     Eigen::Map<const MatrixXiR> fb(reinterpret_cast<const int*>(faces_b.data()), faces_b.shape(0), 3);
+
+    auto validate_solid = [](const MatrixXdR& vertices, const MatrixXiR& faces, const char* name) {
+        RepairMesh mesh;
+        std::vector<RepairMesh::Vertex_index> vertex_map;
+        vertex_map.reserve(static_cast<std::size_t>(vertices.rows()));
+        for (Eigen::Index i = 0; i < vertices.rows(); ++i) {
+            vertex_map.push_back(mesh.add_vertex(RepairPoint(vertices(i, 0), vertices(i, 1), vertices(i, 2))));
+        }
+        for (Eigen::Index i = 0; i < faces.rows(); ++i) {
+            const auto face = mesh.add_face(
+                vertex_map[static_cast<std::size_t>(faces(i, 0))],
+                vertex_map[static_cast<std::size_t>(faces(i, 1))],
+                vertex_map[static_cast<std::size_t>(faces(i, 2))]
+            );
+            if (face == RepairMesh::null_face()) {
+                throw std::runtime_error(std::string(name) + " 不是有效的边流形网格");
+            }
+        }
+        std::vector<RepairMesh::Halfedge_index> non_manifold;
+        PMP::non_manifold_vertices(mesh, std::back_inserter(non_manifold));
+        if (!CGAL::is_closed(mesh) || !non_manifold.empty()) {
+            throw std::runtime_error(std::string(name) + " 必须是封闭流形网格，请先运行自动优化");
+        }
+        // 自交网格不满足 is_outward_oriented 的前置条件，只在可检查时验证朝向。
+        if (!PMP::does_self_intersect(mesh) && !PMP::is_outward_oriented(mesh)) {
+            throw std::runtime_error(std::string(name) + " 面朝向不一致，请先运行自动优化");
+        }
+    };
+    validate_solid(MatrixXdR(va), MatrixXiR(fa), "活动物体");
+    validate_solid(MatrixXdR(vb), MatrixXiR(fb), "非活动物体");
     MatrixXdR vc;
     MatrixXiR fc;
     Eigen::VectorXi j;
@@ -110,7 +164,10 @@ nb::dict boolean_mesh(
             : igl::MESH_BOOLEAN_TYPE_MINUS;
     {
         nb::gil_scoped_release release;
-        igl::copyleft::cgal::mesh_boolean(va, fa, vb, fb, type, vc, fc, j);
+        const bool valid = igl::copyleft::cgal::mesh_boolean(va, fa, vb, fb, type, vc, fc, j);
+        if (!valid) {
+            throw std::runtime_error("CGAL 无法为输入网格建立稳定的 winding number 场");
+        }
     }
     std::vector<double> out_vertices(vc.data(), vc.data() + vc.size());
     std::vector<std::int32_t> out_faces(
@@ -120,6 +177,144 @@ nb::dict boolean_mesh(
     nb::dict result;
     result["vertices"] = make_numpy<double>(std::move(out_vertices), {static_cast<std::size_t>(vc.rows()), 3U});
     result["faces"] = make_numpy<std::int32_t>(std::move(out_faces), {static_cast<std::size_t>(fc.rows()), 3U});
+    return result;
+}
+
+nb::dict auto_optimize_mesh(
+    const VertexInput& vertices,
+    const IndexInput& polygon_vertices,
+    const IndexInput& polygon_offsets
+) {
+    if (polygon_offsets.shape(0) == 0 || polygon_offsets(0) != 0) {
+        throw std::invalid_argument("多边形偏移必须从零开始");
+    }
+    std::vector<RepairPoint> points;
+    points.reserve(vertices.shape(0));
+    for (std::size_t i = 0; i < vertices.shape(0); ++i) {
+        points.emplace_back(vertices(i, 0), vertices(i, 1), vertices(i, 2));
+    }
+    std::vector<std::vector<std::size_t>> polygons;
+    polygons.reserve(polygon_offsets.shape(0) - 1U);
+    for (std::size_t p = 0; p + 1U < polygon_offsets.shape(0); ++p) {
+        const std::int32_t begin = polygon_offsets(p);
+        const std::int32_t end = polygon_offsets(p + 1U);
+        if (begin < 0 || end < begin || end - begin < 3) {
+            continue;
+        }
+        std::vector<std::size_t> polygon;
+        polygon.reserve(static_cast<std::size_t>(end - begin));
+        for (std::int32_t i = begin; i < end; ++i) {
+            const std::int32_t index = polygon_vertices(static_cast<std::size_t>(i));
+            if (index < 0 || static_cast<std::size_t>(index) >= points.size()) {
+                throw std::invalid_argument("多边形顶点索引超出范围");
+            }
+            polygon.push_back(static_cast<std::size_t>(index));
+        }
+        polygons.push_back(std::move(polygon));
+    }
+
+    PMP::merge_duplicate_points_in_polygon_soup(points, polygons);
+    PMP::orient_polygon_soup(points, polygons);
+
+    RepairMesh mesh;
+    PMP::polygon_soup_to_polygon_mesh(points, polygons, mesh);
+
+    // 每次只处理一个边界并重新扫描，避免拓扑修改后继续使用失效的半边句柄。
+    auto fill_holes = [](RepairMesh& target) {
+        std::size_t filled = 0;
+        for (;;) {
+            std::vector<RepairMesh::Halfedge_index> borders;
+            PMP::extract_boundary_cycles(target, std::back_inserter(borders));
+            if (borders.empty()) {
+                break;
+            }
+            bool progress = false;
+            for (const auto border : borders) {
+                std::vector<RepairMesh::Face_index> patch_faces;
+                PMP::triangulate_hole(
+                    target,
+                    border,
+                    CGAL::parameters::face_output_iterator(std::back_inserter(patch_faces))
+                );
+                if (!patch_faces.empty()) {
+                    ++filled;
+                    progress = true;
+                    break;
+                }
+            }
+            if (!progress) {
+                break;
+            }
+        }
+        return filled;
+    };
+
+    // 先封闭边界，再把网格三角化后检测并排除自交。
+    std::size_t filled_holes = fill_holes(mesh);
+    PMP::triangulate_faces(mesh);
+    const bool had_self_intersections = PMP::does_self_intersect(mesh);
+    bool self_intersections_fixed = true;
+    if (had_self_intersections) {
+        // 猴头耳部等复杂区域可能无法在保持原属的前提下展开，允许 CGAL
+        // 拆分必要的非流形顶点，并增加局部修复迭代次数。
+        self_intersections_fixed = PMP::experimental::remove_self_intersections(
+            mesh,
+            CGAL::parameters::preserve_genus(false)
+                .number_of_iterations(20)
+                .use_smoothing(true)
+        );
+    }
+
+    // 排除自交可能重新产生边界，因此再次封洞并以最终结果复查。
+    filled_holes += fill_holes(mesh);
+    const bool remaining_self_intersections = PMP::does_self_intersect(mesh);
+    const bool repair_attempt_succeeded = self_intersections_fixed;
+    // remove_self_intersections 的返回值表示本轮过程是否全部完成，最终状态以
+    // 重新检测为准；部分修复后没有残留自交时仍然是可用结果。
+    self_intersections_fixed = !remaining_self_intersections;
+
+    std::vector<RepairMesh::Halfedge_index> non_manifold;
+    PMP::non_manifold_vertices(mesh, std::back_inserter(non_manifold));
+    const bool closed = CGAL::is_closed(mesh);
+    const bool manifold = non_manifold.empty();
+    if (closed && manifold && !remaining_self_intersections) {
+        PMP::orient_to_bound_a_volume(mesh);
+    }
+
+    std::vector<double> output_vertices;
+    output_vertices.reserve(mesh.number_of_vertices() * 3U);
+    std::unordered_map<std::size_t, std::int32_t> vertex_ids;
+    for (const auto vertex : mesh.vertices()) {
+        const RepairPoint& point = mesh.point(vertex);
+        vertex_ids.emplace(vertex.idx(), static_cast<std::int32_t>(vertex_ids.size()));
+        output_vertices.push_back(point.x());
+        output_vertices.push_back(point.y());
+        output_vertices.push_back(point.z());
+    }
+    std::vector<std::int32_t> output_faces;
+    output_faces.reserve(mesh.number_of_faces() * 3U);
+    for (const auto face : mesh.faces()) {
+        std::vector<std::int32_t> face_vertices;
+        for (const auto vertex : CGAL::vertices_around_face(halfedge(face, mesh), mesh)) {
+            face_vertices.push_back(vertex_ids.at(vertex.idx()));
+        }
+        if (face_vertices.size() == 3U) {
+            output_faces.insert(output_faces.end(), face_vertices.begin(), face_vertices.end());
+        }
+    }
+
+    const std::size_t output_vertex_count = output_vertices.size() / 3U;
+    const std::size_t output_face_count = output_faces.size() / 3U;
+    nb::dict result;
+    result["vertices"] = make_numpy<double>(std::move(output_vertices), {output_vertex_count, 3U});
+    result["faces"] = make_numpy<std::int32_t>(std::move(output_faces), {output_face_count, 3U});
+    result["had_self_intersections"] = had_self_intersections;
+    result["self_intersections_fixed"] = self_intersections_fixed;
+    result["repair_attempt_succeeded"] = repair_attempt_succeeded;
+    result["filled_holes"] = filled_holes;
+    result["closed"] = closed;
+    result["manifold"] = manifold;
+    result["non_manifold_vertices"] = non_manifold.size();
     return result;
 }
 
@@ -444,6 +639,14 @@ NB_MODULE(hotools_boolean, module) {
         nb::arg("faces_b").noconvert(),
         nb::arg("operation").noconvert(),
         "执行交集、并集或差集布尔运算。"
+    );
+    module.def(
+        "auto_optimize",
+        &auto_optimize_mesh,
+        nb::arg("vertices").noconvert(),
+        nb::arg("polygon_vertices").noconvert(),
+        nb::arg("polygon_offsets").noconvert(),
+        "自动优化网格并返回封闭和流形检查结果。"
     );
     module.def(
         "outer_hull",
