@@ -20,7 +20,6 @@ class OP_VisualBooleanCut(Operator):
     hit_radius = 16.0
     curve_samples = 8
     cutter_depth_factor = 1000.0
-
     @classmethod
     def poll(cls, context):
         return (
@@ -207,6 +206,62 @@ class OP_VisualBooleanCut(Operator):
         index = min(range(len(distances)), key=distances.__getitem__)
         return index if distances[index] <= self.hit_radius ** 2 else -1
 
+    def _nearest_segment(self, screen_point):
+        """返回可见线段上的最近点、控制段索引和屏幕距离平方。"""
+        display = self._display_points()
+        if len(display) < 2:
+            return None
+
+        segment_count = len(display) - 1
+        if self.closed:
+            segment_count = len(display)
+        best = None
+        for display_index in range(segment_count):
+            point_a = display[display_index]
+            point_b = display[(display_index + 1) % len(display)]
+            delta = point_b - point_a
+            length_squared = delta.length_squared
+            if length_squared < 1e-8:
+                factor = 0.0
+            else:
+                factor = max(
+                    0.0,
+                    min(1.0, (screen_point - point_a).dot(delta) / length_squared),
+                )
+            projected = point_a + delta * factor
+            distance_squared = (screen_point - projected).length_squared
+            if best is None or distance_squared < best[2]:
+                best = (display_index, projected, distance_squared)
+
+        if best is None or best[2] > self.hit_radius ** 2:
+            return None
+
+        if self.nurbs:
+            control_index = best[0] // self.curve_samples
+        else:
+            control_index = best[0]
+        return control_index, best[1], best[2]
+
+    def _remove_control_point(self, index):
+        if len(self.points) <= 3:
+            self.message = "闭合轮廓至少保留三个控制点"
+            return False
+        self.points.pop(index)
+        self.message = f"已移除控制点，剩余 {len(self.points)} 个"
+        return True
+
+    def _insert_on_segment(self, segment):
+        if not self.points:
+            return False
+        insert_index = segment + 1
+        if self.closed:
+            insert_index = min(insert_index, len(self.points))
+        else:
+            insert_index = min(insert_index, len(self.points))
+        self.points.insert(insert_index, self._pending_insert_point.copy())
+        self.message = f"已在线段插入控制点，当前 {len(self.points)} 个"
+        return True
+
     def _close_at(self, index):
         if index < 0 or index >= len(self.points) or len(self.points) < 3:
             return False
@@ -285,9 +340,11 @@ class OP_VisualBooleanCut(Operator):
 
         lines = [
             ("状态: ", status),
-            ("左键: ", "添加点 / 点击已有点闭合"),
+            ("左键: ", "添加点 / 线段插点 / 点闭合或删除"),
             ("右键: ", "拖动控制点"),
             ("N键: ", f"NURBS {'开' if self.nurbs else '关'}"),
+            ("A键: ", f"应用修改器 {'开' if self.apply_modifiers else '关'}"),
+            ("C键: ", "清除全部控制点"),
             ("Enter: ", "执行 CGAL 差集"),
             ("Esc: ", "取消"),
         ]
@@ -331,11 +388,13 @@ class OP_VisualBooleanCut(Operator):
         blf.disable(font_id, blf.SHADOW)
 
     def _apply_cut(self, context):
+        active = context.object
+        if self.apply_modifiers and active.modifiers:
+            self._apply_all_modifiers(context, active)
+
         polygon_screen = self._polygon_screen_points()
         cutter_vertices, cutter_faces = self._mesh_cutter(context, polygon_screen)
-        active = context.object
         active_world = active.matrix_world.copy()
-        # 直接使用当前网格数据，不强制应用活动物体的修改器。
         vertices_a, faces_a = boolean_tools._triangle_arrays(active, active_world)
         native = boolean_tools._load_native_boolean()
         result = native.boolean(
@@ -354,6 +413,31 @@ class OP_VisualBooleanCut(Operator):
         active.data = output_mesh
         if source_mesh.users == 0:
             bpy.data.meshes.remove(source_mesh)
+
+    def _apply_all_modifiers(self, context, active):
+        selected_objects = list(context.selected_objects)
+        previous_active = context.view_layer.objects.active
+        try:
+            bpy.ops.object.select_all(action='DESELECT')
+            active.select_set(True)
+            context.view_layer.objects.active = active
+            for modifier in list(active.modifiers):
+                try:
+                    bpy.ops.object.modifier_apply(modifier=modifier.name)
+                except RuntimeError as exc:
+                    raise RuntimeError(
+                        f"应用修改器「{modifier.name}」失败: {exc}"
+                    ) from exc
+        finally:
+            for obj in context.selected_objects:
+                obj.select_set(False)
+            for obj in selected_objects:
+                if obj.name in bpy.data.objects:
+                    obj.select_set(True)
+            if previous_active is not None and previous_active.name in bpy.data.objects:
+                context.view_layer.objects.active = previous_active
+            else:
+                context.view_layer.objects.active = active
 
     def _finish_handlers(self, context):
         for name in ('_handle_3d', '_handle_text'):
@@ -379,11 +463,18 @@ class OP_VisualBooleanCut(Operator):
             point = Vector((event.mouse_region_x, event.mouse_region_y))
             hit = self._nearest_point(point)
             if hit >= 0:
-                if not self._close_at(hit) and len(self.points) < 3:
+                if self.closed:
+                    self._remove_control_point(hit)
+                elif not self._close_at(hit) and len(self.points) < 3:
                     self.message = "闭合轮廓至少需要三个控制点"
-            elif not self.closed:
-                self.points.append(point)
-                self.message = f"已添加 {len(self.points)} 个控制点"
+            elif not self.closed or len(self.points) >= 3:
+                segment = self._nearest_segment(point)
+                if segment is not None:
+                    self._pending_insert_point = segment[1]
+                    self._insert_on_segment(segment[0])
+                elif not self.closed:
+                    self.points.append(point)
+                    self.message = f"已添加 {len(self.points)} 个控制点"
             self._tag_redraw(context)
             return {'RUNNING_MODAL'}
 
@@ -406,6 +497,22 @@ class OP_VisualBooleanCut(Operator):
         if event.type == 'N' and event.value == 'PRESS':
             self.nurbs = not self.nurbs
             self.message = f"NURBS {'开启' if self.nurbs else '关闭'}"
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'A' and event.value == 'PRESS':
+            self.apply_modifiers = not self.apply_modifiers
+            self.message = (
+                f"应用修改器{'开启' if self.apply_modifiers else '关闭'}"
+            )
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'C' and event.value == 'PRESS':
+            self.points = []
+            self.closed = False
+            self.drag_index = -1
+            self.message = "已清除全部控制点"
             self._tag_redraw(context)
             return {'RUNNING_MODAL'}
 
@@ -451,6 +558,7 @@ class OP_VisualBooleanCut(Operator):
         self.points = []
         self.closed = False
         self.nurbs = False
+        self.apply_modifiers = False
         self.drag_index = -1
         self.hover_screen = Vector((event.mouse_region_x, event.mouse_region_y))
         self.message = ""
