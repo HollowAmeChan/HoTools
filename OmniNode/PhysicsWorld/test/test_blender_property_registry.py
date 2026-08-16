@@ -190,10 +190,11 @@ EXPECTED_PROPERTY_CONTRACTS = {
         ),
     },
     "PG_Hotools_RigidFracture": {
-        "sha256": "9225f37e51022c0bda12946d4af34f56ac6588ffa7e0ce0374ccab3494def5b3",
+        "sha256": "89761ff927e6e8946b75fe9794a194fe07e681ba9be7e4f29713546b57f0ac28",
         "fields": (
-            "enabled", "asset_id", "schema_version", "modifier_name",
-            "piece_id_attribute", "split_mode", "product_collection",
+            "enabled", "asset_id", "schema_version", "fracture_method",
+            "modifier_name", "piece_id_attribute", "split_mode",
+            "product_collection", "cutter_object",
             "product_revision", "product_status", "product_fingerprint",
             "last_error", "mass_mode", "density", "piece_body_type", "piece_mass",
             "piece_friction", "piece_restitution", "piece_start_deactivated",
@@ -852,7 +853,10 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
             "PG_Hotools_RigidFracture": (
                 physical_obj.hotools_rigid_fracture,
                 fracture_property.PG_Hotools_RigidFracture,
-                {"product_collection": product_collection},
+                {
+                    "product_collection": product_collection,
+                    "cutter_object": base_pose_obj,
+                },
             ),
             "PG_Hotools_RigidFracturePiece": (
                 physical_obj.hotools_rigid_fracture_piece,

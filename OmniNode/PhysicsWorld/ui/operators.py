@@ -26,14 +26,11 @@ from .utils import (
 from ..simple_cloth.base_pose import ensure_base_pose_proxy
 from ..rigid_fracture.authoring import (
     FractureAssetError,
-    apply_piece_defaults,
+    delete_fracture_products,
     ensure_asset_id,
-    ensure_default_fracture_modifier,
+    ensure_fracture_preview_modifier,
     ensure_product_collection,
-    managed_pieces,
     refresh_fracture_products,
-    select_managed_pieces,
-    set_fracture_visibility,
 )
 
 
@@ -359,10 +356,10 @@ def _active_fracture_source(context):
     return obj if props is not None else None
 
 
-class OP_Hotools_RigidFracture_AddDefaultGN(Operator):
-    bl_idname = "ho.rigid_fracture_add_default_gn"
-    bl_label = "创建规则切块节点"
-    bl_description = "创建可调 XYZ 切块数和碎块间隙的规则布尔破碎节点"
+class OP_Hotools_RigidFracture_AddPreview(Operator):
+    bl_idname = "ho.rigid_fracture_add_preview"
+    bl_label = "添加碎块预览"
+    bl_description = "按当前切割算法添加或升级 HoTools 管理的碎块预览节点"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -373,11 +370,11 @@ class OP_Hotools_RigidFracture_AddDefaultGN(Operator):
         source = _active_fracture_source(context)
         try:
             ensure_asset_id(source)
-            modifier = ensure_default_fracture_modifier(source)
+            modifier = ensure_fracture_preview_modifier(source)
         except FractureAssetError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-        self.report({"INFO"}, f"已添加/定位 Geometry Nodes: {modifier.name}")
+        self.report({"INFO"}, f"碎块预览: {modifier.name}")
         return {"FINISHED"}
 
 
@@ -403,6 +400,33 @@ class OP_Hotools_RigidFracture_CreateCollection(Operator):
         return {"FINISHED"}
 
 
+class OP_Hotools_RigidFracture_DeleteCollection(Operator):
+    bl_idname = "ho.rigid_fracture_delete_collection"
+    bl_label = "删除碎块集合"
+    bl_description = "删除当前本体拥有的全部碎块及其专用产物集合"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        source = _active_fracture_source(context)
+        return bool(
+            source is not None
+            and getattr(source.hotools_rigid_fracture, "product_collection", None) is not None
+        )
+
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_confirm(self, _event)
+
+    def execute(self, context):
+        try:
+            count = delete_fracture_products(_active_fracture_source(context))
+        except FractureAssetError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"已删除碎块集合和 {count} 个碎块")
+        return {"FINISHED"}
+
+
 class OP_Hotools_RigidFracture_Refresh(Operator):
     bl_idname = "ho.rigid_fracture_refresh"
     bl_label = "刷新碎块产物"
@@ -422,69 +446,6 @@ class OP_Hotools_RigidFracture_Refresh(Operator):
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         self.report({"INFO"}, f"已刷新 {len(pieces)} 个碎块")
-        return {"FINISHED"}
-
-
-class OP_Hotools_RigidFracture_Visibility(Operator):
-    bl_idname = "ho.rigid_fracture_visibility"
-    bl_label = "切换破碎资产显示"
-    bl_options = {"REGISTER", "UNDO"}
-
-    mode: EnumProperty(
-        name="显示",
-        items=(
-            ("SOURCE", "仅本体", "显示 Source，隐藏受管碎块"),
-            ("PIECES", "仅碎块", "隐藏 Source，显示受管碎块"),
-            ("BOTH", "全部", "同时显示 Source 和受管碎块"),
-        ),
-        default="PIECES",
-        options={"HIDDEN", "SKIP_SAVE"},
-    )  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        return _active_fracture_source(context) is not None
-
-    def execute(self, context):
-        source = _active_fracture_source(context)
-        try:
-            count = set_fracture_visibility(source, self.mode)
-        except FractureAssetError as exc:
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
-        self.report({"INFO"}, f"已更新 {count} 个碎块的显示")
-        return {"FINISHED"}
-
-
-class OP_Hotools_RigidFracture_SelectPieces(Operator):
-    bl_idname = "ho.rigid_fracture_select_pieces"
-    bl_label = "选择全部受管碎块"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        return _active_fracture_source(context) is not None
-
-    def execute(self, context):
-        count = select_managed_pieces(_active_fracture_source(context))
-        self.report({"INFO"}, f"已选择 {count} 个碎块")
-        return {"FINISHED"}
-
-
-class OP_Hotools_RigidFracture_ReapplyDefaults(Operator):
-    bl_idname = "ho.rigid_fracture_reapply_defaults"
-    bl_label = "同步本体物理属性"
-    bl_description = "将本体刚体属性同步到全部碎块，并按体积重新计算质量"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        source = _active_fracture_source(context)
-        return source is not None and bool(managed_pieces(source, current_revision_only=True))
-
-    def execute(self, context):
-        count = apply_piece_defaults(_active_fracture_source(context))
-        self.report({"INFO"}, f"已重设 {count} 个碎块")
         return {"FINISHED"}
 
 

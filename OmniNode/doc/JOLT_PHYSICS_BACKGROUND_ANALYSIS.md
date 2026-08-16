@@ -91,10 +91,9 @@ Source Object.hotools_rigid_fracture + GN / modifier
 
 | 缺口 | 直接后果 |
 |---|---|
-| GN 生成资产没有受管的“应用并拆分为 Objects”入口 | 用户需要手工应用 modifier、Realize、拆分、命名、放入 Collection 和配置刚体，流程容易漂移 |
-| 没有刚体破碎 Source/Piece 属性与 linked Collection resolver | 本体和碎块不能形成可验证的 owner 关系，也无法保证只排除本体并接纳受管碎块 |
-| 新建 Jolt body 当前始终 Active | 破碎块注册后立即受重力，不能表达接触前保持静止的 armed 状态 |
-| Object authoring 缺少批属性和稳定生成身份 | 重新生成后约束、缓存和调试难以追踪同一块几何 |
+| 不规则 Voronoi Piece 仍使用 BOX collision proxy | 视觉网格与碰撞边界不一致；高随机度时必须缩小代理或使用静态锚定，Dynamic Convex Hull 尚未接入 |
+| 没有 glue/邻接/cluster 结构层 | 休眠只能表达初始不积分，不能表达材料强度；全部动态碎块会沿接触岛传播唤醒 |
+| Piece ID 只在单次刷新结果内稳定 | 改变种子或密度后不能自动把旧逐块编辑、约束或选择映射到新拓扑 |
 | 稳定帧仍有 Object body 同步与 Blender 写回成本 | Jolt step 很快，但大规模场景仍受 Python/Blender 对象层限制 |
 | 属性与生成约束节点是弱类型大参数面 | 连接错误晚发现，约束节点过宽，难以复用和批量生成 |
 | 没有 mesh/convex shape 资源协议 | 复杂 Object 仍需基础 shape 代理；GN 生成的凸几何当前只是 authoring mesh，不自动成为 Jolt convex shape |
@@ -350,16 +349,17 @@ Shape 扩展晚于 GN 对象化和 Object 批路径。两个概念必须分开�
 ### M1：刚体破碎资产刷新（已完成）
 
 - 增加 `Object.hotools_rigid_fracture`、Piece metadata、物理大面板和显式 Operators。
-- 已落地第一种规则网格布尔破碎 GN、固定 `hotools_piece_id`、evaluated mesh snapshot、连通块拆分、按体积质量、暂存提交、manifest、replace/Undo 和诊断；后续切块算法复用同一输出契约。
-- 保留匹配 Piece 的用户刚体属性；刷新成功后失效旧模拟 cache。
+- 已落地均匀三维 Voronoi 封闭单元、GN Boolean 预览、固定 `hotools_piece_id`、evaluated mesh snapshot、连通块拆分、按体积质量、暂存提交、manifest 和诊断；后续切块算法复用同一输出契约。
+- 本体刚体模板只在刷新生成时固定写入 Piece；刷新成功后失效旧模拟 cache。
 
 出口：同一 Source 可反复刷新为受管普通 Objects；失败不留半批，不误删 Product Collection 中的用户对象。
 
 ### M2：运行时展开与球撞墙（已完成）
 
 - fracture resolver 排除 Source，只展开 owner/revision 匹配的受管 Piece。
-- Product Collection 进入稳定 transform/writeback 批边界；所有 Piece 继续构造普通 `RigidBodySpec`。
+- Product Collection 在 Scope 外进入独立 transform/writeback 批边界，在 Scene 根 Scope 中复用公共父批次；所有 Piece 继续构造普通 `RigidBodySpec`。
 - 交付并后台验证 `rigid/test/assets/jolt_fracture_wall.blend`：碰撞前中央 Piece 静止，命中后局部激活，外圈锚定 Piece 不动。
+- 用用户 `破碎.blend` 的原始 13 节点 OmniNode 图验证 40 个 Piece、42 个刚体和局部撞击，并保存派生验收资产。
 
 出口：从 GN 作者态、显式刷新、Scope、Jolt 到 Object 写回形成第一条可打开、可重放的破碎链。
 

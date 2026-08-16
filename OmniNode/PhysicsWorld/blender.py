@@ -16,12 +16,17 @@ def register() -> None:
     if _ACTIVE:
         return
     from .ui import register as register_ui
+    from .rigid_fracture.authoring import register_fracture_preview_lifecycle
 
     register_physics_world_blender_properties()
     try:
         register_physics_world_blender_lifecycles()
+        register_fracture_preview_lifecycle()
         register_ui()
     except Exception:
+        from .rigid_fracture.authoring import unregister_fracture_preview_lifecycle
+
+        unregister_fracture_preview_lifecycle()
         unregister_physics_world_blender_lifecycles()
         unregister_physics_world_blender_properties()
         raise
@@ -34,8 +39,10 @@ def unregister() -> None:
         return
     from .ui import unregister as unregister_ui
     from .bake import shutdown_geometry_bake_runtime
+    from .rigid_fracture.authoring import unregister_fracture_preview_lifecycle
 
     shutdown_geometry_bake_runtime()
+    unregister_fracture_preview_lifecycle()
     unregister_ui()
     unregister_physics_world_blender_lifecycles()
     unregister_physics_world_blender_properties()

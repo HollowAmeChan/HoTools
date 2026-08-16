@@ -155,8 +155,14 @@ def build_asset(path=ASSET_PATH):
     source = bpy.data.objects.new(SOURCE_NAME, source_mesh)
     simulation_collection.objects.link(source)
     source.hotools_rigid_fracture.enabled = True
-    modifier = fracture.ensure_default_fracture_modifier(source)
-    fracture_gn.set_grid_modifier_inputs(modifier, counts=(1, 7, 5), gap=0.04)
+    modifier = fracture.ensure_fracture_preview_modifier(source)
+    fracture_gn.set_voronoi_modifier_inputs(
+        modifier,
+        density=7,
+        seed=0,
+        randomness=0.0,
+        gap=0.04,
+    )
     source.hotools_rigid_body.mass = 35.0
     source.hotools_rigid_body.start_deactivated = True
     fracture.ensure_product_collection(source, scene)

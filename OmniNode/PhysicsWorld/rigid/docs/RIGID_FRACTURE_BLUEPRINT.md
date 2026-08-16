@@ -13,11 +13,16 @@
 
 成熟工作流参考：
 
+- [Houdini Voronoi Fracture SOP](https://www.sidefx.com/docs/houdini/nodes/sop/voronoifracture-.html)：点定义三维单元、闭合实体生成内表面、piece 属性和可选 constraint 输出。
+- [Houdini Fracturing Objects](https://www.sidefx.com/docs/houdini/dyno/fracturing.html)：预破碎、proxy geometry、glue/constraint 和动态接管的标准流程。
+- [Houdini RBD Material Fracture](https://www.sidefx.com/docs/houdini/nodes/sop/rbdmaterialfracture.html)：按材料选择切割模型并同步生成约束网络。
 - [Houdini RBD Configure](https://www.sidefx.com/docs/houdini/nodes/sop/rbdconfigure.html)：active、animated、sleeping、最小激活冲量和 collision proxy。
 - [Houdini RBD Constraints](https://www.sidefx.com/docs/houdini/destruction/constraints.html)：碎块身份与独立约束网络。
 - [Cinema 4D Voronoi Fracture](https://help.maxon.net/c4d/s24/en-us/Content/html/OMOGRAPH_FRACTUREVORONOI.html)：参数化生成、显式更新和独立碎块。
 - [Cinema 4D Dynamics Trigger](https://help.maxon.net/c4d/2025/en-us/Content/html/TRIGIDBODY-RIGIDBODY_PBD_CUSTOM_START_GROUP.html)：碰撞触发和动力学接管。
+- [Maya Create Shatter](https://help.autodesk.com/cloudhelp/2022/ENU/Maya-SimulationEffects/files/GUID-3E8E9887-C26A-4E8E-AB37-4C9C8424AE30.htm)：Solid Shatter 的闭合表面、实体碎块和内表面约束。
 - [Maya Bullet Shatter](https://help.autodesk.com/cloudhelp/2022/ENU/Maya-SimulationEffects/files/GUID-D407C32E-975E-4394-B5A7-614EA051A17F.htm)：预破碎、Rigid Set 和 Initially Sleeping。
+- [Blender Voronoi Texture](https://docs.blender.org/manual/en/latest/render/shader_nodes/textures/voronoi.html)：三维 Voronoi 距离场、Distance to Edge 与 Randomness 语义。
 - [Unreal Chaos Destruction](https://dev.epicgames.com/documentation/unreal-engine/destruction-overview?lang=en-US)：Geometry Collection、Cluster、连接图和 strain。
 - [NVIDIA Blast](https://github.com/NVIDIAGameWorks/Blast)：预破碎 chunk、support graph、bond 和 actor split。
 - [Jolt ContactListener](https://jrouwe.github.io/JoltPhysicsDocs/5.2.0/class_contact_listener.html)：接触回调的线程与 body lock 边界。
@@ -73,16 +78,16 @@ Source 是资产 owner，不是破碎后的物理 body。Piece 是普通 Blender
 | 项目 | 当前事实 | 冻结边界 |
 |---|---|---|
 | 破碎持久属性 | Source/Piece PropertyGroup 已独立注册并通过 round-trip | 由 `physicsWorld.rigid_fracture` 组件持有 |
-| GN 产物事务 | 已实现 evaluated mesh 连通块拆分、受管替换、失败保留旧 READY 产物 | 默认 GN 必须输出已 Realize 的面几何 |
+| GN 产物事务 | 已实现封闭 Voronoi 单元预览、evaluated mesh 连通块拆分、受管替换、失败保留旧 READY 产物 | 默认 GN 输出已 Realize 的闭合面几何 |
 | 产品身份 | 已有 asset ID、piece ID、revision、fingerprint 和 manifest 校验 | Object/Data pointer 仍只作本次运行 slot |
-| Source 排除 | resolver 已无条件排除启用破碎的 Source | Source 即使同时启用普通刚体也不双注册 |
-| 链接集合展开 | 已私有展开 owner/revision 匹配 Piece，并发布 Product Collection 批次 | 公共 Scope 与其他 solver 不被改写 |
+| Source 排除 | 首次成功刷新前仍按普通刚体运行；已有 product revision 后 resolver 排除 Source | 打开/启用作者面板不改变模拟，已提交 Source 不与 Piece 双注册 |
+| 链接集合展开 | 已私有展开 owner/revision 匹配 Piece；Scope 外发布 Product Collection 批次，Scene 根 Scope 直接复用父批次 | 公共 Scope 与其他 solver 不被改写 |
 | 初始休眠 | `start_deactivated` 已贯通 RNA/spec/adapter/py313 native | Dynamic 使用 `DontActivate`，碰撞可在 Jolt 内自动唤醒 |
 | 接触身份 | 已建立 `slot -> asset/piece` 反向索引 | 接触结果仍沿用普通刚体事件通道 |
 | 局部激活 | 第一 acceptance 使用 Jolt 接触自动唤醒命中 Piece | 半径、邻接传播和 assembly policy 进入 F4 |
 | 冲量阈值 | `OnContactAdded` 发生在求解前，当前事件不含求解冲量 | 第一 acceptance 不承诺 impulse threshold；后续单独扩展 native 观测 |
 | 作者操作到缓存失效 | 刷新成功后已清理统一 runtime cache | 下一次 Begin 会完整重建刚体注册 |
-| 破碎测试资产 | `jolt_fracture_wall.blend` 已生成，并通过磁盘重开与同进程 reset 重放 | 可执行脚本是 pass/fail oracle，`.blend` 是用户检查资产 |
+| 破碎测试资产 | `jolt_fracture_wall.blend` 与用户工程派生验收资产均已生成；前者重复重放，后者走真实 OmniNode 图 | 可执行脚本是 pass/fail oracle，`.blend` 是用户检查资产 |
 
 结论：第一条 Object 破碎链已经贯通，不需要更换 solver、scope、result 或 writeback 架构。F0-F3 完成后，下一阶段是局部传播、结构约束和规模化 Object 表，而不是运行时 GN 拓扑生成。
 
@@ -93,7 +98,7 @@ Source 是资产 owner，不是破碎后的物理 body。Piece 是普通 Blender
 新增 `Object.hotools_rigid_fracture`，由独立的 `physicsWorld.rigid_fracture` core component 持有；`physicsWorld.rigid` 只消费其 resolver。实现目录固定为：
 
 - `rigid_fracture/properties.py`：Source/Piece 持久属性；
-- `rigid_fracture/geometry_nodes.py`：受管规则切块 GN 与固定身份属性；
+- `rigid_fracture/geometry_nodes.py`：受管 Voronoi 预览 GN、算法枚举与固定身份属性；
 - `rigid_fracture/authoring.py`：Collection、刷新事务、体积质量与作者操作；
 - `rigid_fracture/resolver.py`：rigid 私有 Scope 展开与 slot 身份索引；
 - `rigid/scope_sync.py`：消费 resolver，继续生成普通 `RigidBodySpec`。
@@ -103,9 +108,9 @@ Source 是资产 owner，不是破碎后的物理 body。Piece 是普通 Blender
 | 分组 | 字段 |
 |---|---|
 | Identity | `enabled`、`asset_id`、`schema_version` |
-| Generator | `modifier_name`；`piece_id_attribute=hotools_piece_id` 与 `split_mode=CONNECTED_COMPONENT` 是隐藏内部契约 |
+| Generator | `fracture_method=VORONOI_UNIFORM`、`modifier_name`、隐藏 `cutter_object`；`piece_id_attribute=hotools_piece_id` 与 `split_mode=CONNECTED_COMPONENT` 是内部契约 |
 | Products | `product_collection`、`product_revision`、`product_status`、`product_fingerprint` |
-| Mass | `mass_mode=SOURCE_MASS/DENSITY`、`density`；`SOURCE_MASS` 读取本体普通刚体质量 |
+| Mass | 只读取本体普通刚体质量，并按闭合碎块世界空间体积占比分配；旧 `mass_mode/density` 仅隐藏保留文件兼容 |
 | Physics template | 类型、摩擦、弹性、阻尼、重力倍率、睡眠等直接读取本体 `hotools_rigid_body`；v1 `piece_*` 字段只隐藏保留旧文件数据 |
 | Activation | 半径、阈值和 assembly policy 在实现支持前不注册 |
 
@@ -130,57 +135,56 @@ Modifier 不是 Blender ID，持久引用使用 Source 内的 modifier name；�
 - `volume`
 - `mass_fraction`
 
-Piece 的质量、shape、过滤、阻尼、重力、睡眠等仍存入普通 `Object.hotools_rigid_body`。刷新和“同步到现有碎块”以本体刚体为模板重新写入；质量按闭合网格世界空间体积分配。刷新完成后仍可逐块修改，但下次显式同步或刷新会回到本体模板。Piece metadata 不复制整套刚体字段。
+Piece 的质量、shape、过滤、阻尼、重力、睡眠等仍存入普通 `Object.hotools_rigid_body`。只在刷新生成的一瞬间以本体刚体为模板固定写入，质量按闭合网格世界空间体积分配；之后可逐块修改，直到下一次刷新重新生成。面板不提供“一键重应用碎块属性”，Piece metadata 也不复制整套刚体字段。
 
 ### 所有权规则
 
 - 一个 Piece 只能有一个 fracture owner。
 - Product Collection 可以包含用户对象，但 resolver 只接纳 `managed=True` 且 owner ID 匹配的 Piece。
-- Source 启用 fracture 后，即使同时启用普通 rigid body，也不进入 Jolt；UI 显示诊断，不产生双碰撞。
+- Source 仅启用 fracture、但链接集合中没有受管 Piece 时仍按普通 rigid body 进入 Jolt；作者面板状态和残留的 revision/status 不能让整个刚体收集器失效。
+- Source 的链接集合中已有受管 Piece 后，即使同时启用普通 rigid body，也由 resolver 排除，不产生双碰撞。
 - Source 隐藏只影响显示，不决定物理参与。Scope 对 Collection 默认包含隐藏对象，因此 Source 排除必须是显式业务规则。
-- Product Collection 为空、owner 冲突、piece ID 重复、revision 过期或非 Mesh managed Piece 都阻止模拟，不回退到 Source。
+- 链接集合中确实存在受管 Piece 后，owner 冲突、piece ID 重复、revision 过期或非 Mesh managed Piece 都阻止模拟，不回退到 Source。集合已丢失或没有受管 Piece 时，revision/status 只视为残留作者元数据，继续使用 Source。
 
 ## 面板工作流
 
 Object 物理大面板增加“刚体破碎”开关和子面板。用户流程冻结为：
 
 1. 在 Source 上启用刚体破碎。
-2. 点击“创建规则切块节点”，或选择已有 Geometry Nodes modifier。
-3. 创建或链接 Product Collection。
-4. 调节 GN 参数并观察 Source 的 evaluated 结果。
-5. 点击“刷新碎块产物”。
-6. 检查产物数量、状态、revision 和诊断。
-7. 使用“仅显示本体 / 仅显示碎块 / 同时显示”控制作者视图。
-8. 选择“仅显示碎块”后运行现有 Physics World 图。
+2. 在“切割算法”下拉框选择生成器；当前只有“均匀 Voronoi”。
+3. 点击“添加碎块预览”，调节 GN 中的碎块密度、随机种子、随机度和裂缝宽度。
+4. 点击“创建碎块集合”。
+5. 点击“刷新碎块集合”，将当前预览固定为独立 Mesh Objects，并一次性写入本体刚体模板和体积质量。
+6. 在普通 Outliner/视图中检查或隐藏 Source；运行现有 Physics World 图时 resolver 会显式排除 Source。
+7. 不再需要产物时点击“删除碎块集合”；集合含非受管内容时拒绝删除。
 
 必须提供的命令：
 
-- 创建默认规则切块 GN；
-- 使用/定位现有 GN modifier；
-- 创建并链接 Product Collection；
-- 刷新碎块产物；
-- 显示本体、显示碎块、隔离碎块；
-- 选择全部受管 Piece；
-- 将本体物理属性同步到现有 Piece；
-- 检查资产状态。
+- 添加/升级当前算法的碎块预览；
+- 创建碎块集合；
+- 刷新碎块集合；
+- 删除碎块集合；
+- 显示资产状态和错误诊断。
 
-“刷新产物”和“同步到现有碎块”是两个命令。刷新是明确的资产重建操作，会重新应用本体模板并按体积重算质量；普通参数调整只有在用户点击同步后才覆盖当前产物。
+刷新是唯一会覆盖 Piece 物理属性的资产重建操作。修改 Source 刚体参数不会暗中改写已经生成的 Piece；要重新固定模板必须再次刷新。
 
-### 默认规则切块 GN
+### 均匀 Voronoi 预览
 
-默认生成器使用包围盒规则网格与精确 Mesh Boolean 交集，提供 `X 切块`、`Y 切块`、`Z 切块` 和 `碎块间隙` 四个输入。间隙保证布尔结果成为互不连通的面岛；输出端用 Mesh Island Index 在 FACE 域写入固定整数属性 `hotools_piece_id`。属性名不是用户选项，刷新时也会强制恢复固定值。此生成器是第一种内置切块算法，不替代用户自定义 GN。
+当前唯一内置算法是均匀三维 Voronoi。`碎块密度` 定义最长轴的种子数，其他轴按 Source 包围盒比例换算；每个格心生成一个种子，`随机度` 在格内做有界扰动，`随机种子` 保证结果可重复。每个单元从扩展包围盒开始，用所有种子对的垂直平分面做凸多面体裁剪；分割面两侧各退让半个 `裂缝宽度`，因此得到真正分离的封闭单元。
+
+Blender 5.2 没有可直接输出三维 Voronoi cell mesh 的 Geometry Node。已验证的 Volume Cube + Distance to Edge 路线会产生数百个体素碎屑，不能进入产品。因此作者层生成受管的隐藏 cutter mesh，GN 使用 Object Info + Exact Mesh Boolean 与 Source 相交，并在输出端用 Mesh Island Index 将固定 FACE/INT 属性 `hotools_piece_id` 写入结果。depsgraph 钩子在 GN 输入变化后重建 cutter，使修改器仍可作为实时预览入口；`预览精度` 已删除，因为它只会提高体素成本而不能修复拓扑。
 
 ## 显式刷新事务
 
 第一版刷新只在 Blender 主线程、用户显式 Operator 和非模拟步骤内执行：
 
-1. 校验 Source、modifier、Product Collection 和当前模式。
-2. 读取 evaluated mesh；默认 GN 必须在输出前 Realize Instances。
+1. 校验 Source、modifier、Product Collection 和当前模式，按当前 GN 输入重建封闭 Voronoi cutter。
+2. 读取 GN Boolean 后的 evaluated mesh；默认 GN 输出已经是 Realize 的普通面几何。
 3. 按 `CONNECTED_COMPONENT` 拆分；为将来的 `REALIZED_INSTANCE` 保留 enum，但未实现时不得伪装成功。
 4. 只读取固定 FACE/INT 属性 `hotools_piece_id` 作为 piece ID；自定义 GN 未输出该属性时按确定性的连通块顺序生成后备 ID。
 5. 在临时 Collection 创建独立 Mesh/Object，复制正确 world transform。
 6. 校验 finite、非空面、piece 数量、ID 唯一性和所有权冲突。
-7. 所有新 Piece 应用本体 `hotools_rigid_body` 模板；`SOURCE_MASS` 按体积占比分配本体总质量，`DENSITY` 按世界空间体积乘材料密度计算。
+7. 所有新 Piece 应用本体 `hotools_rigid_body` 模板，并按体积占比分配本体总质量；这一步之后不再自动同步。
 8. 原子提交新 manifest 和 Product Collection；只删除旧 manifest 明确拥有且仍标记 managed 的对象。
 9. revision 递增，模拟 cache 失效，请求下一次 Begin 重建刚体注册。
 10. 任一步失败时删除临时资源，旧 READY 产品保持原样。
@@ -201,7 +205,7 @@ PhysicsObjectScope
   -> existing Jolt slot/adapter/result/writeback
 ```
 
-Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺序的 Piece 视图、`slot -> asset/piece` 索引和 Product Collection transform batch。不得把 Product Collection 的所有对象无条件塞进 scope，也不得改变其它 solver 看到的公共 Scope。
+Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺序的 Piece 视图和 `slot -> asset/piece` 索引。Product Collection 不在公共 Scope 时发布自己的 transform batch；Scene 根集合或父集合已经完整包含碎块时复用现有批次，禁止重复发布。不得改变其它 solver 看到的公共 Scope。
 
 刷新或 manifest revision 变化属于结构变化：清除旧 Piece slots、contact snapshot 和刚体 native world，再按新稳定顺序注册。仅修改 Piece 的热参数仍服从现有 rigid signature 与命令规则。
 
@@ -253,15 +257,15 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 ### F1：资产属性与显式刷新（已完成）
 
 - 新增 Source/Piece PropertyGroup、面板和 Operators。
-- 实现默认 GN、evaluated mesh snapshot、连通块拆分、manifest 和原子替换。
-- 实现 Source/Piece 显示控制、属性保留和 cache 失效。
+- 实现均匀 Voronoi 封闭单元、GN Boolean 预览、evaluated mesh snapshot、连通块拆分、manifest 和原子替换。
+- 实现参数变化预览重建、生成时物理快照和 cache 失效；面板只保留算法、预览和集合三操作。
 
 出口：不运行 solver 也能反复刷新同一资产；失败不污染场景；save/reopen 后身份和状态仍成立。
 
 ### F2：运行时展开（已完成）
 
 - fracture resolver 排除 Source 并展开受管 Piece。
-- Product Collection 发布自己的批 transform/writeback 边界。
+- Product Collection 在 Scope 外发布自己的批 transform/writeback 边界，在 Scene 根 Scope 内复用公共批次。
 - 增加重复 owner、过期 revision、非法对象和 scope 生命周期测试。
 
 出口：所有参与模拟的对象仍是普通 Object；Source 永不与 Piece 双注册。
@@ -271,14 +275,16 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 - 生成默认墙体破碎 GN 资产并显式刷新。
 - 保存 `rigid/test/assets/jolt_fracture_wall.blend`。
 - 后台打开该文件运行完整 Physics World，验证碰撞前静止、命中后局部激活、外圈不动、结果 finite、reset 可重放。
+- 从用户 `破碎.blend` 派生 `jolt_fracture_user_project.blend`，通过原文件的 13 节点 OmniNode 图完成 40 块注册和局部撞击。
 - 测试脚本负责重建/验证资产；`.blend` 供用户直接打开检查。
 
 出口：测试非零失败；通过时报告 Source/Piece 数、命中 Piece、激活/位移数量和未移动锚点数。
 
-### F4：局部传播与结构
+### F4：碰撞表示与结构
 
-- contact point 半径、邻接岛和每步最大激活数；
-- 可断 Fixed constraints、强度、锚定和断裂事件；
+- 优先补齐作者 Mesh 的 `CONVEX_HULL`，让不规则 Voronoi Piece 不再依赖缩小的 BOX proxy；
+- 生成相邻图、Static 锚点和可断 glue/Fixed constraints，替代验收文件中手工固定外围 Piece；
+- contact point 半径、邻接岛、每步最大激活数和安全步边界 activation queue；
 - 有明确 oracle 后再增加 impulse threshold；
 - 大规模碎块的事件过滤、批激活和性能门槛。
 
@@ -296,8 +302,8 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 | 纯 Python/schema | 字段默认值、enum、manifest 校验、duplicate ID、状态转换 |
 | Native | `DontActivate`、重力静止、碰撞唤醒、reset、active/sleeping readback |
 | Adapter | Blender 5.2 / py313 下的 spec 映射、批注册混合 Active/Inactive、slot identity、事件映射 |
-| Blender authoring | 规则切块 GN、固定 ID、刷新、拆岛、体积质量、本体模板同步、失败回滚、Undo、save/reopen |
-| Blender pipeline | Source 排除、Piece 展开、隐藏无关、Collection batch、writeback |
+| Blender authoring | 均匀 Voronoi 封闭单元、GN Boolean、固定 ID、刷新、拆岛、体积质量、生成时模板快照、失败回滚、save/reopen |
+| Blender pipeline | Source 排除、Piece 展开、Scene 根 Scope 复用、独立 Product Collection batch、writeback |
 | Acceptance | 球撞墙局部破碎、外圈静止、finite、repeat/reset |
 | 性能 | Piece 数、body sync、contact publish、writeback、depsgraph 和内存 |
 

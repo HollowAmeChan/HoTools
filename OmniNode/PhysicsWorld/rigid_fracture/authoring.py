@@ -4,24 +4,33 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import random
 import uuid
 
 import bpy
+from bpy.app.handlers import persistent
 from mathutils import Matrix, Vector
 
 from ..rigid.schema import RIGID_BODY_RNA_FIELDS
 from .geometry_nodes import (
-    FRACTURE_GENERATOR_VERSION,
+    FRACTURE_METHOD_VORONOI_UNIFORM,
     FRACTURE_PIECE_ID_ATTRIBUTE,
-    build_grid_fracture_group,
+    is_current_fracture_group,
     is_legacy_passthrough_group,
     is_managed_fracture_group,
-    new_grid_fracture_group,
+    modifier_input_values,
+    new_fracture_group,
+    set_fracture_cutter_object,
 )
 
 
-FRACTURE_SCHEMA_VERSION = 2
-DEFAULT_FRACTURE_MODIFIER_NAME = "HoTools Rigid Fracture"
+FRACTURE_SCHEMA_VERSION = 4
+DEFAULT_FRACTURE_MODIFIER_NAME = "HoTools Fracture Preview"
+_HELPER_COLLECTION_NAME = "HoTools Fracture Helpers"
+_CUTTER_OWNER_KEY = "hotools_fracture_cutter_owner"
+_PREVIEW_PENDING_OBJECTS: set[str] = set()
+_PREVIEW_HANDLER_BUSY = False
 
 
 class FractureAssetError(RuntimeError):
@@ -54,34 +63,444 @@ def ensure_product_collection(source, scene=None):
     return collection
 
 
-def ensure_default_fracture_modifier(source):
+def _fracture_method(props) -> str:
+    return str(
+        getattr(props, "fracture_method", FRACTURE_METHOD_VORONOI_UNIFORM)
+        or FRACTURE_METHOD_VORONOI_UNIFORM
+    )
+
+
+def _replace_preview_group(source, modifier, method: str):
+    old_group = getattr(modifier, "node_group", None)
+    old_values = modifier_input_values(modifier) if old_group is not None else {}
+    modifier.node_group = new_fracture_group(
+        f"{source.name}_FracturePreview_{method}",
+        method,
+        getattr(source.hotools_rigid_fracture, "cutter_object", None),
+    )
+    for item in modifier.node_group.interface.items_tree:
+        if (
+            getattr(item, "item_type", "") == "SOCKET"
+            and getattr(item, "in_out", "") == "INPUT"
+            and item.name in old_values
+        ):
+            getattr(modifier.properties.inputs, item.identifier).value = old_values[item.name]
+    if old_group is not None and old_group.users == 0:
+        bpy.data.node_groups.remove(old_group)
+    return modifier
+
+
+def switch_fracture_preview_modifier(source, method: str):
+    """Switch an existing managed preview to *method*; do not create one implicitly."""
     if source is None or source.type != "MESH":
-        raise FractureAssetError("默认破碎 GN 只能添加到 Mesh 对象")
+        raise FractureAssetError("碎块预览只能添加到 Mesh 对象")
     props = source.hotools_rigid_fracture
+    modifier = source.modifiers.get(str(props.modifier_name or ""))
+    if modifier is None:
+        return None
+    if modifier.type != "NODES":
+        raise FractureAssetError("当前碎块预览修改器不是 Geometry Nodes")
+    group = modifier.node_group
+    if not (is_managed_fracture_group(group) or is_legacy_passthrough_group(group)):
+        raise FractureAssetError("只能切换 HoTools 管理的碎块预览")
+    if not is_current_fracture_group(group, method):
+        _replace_preview_group(source, modifier, method)
+        props.product_status = "OUTDATED" if props.product_revision else "EMPTY"
+    props.piece_id_attribute = FRACTURE_PIECE_ID_ATTRIBUTE
+    rebuild_fracture_preview(source, modifier)
+    return modifier
+
+
+def ensure_fracture_preview_modifier(source):
+    if source is None or source.type != "MESH":
+        raise FractureAssetError("碎块预览只能添加到 Mesh 对象")
+    props = source.hotools_rigid_fracture
+    method = _fracture_method(props)
     current = source.modifiers.get(str(props.modifier_name or ""))
     if current is not None and current.type == "NODES":
         group = current.node_group
-        if is_legacy_passthrough_group(group):
-            build_grid_fracture_group(group)
-        elif is_managed_fracture_group(group):
-            version = int(group.get("hotools_generator_version", 0))
-            if version < FRACTURE_GENERATOR_VERSION:
-                build_grid_fracture_group(group)
-        props.piece_id_attribute = FRACTURE_PIECE_ID_ATTRIBUTE
-        return current
-
-    group = new_grid_fracture_group(f"{source.name}_RigidFracture")
+        if is_managed_fracture_group(group) or is_legacy_passthrough_group(group):
+            return switch_fracture_preview_modifier(source, method)
 
     modifier = source.modifiers.new(DEFAULT_FRACTURE_MODIFIER_NAME, "NODES")
-    modifier.node_group = group
+    modifier.node_group = new_fracture_group(
+        f"{source.name}_FracturePreview_{method}",
+        method,
+    )
     props.modifier_name = modifier.name
     props.piece_id_attribute = FRACTURE_PIECE_ID_ATTRIBUTE
     props.product_status = "OUTDATED" if props.product_revision else "EMPTY"
-    rigid = getattr(source, "hotools_rigid_body", None)
-    if rigid is not None and not props.product_revision:
-        rigid.enabled = True
-        rigid.start_deactivated = True
+    rebuild_fracture_preview(source, modifier)
     return modifier
+
+
+def ensure_default_fracture_modifier(source):
+    """Compatibility alias for callers predating fracture-method selection."""
+    return ensure_fracture_preview_modifier(source)
+
+
+def _source_local_bounds(source) -> tuple[Vector, Vector]:
+    corners = [Vector(point) for point in source.bound_box]
+    if not corners:
+        raise FractureAssetError("本体没有可用的局部包围盒")
+    minimum = Vector(tuple(min(point[axis] for point in corners) for axis in range(3)))
+    maximum = Vector(tuple(max(point[axis] for point in corners) for axis in range(3)))
+    if max(maximum - minimum) <= 1.0e-8:
+        raise FractureAssetError("本体尺寸过小，无法生成 Voronoi 单元")
+    return minimum, maximum
+
+
+def _uniform_voronoi_seeds(
+    minimum: Vector,
+    maximum: Vector,
+    *,
+    density: int,
+    seed: int,
+    randomness: float,
+) -> tuple[list[Vector], tuple[int, int, int], Vector]:
+    size = maximum - minimum
+    longest = max(float(value) for value in size)
+    density = max(2, min(int(density), 30))
+    counts = tuple(
+        max(1, int(round(density * max(float(size[axis]), 0.0) / longest)))
+        for axis in range(3)
+    )
+    spacing = Vector(tuple(
+        float(size[axis]) / counts[axis] if counts[axis] else longest
+        for axis in range(3)
+    ))
+    rng = random.Random(int(seed))
+    jitter_amount = max(0.0, min(float(randomness), 1.0)) * 0.42
+    seeds = []
+    for x in range(counts[0]):
+        for y in range(counts[1]):
+            for z in range(counts[2]):
+                indices = (x, y, z)
+                coordinate = []
+                for axis in range(3):
+                    jitter = rng.uniform(-jitter_amount, jitter_amount)
+                    coordinate.append(
+                        float(minimum[axis])
+                        + (indices[axis] + 0.5 + jitter) * float(spacing[axis])
+                    )
+                seeds.append(Vector(coordinate))
+    return seeds, counts, spacing
+
+
+def _box_polygons(minimum: Vector, maximum: Vector) -> list[list[Vector]]:
+    vertices = [
+        Vector((x, y, z))
+        for x, y, z in (
+            (minimum.x, minimum.y, minimum.z),
+            (maximum.x, minimum.y, minimum.z),
+            (maximum.x, maximum.y, minimum.z),
+            (minimum.x, maximum.y, minimum.z),
+            (minimum.x, minimum.y, maximum.z),
+            (maximum.x, minimum.y, maximum.z),
+            (maximum.x, maximum.y, maximum.z),
+            (minimum.x, maximum.y, maximum.z),
+        )
+    ]
+    return [
+        [vertices[index] for index in face]
+        for face in (
+            (0, 3, 2, 1),
+            (4, 5, 6, 7),
+            (0, 1, 5, 4),
+            (1, 2, 6, 5),
+            (2, 3, 7, 6),
+            (3, 0, 4, 7),
+        )
+    ]
+
+
+def _deduplicate_polygon(points: list[Vector], tolerance: float) -> list[Vector]:
+    result = []
+    for point in points:
+        if not result or (point - result[-1]).length > tolerance:
+            result.append(point)
+    if len(result) > 1 and (result[0] - result[-1]).length <= tolerance:
+        result.pop()
+    return result
+
+
+def _clip_convex_polygons(
+    polygons: list[list[Vector]],
+    *,
+    plane_point: Vector,
+    plane_normal: Vector,
+    tolerance: float,
+) -> list[list[Vector]]:
+    """Clip a closed convex polyhedron, retaining the negative plane halfspace."""
+    clipped = []
+    cut_points = []
+    for polygon in polygons:
+        output = []
+        previous = polygon[-1]
+        previous_distance = (previous - plane_point).dot(plane_normal)
+        previous_inside = previous_distance <= tolerance
+        for current in polygon:
+            current_distance = (current - plane_point).dot(plane_normal)
+            current_inside = current_distance <= tolerance
+            if current_inside != previous_inside:
+                denominator = previous_distance - current_distance
+                if abs(denominator) > tolerance:
+                    factor = previous_distance / denominator
+                    intersection = previous.lerp(current, factor)
+                    output.append(intersection)
+                    cut_points.append(intersection)
+            if current_inside:
+                output.append(current.copy())
+            previous = current
+            previous_distance = current_distance
+            previous_inside = current_inside
+        output = _deduplicate_polygon(output, tolerance)
+        if len(output) >= 3:
+            clipped.append(output)
+
+    unique_cut = []
+    for point in cut_points:
+        if not any((point - existing).length <= tolerance for existing in unique_cut):
+            unique_cut.append(point)
+    if len(unique_cut) >= 3:
+        center = sum(unique_cut, Vector()) / len(unique_cut)
+        reference = Vector((1.0, 0.0, 0.0))
+        if abs(plane_normal.x) > 0.9:
+            reference = Vector((0.0, 1.0, 0.0))
+        axis_u = plane_normal.cross(reference).normalized()
+        axis_v = plane_normal.cross(axis_u).normalized()
+        unique_cut.sort(key=lambda point: math.atan2(
+            (point - center).dot(axis_v),
+            (point - center).dot(axis_u),
+        ))
+        cap = _deduplicate_polygon(unique_cut, tolerance)
+        if len(cap) >= 3:
+            normal = (cap[1] - cap[0]).cross(cap[2] - cap[0])
+            if normal.dot(plane_normal) < 0.0:
+                cap.reverse()
+            clipped.append(cap)
+    return clipped
+
+
+def _build_voronoi_cutter_geometry(
+    source,
+    *,
+    density: int,
+    seed: int,
+    randomness: float,
+    gap: float,
+) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]], tuple[int, int, int]]:
+    minimum, maximum = _source_local_bounds(source)
+    seeds, counts, spacing = _uniform_voronoi_seeds(
+        minimum,
+        maximum,
+        density=density,
+        seed=seed,
+        randomness=randomness,
+    )
+    longest = max(float(value) for value in maximum - minimum)
+    tolerance = max(longest * 1.0e-8, 1.0e-9)
+    positive_spacing = [float(value) for value in spacing if float(value) > tolerance]
+    average_cell_size = sum(positive_spacing) / len(positive_spacing)
+    world_gap = max(0.0, min(float(gap), 0.25)) * average_cell_size
+    margin = max(positive_spacing) * 1.25
+    start_minimum = minimum - Vector((margin, margin, margin))
+    start_maximum = maximum + Vector((margin, margin, margin))
+
+    vertices: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, ...]] = []
+    for index, center in enumerate(seeds):
+        polygons = _box_polygons(start_minimum, start_maximum)
+        for other_index, other in enumerate(seeds):
+            if other_index == index:
+                continue
+            delta = other - center
+            distance = delta.length
+            if distance <= tolerance:
+                continue
+            normal = delta / distance
+            plane_point = (center + other) * 0.5 - normal * (world_gap * 0.5)
+            polygons = _clip_convex_polygons(
+                polygons,
+                plane_point=plane_point,
+                plane_normal=normal,
+                tolerance=tolerance,
+            )
+            if not polygons:
+                break
+        if not polygons:
+            continue
+
+        local_vertices = []
+        local_lookup = {}
+        local_faces = []
+        quantization = 1.0 / tolerance
+        for polygon in polygons:
+            face = []
+            for point in polygon:
+                key = tuple(int(round(float(value) * quantization)) for value in point)
+                vertex_index = local_lookup.get(key)
+                if vertex_index is None:
+                    vertex_index = len(local_vertices)
+                    local_lookup[key] = vertex_index
+                    local_vertices.append(tuple(float(value) for value in point))
+                face.append(vertex_index)
+            if len(set(face)) >= 3:
+                local_faces.append(tuple(face))
+        if not local_faces:
+            continue
+        offset = len(vertices)
+        vertices.extend(local_vertices)
+        faces.extend(tuple(offset + vertex_index for vertex_index in face) for face in local_faces)
+    if not faces:
+        raise FractureAssetError("Voronoi 切割器没有生成有效单元")
+    return vertices, faces, counts
+
+
+def _helper_collection(scene=None):
+    collection = bpy.data.collections.get(_HELPER_COLLECTION_NAME)
+    if collection is None:
+        collection = bpy.data.collections.new(_HELPER_COLLECTION_NAME)
+        collection.hide_render = True
+    scene = scene or getattr(bpy.context, "scene", None)
+    if scene is not None and collection.name not in scene.collection.children:
+        scene.collection.children.link(collection)
+    return collection
+
+
+def _ensure_cutter_object(source):
+    props = source.hotools_rigid_fracture
+    asset_id = ensure_asset_id(source)
+    cutter = getattr(props, "cutter_object", None)
+    if cutter is None or cutter.name not in bpy.data.objects:
+        mesh = bpy.data.meshes.new(f"{source.name}_VoronoiCutterMesh")
+        cutter = bpy.data.objects.new(f"{source.name}_VoronoiCutter", mesh)
+        _helper_collection().objects.link(cutter)
+        props.cutter_object = cutter
+    cutter[_CUTTER_OWNER_KEY] = asset_id
+    cutter.display_type = "WIRE"
+    cutter.hide_set(True)
+    cutter.hide_render = True
+    cutter.hide_select = True
+    cutter.matrix_world = source.matrix_world
+    return cutter
+
+
+def _preview_signature(source, values: dict) -> str:
+    minimum, maximum = _source_local_bounds(source)
+    payload = {
+        "bounds": [tuple(round(float(value), 8) for value in minimum),
+                   tuple(round(float(value), 8) for value in maximum)],
+        "matrix_world": [
+            round(float(value), 8)
+            for row in source.matrix_world
+            for value in row
+        ],
+        "density": int(values.get("碎块密度", 6)),
+        "seed": int(values.get("随机种子", 0)),
+        "randomness": round(float(values.get("随机度", 0.72)), 8),
+        "gap": round(float(values.get("裂缝宽度", 0.045)), 8),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def rebuild_fracture_preview(source, modifier=None, *, force: bool = False):
+    """Rebuild closed Voronoi cells and bind them to the managed GN preview."""
+    props = source.hotools_rigid_fracture
+    modifier = modifier or _target_modifier(source, props)
+    if _fracture_method(props) != FRACTURE_METHOD_VORONOI_UNIFORM:
+        raise FractureAssetError("当前切割算法没有可用的预览生成器")
+    values = modifier_input_values(modifier)
+    cutter = _ensure_cutter_object(source)
+    signature = _preview_signature(source, values)
+    changed = force or str(cutter.get("hotools_preview_signature", "")) != signature
+    if changed:
+        vertices, faces, counts = _build_voronoi_cutter_geometry(
+            source,
+            density=int(values.get("碎块密度", 6)),
+            seed=int(values.get("随机种子", 0)),
+            randomness=float(values.get("随机度", 0.72)),
+            gap=float(values.get("裂缝宽度", 0.045)),
+        )
+        mesh = cutter.data
+        mesh.clear_geometry()
+        mesh.from_pydata(vertices, [], faces)
+        mesh.validate(verbose=False, clean_customdata=False)
+        mesh.update(calc_edges=True)
+        cutter["hotools_preview_signature"] = signature
+        cutter["hotools_voronoi_counts"] = tuple(int(value) for value in counts)
+    cutter.matrix_world = source.matrix_world
+    set_fracture_cutter_object(modifier.node_group, cutter)
+    if changed:
+        props.product_status = "OUTDATED" if props.product_revision else "EMPTY"
+    return cutter
+
+
+def _flush_pending_fracture_previews():
+    global _PREVIEW_HANDLER_BUSY
+    if _PREVIEW_HANDLER_BUSY:
+        return 0.05
+    names = tuple(_PREVIEW_PENDING_OBJECTS)
+    _PREVIEW_PENDING_OBJECTS.clear()
+    _PREVIEW_HANDLER_BUSY = True
+    try:
+        for name in names:
+            source = bpy.data.objects.get(name)
+            props = getattr(source, "hotools_rigid_fracture", None) if source else None
+            if props is None:
+                continue
+            modifier = source.modifiers.get(str(getattr(props, "modifier_name", "") or ""))
+            if modifier is None or modifier.type != "NODES":
+                continue
+            if not is_current_fracture_group(modifier.node_group, _fracture_method(props)):
+                continue
+            try:
+                rebuild_fracture_preview(source, modifier)
+                bpy.context.view_layer.update()
+            except Exception as exc:
+                props.last_error = str(exc)
+    finally:
+        _PREVIEW_HANDLER_BUSY = False
+    return None
+
+
+@persistent
+def _fracture_preview_depsgraph_update(_scene, depsgraph):
+    if _PREVIEW_HANDLER_BUSY:
+        return
+    for update in depsgraph.updates:
+        updated = getattr(update, "id", None)
+        source = getattr(updated, "original", updated)
+        if source is None or not isinstance(source, bpy.types.Object):
+            continue
+        props = getattr(source, "hotools_rigid_fracture", None)
+        if props is None or not str(getattr(props, "modifier_name", "") or ""):
+            continue
+        modifier = source.modifiers.get(str(props.modifier_name))
+        if modifier is None or modifier.type != "NODES":
+            continue
+        if not is_current_fracture_group(modifier.node_group, _fracture_method(props)):
+            continue
+        _PREVIEW_PENDING_OBJECTS.add(source.name_full)
+    if _PREVIEW_PENDING_OBJECTS and not bpy.app.timers.is_registered(
+        _flush_pending_fracture_previews
+    ):
+        bpy.app.timers.register(_flush_pending_fracture_previews, first_interval=0.05)
+
+
+def register_fracture_preview_lifecycle() -> None:
+    handlers = bpy.app.handlers.depsgraph_update_post
+    if _fracture_preview_depsgraph_update not in handlers:
+        handlers.append(_fracture_preview_depsgraph_update)
+
+
+def unregister_fracture_preview_lifecycle() -> None:
+    handlers = bpy.app.handlers.depsgraph_update_post
+    if _fracture_preview_depsgraph_update in handlers:
+        handlers.remove(_fracture_preview_depsgraph_update)
+    _PREVIEW_PENDING_OBJECTS.clear()
 
 
 def managed_pieces(source, *, current_revision_only: bool = False) -> list:
@@ -299,7 +718,6 @@ def _object_world_volume(obj) -> float:
 
 
 def apply_piece_defaults(source, pieces=None) -> int:
-    props = source.hotools_rigid_fracture
     targets = list(pieces) if pieces is not None else managed_pieces(source, current_revision_only=True)
     volumes = {int(obj.as_pointer()): _object_world_volume(obj) for obj in targets}
     total_volume = sum(volumes.values())
@@ -317,13 +735,10 @@ def apply_piece_defaults(source, pieces=None) -> int:
         rigid.shape_half_extents = dimensions
         volume = volumes.get(int(obj.as_pointer()), _object_world_volume(obj))
         fraction = volume / total_volume
-        if props.mass_mode == "DENSITY":
-            mass = volume * float(props.density)
-        else:
-            mass = float(source_rigid.mass) * fraction
+        mass = float(source_rigid.mass) * fraction
         rigid.mass = max(mass, 0.001)
         rigid.start_deactivated = bool(rigid.start_deactivated and rigid.body_type == "DYNAMIC")
-        obj.hotools_rigid_fracture_piece.breakable = bool(props.piece_breakable)
+        obj.hotools_rigid_fracture_piece.breakable = True
         obj.hotools_rigid_fracture_piece.volume = volume
         obj.hotools_rigid_fracture_piece.mass_fraction = fraction
     return len(targets)
@@ -378,7 +793,9 @@ def refresh_fracture_products(source, *, depsgraph=None) -> tuple:
     evaluated_object = None
     try:
         asset_id = ensure_asset_id(source)
-        _target_modifier(source, props)
+        modifier = _target_modifier(source, props)
+        rebuild_fracture_preview(source, modifier)
+        bpy.context.view_layer.update()
         collection = ensure_product_collection(source)
         depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
         evaluated_object = source.evaluated_get(depsgraph)
@@ -432,6 +849,38 @@ def refresh_fracture_products(source, *, depsgraph=None) -> tuple:
             evaluated_object.to_mesh_clear()
 
 
+def delete_fracture_products(source) -> int:
+    """Delete the dedicated product collection and all pieces owned by *source*."""
+    if source is None or source.type != "MESH":
+        raise FractureAssetError("刚体破碎 Source 必须是 Mesh 对象")
+    props = source.hotools_rigid_fracture
+    collection = getattr(props, "product_collection", None)
+    if collection is None:
+        return 0
+    owned = managed_pieces(source)
+    owned_pointers = {int(obj.as_pointer()) for obj in owned}
+    unmanaged = [
+        obj.name_full
+        for obj in collection.all_objects
+        if int(obj.as_pointer()) not in owned_pointers
+    ]
+    if unmanaged or collection.children:
+        details = ", ".join(unmanaged[:3]) if unmanaged else "子集合"
+        raise FractureAssetError(f"碎块集合包含非受管内容，不能删除: {details}")
+    for obj in owned:
+        _remove_object_and_orphan_mesh(obj)
+    props.product_collection = None
+    bpy.data.collections.remove(collection)
+    props.product_revision = 0
+    props.product_status = "EMPTY"
+    props.product_fingerprint = ""
+    props.last_error = ""
+    source.hide_set(False)
+    source.hide_render = False
+    invalidate_physics_runtime()
+    return len(owned)
+
+
 def set_fracture_visibility(source, mode: str) -> int:
     mode = str(mode or "BOTH")
     if mode not in {"SOURCE", "PIECES", "BOTH"}:
@@ -464,13 +913,19 @@ __all__ = [
     "FRACTURE_SCHEMA_VERSION",
     "FractureAssetError",
     "apply_piece_defaults",
+    "delete_fracture_products",
     "ensure_asset_id",
     "ensure_default_fracture_modifier",
+    "ensure_fracture_preview_modifier",
     "ensure_product_collection",
     "invalidate_physics_runtime",
     "managed_pieces",
+    "rebuild_fracture_preview",
+    "register_fracture_preview_lifecycle",
     "refresh_fracture_products",
     "select_managed_pieces",
     "set_fracture_visibility",
+    "switch_fracture_preview_modifier",
+    "unregister_fracture_preview_lifecycle",
     "validate_fracture_manifest",
 ]

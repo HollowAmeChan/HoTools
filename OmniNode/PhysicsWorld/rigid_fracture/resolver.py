@@ -19,6 +19,18 @@ def _flatten_objects(values) -> list:
     return result
 
 
+def _has_committed_fracture_products(props) -> bool:
+    """Return whether the linked collection contains any managed product."""
+    collection = getattr(props, "product_collection", None)
+    if collection is None:
+        return False
+    for obj in collection.all_objects:
+        piece = getattr(obj, "hotools_rigid_fracture_piece", None)
+        if piece is not None and bool(getattr(piece, "managed", False)):
+            return True
+    return False
+
+
 def resolve_fracture_scope_objects(objects) -> tuple[tuple, dict[int, dict], tuple]:
     """Return the rigid-only object view, piece metadata, and manifest signature."""
     original = _flatten_objects(objects)
@@ -27,6 +39,10 @@ def resolve_fracture_scope_objects(objects) -> tuple[tuple, dict[int, dict], tup
     for obj in original:
         props = getattr(obj, "hotools_rigid_fracture", None)
         if props is None or not bool(getattr(props, "enabled", False)):
+            continue
+        if not _has_committed_fracture_products(props):
+            # Authoring state and stale manifest metadata are not physical
+            # products. Keep the source usable until managed pieces exist.
             continue
         asset_id = str(getattr(props, "asset_id", "") or "").strip()
         if asset_id and asset_id in owner_sources:

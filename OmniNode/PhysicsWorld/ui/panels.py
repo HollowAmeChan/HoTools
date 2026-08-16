@@ -445,7 +445,6 @@ class PT_Hotools_Physics_RigidFracture(Panel):
     def draw(self, context):
         obj = context.object
         props = obj.hotools_rigid_fracture
-        rigid = obj.hotools_rigid_body
         layout = self.layout
         layout.use_property_split = True
         layout.use_property_decorate = False
@@ -473,57 +472,28 @@ class PT_Hotools_Physics_RigidFracture(Panel):
             error.alert = True
             error.label(text=props.last_error, icon="ERROR")
 
-        generator = layout.column(align=True)
-        generator.prop_search(props, "modifier_name", obj, "modifiers", text="切块节点")
-        generator.operator(
-            "ho.rigid_fracture_add_default_gn",
-            text="创建规则切块节点",
+        layout.prop(props, "fracture_method", text="切割算法")
+        layout.operator(
+            "ho.rigid_fracture_add_preview",
+            text="添加碎块预览",
             icon="GEOMETRY_NODES",
         )
 
-        products = layout.column(align=True)
-        products.prop(props, "product_collection", text="碎块集合")
         row = layout.row(align=True)
         row.operator(
             "ho.rigid_fracture_create_collection",
-            text="创建集合",
+            text="创建碎块集合",
             icon="COLLECTION_NEW",
         )
         row.operator(
             "ho.rigid_fracture_refresh",
-            text="刷新碎块",
+            text="刷新碎块集合",
             icon="FILE_REFRESH",
         )
-
-        view = layout.row(align=True)
-        op = view.operator("ho.rigid_fracture_visibility", text="本体", icon="OBJECT_DATA")
-        op.mode = "SOURCE"
-        op = view.operator("ho.rigid_fracture_visibility", text="碎块", icon="MOD_EXPLODE")
-        op.mode = "PIECES"
-        op = view.operator("ho.rigid_fracture_visibility", text="全部", icon="HIDE_OFF")
-        op.mode = "BOTH"
-        layout.operator(
-            "ho.rigid_fracture_select_pieces",
-            text="选择碎块",
-            icon="RESTRICT_SELECT_OFF",
-        )
-
-        layout.separator()
-        layout.label(text="本体物理", icon="RIGID_BODY")
-        layout.prop(rigid, "body_type", text="类型")
-        layout.prop(props, "mass_mode")
-        if props.mass_mode == "DENSITY":
-            layout.prop(props, "density")
-        else:
-            layout.prop(rigid, "mass", text="总质量")
-        layout.prop(rigid, "friction")
-        layout.prop(rigid, "restitution")
-        if rigid.body_type == "DYNAMIC":
-            layout.prop(rigid, "start_deactivated", text="碰撞前保持静止")
-        layout.operator(
-            "ho.rigid_fracture_reapply_defaults",
-            text="同步到现有碎块",
-            icon="RECOVER_LAST",
+        row.operator(
+            "ho.rigid_fracture_delete_collection",
+            text="删除碎块集合",
+            icon="TRASH",
         )
 
 

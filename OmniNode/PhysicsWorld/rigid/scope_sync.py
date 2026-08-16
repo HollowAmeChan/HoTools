@@ -413,6 +413,7 @@ def _publish_fracture_collection_batches(
         int(collection.as_pointer())
         for collection in getattr(scope, "collections", ())
     }
+    public_object_ptrs = set(getattr(scope, "collection_locations", {}))
     collections = []
     seen = set()
     for metadata in piece_metadata.values():
@@ -424,13 +425,20 @@ def _publish_fracture_collection_batches(
         pointer = int(collection.as_pointer())
         if pointer in public_collection_ptrs or pointer in seen:
             continue
+        product_object_ptrs = {
+            int(obj.as_pointer())
+            for obj in collection.all_objects
+        }
+        if product_object_ptrs and product_object_ptrs.issubset(public_object_ptrs):
+            # A parent collection (most commonly Scene.collection) already
+            # froze every product transform. Reuse that public batch.
+            continue
         seen.add(pointer)
         collections.append(collection)
 
     if not collections:
         return {}
     batches, _locations = build_collection_batches(collections)
-    public_object_ptrs = set(getattr(scope, "collection_locations", {}))
     matrix_values = {}
     for batch in batches:
         overlap = public_object_ptrs.intersection(batch["object_ptrs"])

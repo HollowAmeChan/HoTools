@@ -11,6 +11,23 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 
+from .geometry_nodes import FRACTURE_METHOD_ITEMS, FRACTURE_METHOD_VORONOI_UNIFORM
+
+
+def _fracture_method_update(props, _context):
+    source = getattr(props, "id_data", None)
+    if source is None or getattr(source, "type", "") != "MESH":
+        return
+    if not bool(getattr(props, "enabled", False)):
+        return
+    try:
+        from .authoring import switch_fracture_preview_modifier
+
+        switch_fracture_preview_modifier(source, str(props.fracture_method))
+        props.last_error = ""
+    except Exception as exc:
+        props.last_error = str(exc)
+
 
 class PG_Hotools_RigidFracture(PropertyGroup):
     """Source object fracture asset configuration."""
@@ -21,7 +38,14 @@ class PG_Hotools_RigidFracture(PropertyGroup):
         default=False,
     )
     asset_id: StringProperty(name="资产 ID", default="")
-    schema_version: IntProperty(name="Schema", default=2, min=1, options={"HIDDEN"})
+    schema_version: IntProperty(name="Schema", default=4, min=1, options={"HIDDEN"})
+    fracture_method: EnumProperty(
+        name="切割算法",
+        description="切换时替换 HoTools 管理的碎块预览节点组",
+        items=FRACTURE_METHOD_ITEMS,
+        default=FRACTURE_METHOD_VORONOI_UNIFORM,
+        update=_fracture_method_update,
+    )
     modifier_name: StringProperty(name="几何节点修改器", default="")
     piece_id_attribute: StringProperty(
         name="碎块 ID 属性",
@@ -35,6 +59,11 @@ class PG_Hotools_RigidFracture(PropertyGroup):
         default="CONNECTED_COMPONENT",
     )
     product_collection: PointerProperty(name="产物集合", type=bpy.types.Collection)
+    cutter_object: PointerProperty(
+        name="Voronoi 切割器",
+        type=bpy.types.Object,
+        options={"HIDDEN"},
+    )
     product_revision: IntProperty(name="产物版本", default=0, min=0)
     product_status: EnumProperty(
         name="产物状态",
@@ -55,6 +84,7 @@ class PG_Hotools_RigidFracture(PropertyGroup):
             ("DENSITY", "按材料密度", "碎块质量等于世界空间体积乘以材料密度"),
         ),
         default="SOURCE_MASS",
+        options={"HIDDEN"},
     )
     density: FloatProperty(
         name="材料密度",
@@ -63,6 +93,7 @@ class PG_Hotools_RigidFracture(PropertyGroup):
         min=0.001,
         soft_max=10000.0,
         unit="MASS",
+        options={"HIDDEN"},
     )
     # Version-1 defaults remain hidden so existing .blend files keep their RNA data.
     piece_body_type: EnumProperty(

@@ -107,7 +107,25 @@ def main():
         modifier.show_viewport = False
         source.hotools_rigid_body.mass = 6.0
         source.hotools_rigid_body.friction = 0.35
+        source.hotools_rigid_body.body_type = "DYNAMIC"
+        source.hotools_rigid_body.start_deactivated = True
         fracture.ensure_product_collection(source, bpy.context.scene)
+        uncommitted, metadata, signature = fracture_resolver.resolve_fracture_scope_objects(
+            (source,),
+        )
+        assert uncommitted == (source,) and metadata == {} and signature == ()
+
+        empty_collection = props.product_collection
+        props.product_collection = None
+        props.product_revision = 2
+        props.product_status = "READY"
+        orphaned, metadata, signature = fracture_resolver.resolve_fracture_scope_objects(
+            (source,),
+        )
+        assert orphaned == (source,) and metadata == {} and signature == ()
+        props.product_collection = empty_collection
+        props.product_revision = 0
+        props.product_status = "EMPTY"
 
         pieces1 = fracture.refresh_fracture_products(source)
         assert len(pieces1) == 2
@@ -184,6 +202,25 @@ def main():
         assert len(product_batches) == 1
         assert product_batches[0]["collection"] == props.product_collection
         assert product_batches[0]["object_count"] == 3
+
+        root_scope = physics_scope.make_scope(
+            collections=(bpy.context.scene.collection,),
+            include_passive_collision=False,
+            include_bone_collision=False,
+            include_rigid_body=True,
+            include_rigid_constraint=False,
+        )
+        root_world = physics_types.PhysicsWorldCache()
+        root_world.frame_context.registration_refresh_required = True
+        rigid_scope_sync.collect_rigid_specs_from_scope(root_world, root_scope)
+        root_rigid_slots = [
+            slot for slot in root_world.solver_slots.values()
+            if slot.kind == "rigid_body"
+        ]
+        assert len(root_rigid_slots) == 4
+        assert not root_world.exchange.get(
+            physics_scope.PHYSICS_SCOPE_COLLECTION_BATCH_CHANNEL
+        )
 
         world.frame_context.registration_refresh_required = False
         rigid_scope_sync.collect_rigid_specs_from_scope(world, scope)

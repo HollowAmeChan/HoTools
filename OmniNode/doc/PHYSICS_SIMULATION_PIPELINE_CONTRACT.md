@@ -127,11 +127,11 @@ PhysicsObjectScope
 
 边界：
 
-- Source 是资产 owner，不是 Piece 生成后的 Jolt body。即使 Source 同时启用 `hotools_rigid_body`，resolver 也必须排除它并发布明确诊断。
+- Source 在链接集合出现受管 Piece 前仍是普通 Jolt body；只启用作者属性、创建空 Product Collection，或仅残留 revision/status 元数据都不得改变模拟。链接集合已有受管 Piece 后，Source 才成为纯资产 owner，resolver 必须排除它。
 - Product Collection 不因被链接就把所有成员送入物理。只有 owner ID、piece ID、revision 和 managed 标志完整匹配的 Mesh Object 可以进入 rigid 派生视图；外来对象保持原有 Scope 语义。
-- rigid resolver 可以为 Product Collection 发布帧内 transform/writeback 批次，但不能修改其它 solver 看到的公共 `PhysicsObjectScope.objects`，也不能让其它 domain 自动取得这些 Piece 的 authoring 所有权。
-- Product Collection 为空、过期、身份重复或引用失效时，必须在创建 Jolt body 前整批失败；不得静默回退到 Source，也不得部分注册。
-- GN 求值、Realize、拆分、创建/删除 Object、manifest 替换和可见性修改只允许发生在显式 Blender Operator。World Begin、collector、solver prepare/step 和 writeback 都不得修补资产。
+- Product Collection 位于 Scope 外时，rigid resolver 可以为它发布帧内 transform/writeback 批次；Scene 根集合或其它公开父集合已完整包含 Piece 时必须复用公共批次，禁止重复发布。同样不能修改其它 solver 看到的公共 `PhysicsObjectScope.objects`，也不能让其它 domain 自动取得这些 Piece 的 authoring 所有权。
+- 链接集合中已有受管 Piece 后，过期 revision、身份重复、owner 不匹配或非法对象必须在创建 Jolt body 前整批失败；不得回退到 Source，也不得部分注册。集合丢失或没有受管 Piece 时不存在可展开的运行时 manifest，必须继续收集 Source，不能因残留 revision/status 让整个 rigid collector 失效。
+- GN evaluated mesh 拆分、创建/删除 Piece、manifest 替换和可见性修改只允许发生在显式 Blender Operator。受管 cutter 可以在非模拟的 depsgraph 作者更新中随预览参数重建；World Begin、collector、solver prepare/step 和 writeback 都不得求值 GN 或修补资产。
 - 刷新成功是结构变化，必须使旧模拟 cache、body slots、contact snapshot 和批次失效。仅修改现有 Piece 的普通热参数继续服从 rigid 自身更新合同。
 - 第一阶段 Piece 仍是普通 Blender Object，使用公共 result stream 和 Object writeback；不得为破碎建立 native 到 Blender RNA 的私有旁路。
 

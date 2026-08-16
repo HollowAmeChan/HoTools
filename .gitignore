@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.blend*
+!OmniNode/PhysicsWorld/rigid/test/assets/jolt_fracture_user_project.blend
 *~
 
 # Local test, coverage, and static-analysis outputs. Test sources stay tracked.
