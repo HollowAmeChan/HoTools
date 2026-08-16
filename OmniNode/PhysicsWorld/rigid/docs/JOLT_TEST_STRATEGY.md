@@ -424,6 +424,19 @@ python OmniNode\PhysicsWorld\rigid\test\run_native_semantics.py `
 - reset 后同一命中 Piece 集合和关键帧轨迹在冻结容差内可重放；
 - `.blend` 可以直接打开检查，但可执行脚本仍是 pass/fail 的唯一 oracle。
 
+当前 F3 fixture 使用 Blender 5.2 / py313。生成与磁盘重开验证命令：
+
+```powershell
+& 'D:\Blender\blender-5.2.0-windows-x64\blender.exe' --background --factory-startup --python-exit-code 1 `
+  --python 'OmniNode\PhysicsWorld\rigid\test\test_blender_fracture_wall.py' -- --generate
+
+& 'D:\Blender\blender-5.2.0-windows-x64\blender.exe' --background --factory-startup --python-exit-code 1 `
+  --python 'OmniNode\PhysicsWorld\rigid\test\test_blender_fracture_wall.py' -- `
+  --verify-file 'OmniNode\PhysicsWorld\rigid\test\assets\jolt_fracture_wall.blend'
+```
+
+脚本同时执行一次 delta reset 重放，并要求命中 Piece 集合、位移 Piece 数和 body 数保持一致。
+
 第一条 acceptance 不要求冲量阈值、半径传播、bond、Cluster 或 convex shape。未实现能力不得通过只显示 UI 或用 sleeping 冒充结构强度进入通过条件。
 
 ### Object 资产准备

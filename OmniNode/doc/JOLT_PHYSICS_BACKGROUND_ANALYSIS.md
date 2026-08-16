@@ -339,7 +339,7 @@ Shape 扩展晚于 GN 对象化和 Object 批路径。两个概念必须分开�
 
 ## 实施顺序
 
-### M0：破碎合同与初始激活地基
+### M0：破碎合同与初始激活地基（已完成）
 
 - 冻结 Source/Piece owner、显式刷新、Scope resolver 和球撞墙 acceptance。
 - 在普通刚体 spec/adapter/native 增加默认兼容的 `start_deactivated`，验证重力静止、碰撞唤醒和 restart；本轮只使用 Blender 5.2 / py313，py311 验证暂缓。
@@ -347,7 +347,7 @@ Shape 扩展晚于 GN 对象化和 Object 批路径。两个概念必须分开�
 
 出口：现有 golden 默认轨迹不变；非激活 Dynamic body 的语义有独立 native/adapter/Blender oracle。
 
-### M1：刚体破碎资产刷新
+### M1：刚体破碎资产刷新（已完成）
 
 - 增加 `Object.hotools_rigid_fracture`、Piece metadata、物理大面板和显式 Operators。
 - 落地默认 GN、evaluated mesh snapshot、连通块拆分、稳定 ID、暂存提交、manifest、replace/Undo 和诊断。
@@ -355,7 +355,7 @@ Shape 扩展晚于 GN 对象化和 Object 批路径。两个概念必须分开�
 
 出口：同一 Source 可反复刷新为受管普通 Objects；失败不留半批，不误删 Product Collection 中的用户对象。
 
-### M2：运行时展开与球撞墙
+### M2：运行时展开与球撞墙（已完成）
 
 - fracture resolver 排除 Source，只展开 owner/revision 匹配的受管 Piece。
 - Product Collection 进入稳定 transform/writeback 批边界；所有 Piece 继续构造普通 `RigidBodySpec`。

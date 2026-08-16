@@ -82,9 +82,9 @@ Source 是资产 owner，不是破碎后的物理 body。Piece 是普通 Blender
 | 局部激活 | 第一 acceptance 使用 Jolt 接触自动唤醒命中 Piece | 半径、邻接传播和 assembly policy 进入 F4 |
 | 冲量阈值 | `OnContactAdded` 发生在求解前，当前事件不含求解冲量 | 第一 acceptance 不承诺 impulse threshold；后续单独扩展 native 观测 |
 | 作者操作到缓存失效 | 刷新成功后已清理统一 runtime cache | 下一次 Begin 会完整重建刚体注册 |
-| 破碎测试资产 | authoring + resolver 后台 fixture 已通过，最终墙体 `.blend` 尚未生成 | F3 增加完整 pipeline、保存文件和重开验证 |
+| 破碎测试资产 | `jolt_fracture_wall.blend` 已生成，并通过磁盘重开与同进程 reset 重放 | 可执行脚本是 pass/fail oracle，`.blend` 是用户检查资产 |
 
-结论：现有地基支持这条流程，不需要更换 solver、scope、result 或 writeback 架构；资产事务、scope resolver、Product Collection 批次和初始非激活已经落地，下一出口是 F3 墙体文件。
+结论：第一条 Object 破碎链已经贯通，不需要更换 solver、scope、result 或 writeback 架构。F0-F3 完成后，下一阶段是局部传播、结构约束和规模化 Object 表，而不是运行时 GN 拓扑生成。
 
 ## 冻结产品语义
 
@@ -233,7 +233,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 
 ## 实施切片
 
-### F0：合同与地基门禁
+### F0：合同与地基门禁（已完成）
 
 - 冻结本文、公共 pipeline 入口和测试出口。
 - 增加 `start_deactivated` 到 spec/adapter/native，但默认保持当前 Active 行为。
@@ -242,7 +242,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 
 出口：现有 golden 默认轨迹不变；初始激活语义有独立 oracle。
 
-### F1：资产属性与显式刷新
+### F1：资产属性与显式刷新（已完成）
 
 - 新增 Source/Piece PropertyGroup、面板和 Operators。
 - 实现默认 GN、evaluated mesh snapshot、连通块拆分、manifest 和原子替换。
@@ -250,7 +250,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 
 出口：不运行 solver 也能反复刷新同一资产；失败不污染场景；save/reopen 后身份和状态仍成立。
 
-### F2：运行时展开
+### F2：运行时展开（已完成）
 
 - fracture resolver 排除 Source 并展开受管 Piece。
 - Product Collection 发布自己的批 transform/writeback 边界。
@@ -258,7 +258,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 
 出口：所有参与模拟的对象仍是普通 Object；Source 永不与 Piece 双注册。
 
-### F3：球撞墙 acceptance
+### F3：球撞墙 acceptance（已完成）
 
 - 生成默认墙体破碎 GN 资产并显式刷新。
 - 保存 `rigid/test/assets/jolt_fracture_wall.blend`。

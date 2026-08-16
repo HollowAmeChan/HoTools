@@ -439,7 +439,7 @@ def _publish_fracture_collection_batches(
         world.publish_exchange(
             batch,
             channel=PHYSICS_SCOPE_COLLECTION_BATCH_CHANNEL,
-            producer="rigid_fracture_scope",
+            producer="physics_object_scope",
         )
         values = batch["matrix_world_f32"]
         for index, pointer in enumerate(batch["object_ptrs"]):
