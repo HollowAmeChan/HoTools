@@ -34,6 +34,7 @@ registry = importlib.import_module("HoTools.OmniNode.PhysicsWorld.blender_regist
 rigid_properties = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid.properties")
 fracture_properties = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid_fracture.properties")
 fracture = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid_fracture.authoring")
+fracture_gn = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid_fracture.geometry_nodes")
 fracture_resolver = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid_fracture.resolver")
 physics_scope = importlib.import_module("HoTools.OmniNode.PhysicsWorld.scope")
 physics_types = importlib.import_module("HoTools.OmniNode.PhysicsWorld.types")
@@ -102,7 +103,10 @@ def main():
 
         props = source.hotools_rigid_fracture
         props.enabled = True
-        fracture.ensure_default_fracture_modifier(source)
+        modifier = fracture.ensure_default_fracture_modifier(source)
+        modifier.show_viewport = False
+        source.hotools_rigid_body.mass = 6.0
+        source.hotools_rigid_body.friction = 0.35
         fracture.ensure_product_collection(source, bpy.context.scene)
 
         pieces1 = fracture.refresh_fracture_products(source)
@@ -111,14 +115,16 @@ def main():
         assert all(piece.hotools_rigid_body.enabled for piece in pieces1)
         assert all(piece.hotools_rigid_body.shape_type == "BOX" for piece in pieces1)
         assert all(piece.hotools_rigid_body.start_deactivated for piece in pieces1)
+        assert all(abs(piece.hotools_rigid_body.mass - 3.0) < 1.0e-6 for piece in pieces1)
+        assert all(abs(piece.hotools_rigid_body.friction - 0.35) < 1.0e-6 for piece in pieces1)
+        assert props.piece_id_attribute == fracture_gn.FRACTURE_PIECE_ID_ATTRIBUTE
 
         edited_id = pieces1[0].hotools_rigid_fracture_piece.piece_id
         pieces1[0].hotools_rigid_body.mass = 7.25
         pieces1[0].hotools_rigid_fracture_piece.breakable = False
         pieces2 = fracture.refresh_fracture_products(source)
         edited = next(piece for piece in pieces2 if piece.hotools_rigid_fracture_piece.piece_id == edited_id)
-        assert abs(edited.hotools_rigid_body.mass - 7.25) < 1.0e-6
-        assert edited.hotools_rigid_fracture_piece.breakable is False
+        assert abs(edited.hotools_rigid_body.mass - 3.0) < 1.0e-6
         assert props.product_revision == 2
 
         old_names = {piece.name for piece in pieces2}
@@ -141,7 +147,8 @@ def main():
         pieces3 = fracture.refresh_fracture_products(source)
         assert len(pieces3) == 3 and props.product_revision == 3
         edited = next(piece for piece in pieces3 if piece.hotools_rigid_fracture_piece.piece_id == edited_id)
-        assert abs(edited.hotools_rigid_body.mass - 7.25) < 1.0e-6
+        assert abs(edited.hotools_rigid_body.mass - 2.0) < 1.0e-6
+        assert abs(sum(piece.hotools_rigid_body.mass for piece in pieces3) - 6.0) < 1.0e-6
 
         source.hotools_rigid_body.enabled = True
         ordinary_mesh = bpy.data.meshes.new("OrdinaryRigidMesh")

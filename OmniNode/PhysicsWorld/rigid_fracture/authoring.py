@@ -10,9 +10,17 @@ import bpy
 from mathutils import Matrix, Vector
 
 from ..rigid.schema import RIGID_BODY_RNA_FIELDS
+from .geometry_nodes import (
+    FRACTURE_GENERATOR_VERSION,
+    FRACTURE_PIECE_ID_ATTRIBUTE,
+    build_grid_fracture_group,
+    is_legacy_passthrough_group,
+    is_managed_fracture_group,
+    new_grid_fracture_group,
+)
 
 
-FRACTURE_SCHEMA_VERSION = 1
+FRACTURE_SCHEMA_VERSION = 2
 DEFAULT_FRACTURE_MODIFIER_NAME = "HoTools Rigid Fracture"
 
 
@@ -52,32 +60,27 @@ def ensure_default_fracture_modifier(source):
     props = source.hotools_rigid_fracture
     current = source.modifiers.get(str(props.modifier_name or ""))
     if current is not None and current.type == "NODES":
+        group = current.node_group
+        if is_legacy_passthrough_group(group):
+            build_grid_fracture_group(group)
+        elif is_managed_fracture_group(group):
+            version = int(group.get("hotools_generator_version", 0))
+            if version < FRACTURE_GENERATOR_VERSION:
+                build_grid_fracture_group(group)
+        props.piece_id_attribute = FRACTURE_PIECE_ID_ATTRIBUTE
         return current
 
-    group = bpy.data.node_groups.new(
-        f"{source.name}_RigidFracture",
-        "GeometryNodeTree",
-    )
-    group.interface.new_socket(
-        name="Geometry",
-        in_out="INPUT",
-        socket_type="NodeSocketGeometry",
-    )
-    group.interface.new_socket(
-        name="Geometry",
-        in_out="OUTPUT",
-        socket_type="NodeSocketGeometry",
-    )
-    input_node = group.nodes.new("NodeGroupInput")
-    output_node = group.nodes.new("NodeGroupOutput")
-    input_node.location = (-180.0, 0.0)
-    output_node.location = (180.0, 0.0)
-    group.links.new(input_node.outputs["Geometry"], output_node.inputs["Geometry"])
+    group = new_grid_fracture_group(f"{source.name}_RigidFracture")
 
     modifier = source.modifiers.new(DEFAULT_FRACTURE_MODIFIER_NAME, "NODES")
     modifier.node_group = group
     props.modifier_name = modifier.name
+    props.piece_id_attribute = FRACTURE_PIECE_ID_ATTRIBUTE
     props.product_status = "OUTDATED" if props.product_revision else "EMPTY"
+    rigid = getattr(source, "hotools_rigid_body", None)
+    if rigid is not None and not props.product_revision:
+        rigid.enabled = True
+        rigid.start_deactivated = True
     return modifier
 
 
@@ -193,7 +196,9 @@ def _union_find_components(mesh) -> list[dict]:
 
 
 def _assign_piece_ids(mesh, components, attribute_name: str) -> None:
-    attribute = mesh.attributes.get(attribute_name) if attribute_name else None
+    if attribute_name != FRACTURE_PIECE_ID_ATTRIBUTE:
+        raise FractureAssetError("碎块 ID 属性是 HoTools 内部契约，不能自定义")
+    attribute = mesh.attributes.get(FRACTURE_PIECE_ID_ATTRIBUTE)
     use_attribute = bool(
         attribute is not None
         and str(getattr(attribute, "domain", "")) == "FACE"
@@ -274,21 +279,53 @@ def _restore_rigid_body(obj, snapshot: dict) -> None:
         setattr(rigid, name, value)
 
 
+def _mesh_volume(mesh) -> float:
+    mesh.calc_loop_triangles()
+    signed = 0.0
+    for triangle in mesh.loop_triangles:
+        a, b, c = (mesh.vertices[index].co for index in triangle.vertices)
+        signed += a.dot(b.cross(c)) / 6.0
+    return abs(float(signed))
+
+
+def _object_world_volume(obj) -> float:
+    local_volume = _mesh_volume(obj.data)
+    scale = abs(float(obj.matrix_world.to_3x3().determinant()))
+    volume = local_volume * scale
+    if volume > 1.0e-12:
+        return volume
+    dimensions = tuple(max(abs(float(value)), 0.0) for value in obj.dimensions)
+    return dimensions[0] * dimensions[1] * dimensions[2]
+
+
 def apply_piece_defaults(source, pieces=None) -> int:
     props = source.hotools_rigid_fracture
     targets = list(pieces) if pieces is not None else managed_pieces(source, current_revision_only=True)
+    volumes = {int(obj.as_pointer()): _object_world_volume(obj) for obj in targets}
+    total_volume = sum(volumes.values())
+    if targets and total_volume <= 1.0e-12:
+        raise FractureAssetError("碎块体积为零，无法计算质量")
+
+    source_rigid = source.hotools_rigid_body
+    template = _snapshot_rigid_body(source)
     for obj in targets:
         rigid = obj.hotools_rigid_body
+        _restore_rigid_body(obj, template)
         rigid.enabled = True
-        rigid.body_type = props.piece_body_type
-        rigid.mass = props.piece_mass
-        rigid.friction = props.piece_friction
-        rigid.restitution = props.piece_restitution
         rigid.shape_type = "BOX"
         dimensions = tuple(max(float(value) * 0.5, 0.001) for value in obj.dimensions)
         rigid.shape_half_extents = dimensions
-        rigid.start_deactivated = bool(props.piece_start_deactivated and props.piece_body_type == "DYNAMIC")
+        volume = volumes.get(int(obj.as_pointer()), _object_world_volume(obj))
+        fraction = volume / total_volume
+        if props.mass_mode == "DENSITY":
+            mass = volume * float(props.density)
+        else:
+            mass = float(source_rigid.mass) * fraction
+        rigid.mass = max(mass, 0.001)
+        rigid.start_deactivated = bool(rigid.start_deactivated and rigid.body_type == "DYNAMIC")
         obj.hotools_rigid_fracture_piece.breakable = bool(props.piece_breakable)
+        obj.hotools_rigid_fracture_piece.volume = volume
+        obj.hotools_rigid_fracture_piece.mass_fraction = fraction
     return len(targets)
 
 
@@ -350,33 +387,27 @@ def refresh_fracture_products(source, *, depsgraph=None) -> tuple:
             depsgraph=depsgraph,
         )
         components = _union_find_components(evaluated_mesh)
-        _assign_piece_ids(evaluated_mesh, components, str(props.piece_id_attribute or ""))
+        props.piece_id_attribute = FRACTURE_PIECE_ID_ATTRIBUTE
+        _assign_piece_ids(evaluated_mesh, components, FRACTURE_PIECE_ID_ATTRIBUTE)
         payloads = [_component_payload(evaluated_mesh, component) for component in components]
         fingerprint = _fingerprint(payloads)
 
         old_pieces = managed_pieces(source)
-        old_by_id = {}
+        old_ids = set()
         for old in old_pieces:
             piece_id = str(old.hotools_rigid_fracture_piece.piece_id or "")
-            if not piece_id or piece_id in old_by_id:
+            if not piece_id or piece_id in old_ids:
                 raise FractureAssetError(f"旧产物存在空或重复 Piece ID: {piece_id!r}")
-            old_by_id[piece_id] = (
-                _snapshot_rigid_body(old),
-                bool(old.hotools_rigid_fracture_piece.breakable),
-            )
+            old_ids.add(piece_id)
 
         revision = int(props.product_revision) + 1
         for payload in payloads:
             obj = _new_piece_object(source, payload, asset_id, revision)
             created.append(obj)
-            apply_piece_defaults(source, (obj,))
-            preserved = old_by_id.get(str(payload["piece_id"]))
-            if preserved is not None:
-                _restore_rigid_body(obj, preserved[0])
-                obj.hotools_rigid_fracture_piece.breakable = preserved[1]
 
         for obj in created:
             collection.objects.link(obj)
+        apply_piece_defaults(source, created)
         for old in old_pieces:
             _remove_object_and_orphan_mesh(old)
 

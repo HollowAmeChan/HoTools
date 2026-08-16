@@ -350,7 +350,7 @@ Shape 扩展晚于 GN 对象化和 Object 批路径。两个概念必须分开�
 ### M1：刚体破碎资产刷新（已完成）
 
 - 增加 `Object.hotools_rigid_fracture`、Piece metadata、物理大面板和显式 Operators。
-- 落地默认 GN、evaluated mesh snapshot、连通块拆分、稳定 ID、暂存提交、manifest、replace/Undo 和诊断。
+- 已落地第一种规则网格布尔破碎 GN、固定 `hotools_piece_id`、evaluated mesh snapshot、连通块拆分、按体积质量、暂存提交、manifest、replace/Undo 和诊断；后续切块算法复用同一输出契约。
 - 保留匹配 Piece 的用户刚体属性；刷新成功后失效旧模拟 cache。
 
 出口：同一 Source 可反复刷新为受管普通 Objects；失败不留半批，不误删 Product Collection 中的用户对象。

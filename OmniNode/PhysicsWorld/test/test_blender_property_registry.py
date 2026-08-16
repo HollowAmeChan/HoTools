@@ -190,19 +190,21 @@ EXPECTED_PROPERTY_CONTRACTS = {
         ),
     },
     "PG_Hotools_RigidFracture": {
-        "sha256": "9d2e727d1a0fe00cc9f93c2d10a7eec545681fc3db6d97ffa46284ab6ac701e9",
+        "sha256": "9225f37e51022c0bda12946d4af34f56ac6588ffa7e0ce0374ccab3494def5b3",
         "fields": (
             "enabled", "asset_id", "schema_version", "modifier_name",
             "piece_id_attribute", "split_mode", "product_collection",
             "product_revision", "product_status", "product_fingerprint",
-            "last_error", "piece_body_type", "piece_mass", "piece_friction",
-            "piece_restitution", "piece_start_deactivated", "piece_breakable",
+            "last_error", "mass_mode", "density", "piece_body_type", "piece_mass",
+            "piece_friction", "piece_restitution", "piece_start_deactivated",
+            "piece_breakable",
         ),
     },
     "PG_Hotools_RigidFracturePiece": {
-        "sha256": "e21a4f46de5697d3c28c252fc475ee6b19321875cad4bf51998f11ba63eb7530",
+        "sha256": "d86518d6dcdf1b187f0b72faca31dcad0796ac2c86a049d3ed7223a270631a20",
         "fields": (
             "managed", "owner_asset_id", "piece_id", "product_revision", "breakable",
+            "volume", "mass_fraction",
         ),
     },
 }

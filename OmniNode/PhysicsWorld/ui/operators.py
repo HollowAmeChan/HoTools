@@ -361,8 +361,8 @@ def _active_fracture_source(context):
 
 class OP_Hotools_RigidFracture_AddDefaultGN(Operator):
     bl_idname = "ho.rigid_fracture_add_default_gn"
-    bl_label = "添加默认破碎 GN"
-    bl_description = "添加一个满足刷新契约的 Geometry Nodes 入口；在其中生成并 Realize 碎块"
+    bl_label = "创建规则切块节点"
+    bl_description = "创建可调 XYZ 切块数和碎块间隙的规则布尔破碎节点"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -473,8 +473,8 @@ class OP_Hotools_RigidFracture_SelectPieces(Operator):
 
 class OP_Hotools_RigidFracture_ReapplyDefaults(Operator):
     bl_idname = "ho.rigid_fracture_reapply_defaults"
-    bl_label = "重新应用碎块默认刚体属性"
-    bl_description = "显式覆盖当前版本所有受管碎块的普通刚体属性"
+    bl_label = "同步本体物理属性"
+    bl_description = "将本体刚体属性同步到全部碎块，并按体积重新计算质量"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod

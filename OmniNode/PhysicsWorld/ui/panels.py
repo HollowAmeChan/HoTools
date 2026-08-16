@@ -445,32 +445,55 @@ class PT_Hotools_Physics_RigidFracture(Panel):
     def draw(self, context):
         obj = context.object
         props = obj.hotools_rigid_fracture
+        rigid = obj.hotools_rigid_body
         layout = self.layout
         layout.use_property_split = True
         layout.use_property_decorate = False
 
-        status_row = layout.row()
+        status_icons = {
+            "EMPTY": "RADIOBUT_OFF",
+            "READY": "CHECKMARK",
+            "OUTDATED": "FILE_REFRESH",
+            "ERROR": "ERROR",
+        }
+        status_labels = {
+            "EMPTY": "未生成",
+            "READY": "可用",
+            "OUTDATED": "需刷新",
+            "ERROR": "错误",
+        }
+        status_row = layout.row(align=True)
         status_row.alert = props.product_status in {"OUTDATED", "ERROR"}
-        status_row.prop(props, "product_status", text="状态")
-        layout.label(text=f"版本 {props.product_revision}")
+        status_row.label(
+            text=f"{status_labels.get(props.product_status, props.product_status)} · v{props.product_revision}",
+            icon=status_icons.get(props.product_status, "QUESTION"),
+        )
         if props.last_error:
             error = layout.row()
             error.alert = True
             error.label(text=props.last_error, icon="ERROR")
 
-        layout.separator()
-        layout.label(text="生成器", icon="GEOMETRY_NODES")
-        layout.prop_search(props, "modifier_name", obj, "modifiers", text="修改器")
-        layout.prop(props, "split_mode")
-        layout.prop(props, "piece_id_attribute")
-        layout.operator("ho.rigid_fracture_add_default_gn", icon="NODETREE")
+        generator = layout.column(align=True)
+        generator.prop_search(props, "modifier_name", obj, "modifiers", text="切块节点")
+        generator.operator(
+            "ho.rigid_fracture_add_default_gn",
+            text="创建规则切块节点",
+            icon="GEOMETRY_NODES",
+        )
 
-        layout.separator()
-        layout.label(text="产物", icon="OUTLINER_COLLECTION")
-        layout.prop(props, "product_collection")
+        products = layout.column(align=True)
+        products.prop(props, "product_collection", text="碎块集合")
         row = layout.row(align=True)
-        row.operator("ho.rigid_fracture_create_collection", icon="COLLECTION_NEW")
-        row.operator("ho.rigid_fracture_refresh", icon="FILE_REFRESH")
+        row.operator(
+            "ho.rigid_fracture_create_collection",
+            text="创建集合",
+            icon="COLLECTION_NEW",
+        )
+        row.operator(
+            "ho.rigid_fracture_refresh",
+            text="刷新碎块",
+            icon="FILE_REFRESH",
+        )
 
         view = layout.row(align=True)
         op = view.operator("ho.rigid_fracture_visibility", text="本体", icon="OBJECT_DATA")
@@ -479,22 +502,29 @@ class PT_Hotools_Physics_RigidFracture(Panel):
         op.mode = "PIECES"
         op = view.operator("ho.rigid_fracture_visibility", text="全部", icon="HIDE_OFF")
         op.mode = "BOTH"
-        layout.operator("ho.rigid_fracture_select_pieces", icon="RESTRICT_SELECT_OFF")
+        layout.operator(
+            "ho.rigid_fracture_select_pieces",
+            text="选择碎块",
+            icon="RESTRICT_SELECT_OFF",
+        )
 
         layout.separator()
-        layout.label(text="新碎块默认值", icon="RIGID_BODY")
-        layout.prop(props, "piece_body_type")
-        layout.prop(props, "piece_mass")
-        layout.prop(props, "piece_friction")
-        layout.prop(props, "piece_restitution")
-        layout.prop(props, "piece_start_deactivated")
-        layout.prop(props, "piece_breakable")
-        layout.operator("ho.rigid_fracture_reapply_defaults", icon="RECOVER_LAST")
-
-        if getattr(obj.hotools_rigid_body, "enabled", False):
-            warning = layout.row()
-            warning.alert = True
-            warning.label(text="破碎启用时本体刚体会被运行时排除", icon="INFO")
+        layout.label(text="本体物理", icon="RIGID_BODY")
+        layout.prop(rigid, "body_type", text="类型")
+        layout.prop(props, "mass_mode")
+        if props.mass_mode == "DENSITY":
+            layout.prop(props, "density")
+        else:
+            layout.prop(rigid, "mass", text="总质量")
+        layout.prop(rigid, "friction")
+        layout.prop(rigid, "restitution")
+        if rigid.body_type == "DYNAMIC":
+            layout.prop(rigid, "start_deactivated", text="碰撞前保持静止")
+        layout.operator(
+            "ho.rigid_fracture_reapply_defaults",
+            text="同步到现有碎块",
+            icon="RECOVER_LAST",
+        )
 
 
 # ---------------------------------------------------------------------------

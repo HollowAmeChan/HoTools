@@ -93,7 +93,8 @@ Source 是资产 owner，不是破碎后的物理 body。Piece 是普通 Blender
 新增 `Object.hotools_rigid_fracture`，由独立的 `physicsWorld.rigid_fracture` core component 持有；`physicsWorld.rigid` 只消费其 resolver。实现目录固定为：
 
 - `rigid_fracture/properties.py`：Source/Piece 持久属性；
-- `rigid_fracture/authoring.py`：GN、Collection、刷新事务与作者操作；
+- `rigid_fracture/geometry_nodes.py`：受管规则切块 GN 与固定身份属性；
+- `rigid_fracture/authoring.py`：Collection、刷新事务、体积质量与作者操作；
 - `rigid_fracture/resolver.py`：rigid 私有 Scope 展开与 slot 身份索引；
 - `rigid/scope_sync.py`：消费 resolver，继续生成普通 `RigidBodySpec`。
 
@@ -102,9 +103,10 @@ Source 是资产 owner，不是破碎后的物理 body。Piece 是普通 Blender
 | 分组 | 字段 |
 |---|---|
 | Identity | `enabled`、`asset_id`、`schema_version` |
-| Generator | `modifier_name`、`piece_id_attribute`、`split_mode` |
+| Generator | `modifier_name`；`piece_id_attribute=hotools_piece_id` 与 `split_mode=CONNECTED_COMPONENT` 是隐藏内部契约 |
 | Products | `product_collection`、`product_revision`、`product_status`、`product_fingerprint` |
-| Defaults | `piece_body_type`、`piece_mass`、`piece_friction`、`piece_restitution`、`piece_start_deactivated`、`piece_breakable` |
+| Mass | `mass_mode=SOURCE_MASS/DENSITY`、`density`；`SOURCE_MASS` 读取本体普通刚体质量 |
+| Physics template | 类型、摩擦、弹性、阻尼、重力倍率、睡眠等直接读取本体 `hotools_rigid_body`；v1 `piece_*` 字段只隐藏保留旧文件数据 |
 | Activation | 半径、阈值和 assembly policy 在实现支持前不注册 |
 
 Modifier 不是 Blender ID，持久引用使用 Source 内的 modifier name；节点组可以作为诊断信息，但不能替代 modifier identity。Product Collection 使用 `PointerProperty(Collection)`。
@@ -125,8 +127,10 @@ Modifier 不是 Blender ID，持久引用使用 Source 内的 modifier name；�
 - `product_revision`
 - `managed`
 - `breakable`
+- `volume`
+- `mass_fraction`
 
-Piece 的质量、shape、过滤、阻尼、重力、睡眠等仍存入普通 `Object.hotools_rigid_body`，用户可以逐块修改。Piece metadata 不复制整套刚体字段。
+Piece 的质量、shape、过滤、阻尼、重力、睡眠等仍存入普通 `Object.hotools_rigid_body`。刷新和“同步到现有碎块”以本体刚体为模板重新写入；质量按闭合网格世界空间体积分配。刷新完成后仍可逐块修改，但下次显式同步或刷新会回到本体模板。Piece metadata 不复制整套刚体字段。
 
 ### 所有权规则
 
@@ -141,7 +145,7 @@ Piece 的质量、shape、过滤、阻尼、重力、睡眠等仍存入普通 `O
 Object 物理大面板增加“刚体破碎”开关和子面板。用户流程冻结为：
 
 1. 在 Source 上启用刚体破碎。
-2. 点击“添加默认破碎 GN”，或选择已有 Geometry Nodes modifier。
+2. 点击“创建规则切块节点”，或选择已有 Geometry Nodes modifier。
 3. 创建或链接 Product Collection。
 4. 调节 GN 参数并观察 Source 的 evaluated 结果。
 5. 点击“刷新碎块产物”。
@@ -151,16 +155,20 @@ Object 物理大面板增加“刚体破碎”开关和子面板。用户流程�
 
 必须提供的命令：
 
-- 添加默认破碎 GN；
+- 创建默认规则切块 GN；
 - 使用/定位现有 GN modifier；
 - 创建并链接 Product Collection；
 - 刷新碎块产物；
 - 显示本体、显示碎块、隔离碎块；
 - 选择全部受管 Piece；
-- 对新 Piece 重新应用默认刚体属性；
+- 将本体物理属性同步到现有 Piece；
 - 检查资产状态。
 
-“刷新产物”和“重新应用默认属性”必须是两个命令。刷新不能静默覆盖用户已修改的匹配 Piece 刚体参数。
+“刷新产物”和“同步到现有碎块”是两个命令。刷新是明确的资产重建操作，会重新应用本体模板并按体积重算质量；普通参数调整只有在用户点击同步后才覆盖当前产物。
+
+### 默认规则切块 GN
+
+默认生成器使用包围盒规则网格与精确 Mesh Boolean 交集，提供 `X 切块`、`Y 切块`、`Z 切块` 和 `碎块间隙` 四个输入。间隙保证布尔结果成为互不连通的面岛；输出端用 Mesh Island Index 在 FACE 域写入固定整数属性 `hotools_piece_id`。属性名不是用户选项，刷新时也会强制恢复固定值。此生成器是第一种内置切块算法，不替代用户自定义 GN。
 
 ## 显式刷新事务
 
@@ -169,10 +177,10 @@ Object 物理大面板增加“刚体破碎”开关和子面板。用户流程�
 1. 校验 Source、modifier、Product Collection 和当前模式。
 2. 读取 evaluated mesh；默认 GN 必须在输出前 Realize Instances。
 3. 按 `CONNECTED_COMPONENT` 拆分；为将来的 `REALIZED_INSTANCE` 保留 enum，但未实现时不得伪装成功。
-4. 读取命名整数属性作为 piece ID。没有稳定 ID 时允许整批 replacement，但必须显示“不会保留逐块编辑/约束”的诊断。
+4. 只读取固定 FACE/INT 属性 `hotools_piece_id` 作为 piece ID；自定义 GN 未输出该属性时按确定性的连通块顺序生成后备 ID。
 5. 在临时 Collection 创建独立 Mesh/Object，复制正确 world transform。
 6. 校验 finite、非空面、piece 数量、ID 唯一性和所有权冲突。
-7. 按 `asset_id + piece_id` 匹配旧 Piece：匹配者保留用户刚体属性；新增者应用 Source 默认模板。
+7. 所有新 Piece 应用本体 `hotools_rigid_body` 模板；`SOURCE_MASS` 按体积占比分配本体总质量，`DENSITY` 按世界空间体积乘材料密度计算。
 8. 原子提交新 manifest 和 Product Collection；只删除旧 manifest 明确拥有且仍标记 managed 的对象。
 9. revision 递增，模拟 cache 失效，请求下一次 Begin 重建刚体注册。
 10. 任一步失败时删除临时资源，旧 READY 产品保持原样。
@@ -288,7 +296,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 | 纯 Python/schema | 字段默认值、enum、manifest 校验、duplicate ID、状态转换 |
 | Native | `DontActivate`、重力静止、碰撞唤醒、reset、active/sleeping readback |
 | Adapter | Blender 5.2 / py313 下的 spec 映射、批注册混合 Active/Inactive、slot identity、事件映射 |
-| Blender authoring | 默认 GN、刷新、拆岛、属性保留、失败回滚、Undo、save/reopen |
+| Blender authoring | 规则切块 GN、固定 ID、刷新、拆岛、体积质量、本体模板同步、失败回滚、Undo、save/reopen |
 | Blender pipeline | Source 排除、Piece 展开、隐藏无关、Collection batch、writeback |
 | Acceptance | 球撞墙局部破碎、外圈静止、finite、repeat/reset |
 | 性能 | Piece 数、body sync、contact publish、writeback、depsgraph 和内存 |

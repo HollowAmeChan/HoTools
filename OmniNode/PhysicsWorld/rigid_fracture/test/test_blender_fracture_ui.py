@@ -31,6 +31,7 @@ for package_name, package_path in (
 registry = importlib.import_module("HoTools.OmniNode.PhysicsWorld.registry")
 ui = importlib.import_module("HoTools.OmniNode.PhysicsWorld.ui")
 panels = importlib.import_module("HoTools.OmniNode.PhysicsWorld.ui.panels")
+fracture_gn = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid_fracture.geometry_nodes")
 
 
 def main():
@@ -51,7 +52,12 @@ def main():
         props = source.hotools_rigid_fracture
         assert props.modifier_name in source.modifiers
         assert props.product_collection is not None
-        print("[PASS] rigid fracture UI registered; GN and collection operators finished")
+        modifier = source.modifiers[props.modifier_name]
+        assert fracture_gn.is_managed_fracture_group(modifier.node_group)
+        assert props.piece_id_attribute == fracture_gn.FRACTURE_PIECE_ID_ATTRIBUTE
+        assert source.hotools_rigid_body.enabled
+        assert source.hotools_rigid_body.start_deactivated
+        print("[PASS] rigid fracture UI registered; managed grid GN and collection ready")
     finally:
         ui.unregister()
         registry.unregister_physics_world_blender_properties()

@@ -50,6 +50,7 @@ rigid_solver = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid.solv
 rigid_results = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid.results")
 rigid_specs = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid.specs")
 fracture = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid_fracture.authoring")
+fracture_gn = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid_fracture.geometry_nodes")
 fracture_resolver = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid_fracture.resolver")
 
 
@@ -147,17 +148,17 @@ def build_asset(path=ASSET_PATH):
     simulation_collection = bpy.data.collections.new(SIM_COLLECTION)
     scene.collection.children.link(simulation_collection)
 
-    wall_boxes = []
-    for column in range(-3, 4):
-        for row in range(5):
-            wall_boxes.append(((0.0, column * 0.98, 0.5 + row * 0.98), (0.30, 0.46, 0.46)))
-    source_mesh = _mesh_from_boxes("Wall Fracture Evaluated Mesh", wall_boxes)
+    source_mesh = _mesh_from_boxes(
+        "Wall Fracture Source Mesh",
+        [((0.0, 0.0, 2.5), (0.30, 3.5, 2.5))],
+    )
     source = bpy.data.objects.new(SOURCE_NAME, source_mesh)
     simulation_collection.objects.link(source)
     source.hotools_rigid_fracture.enabled = True
-    source.hotools_rigid_fracture.piece_mass = 1.0
-    source.hotools_rigid_fracture.piece_start_deactivated = True
-    fracture.ensure_default_fracture_modifier(source)
+    modifier = fracture.ensure_default_fracture_modifier(source)
+    fracture_gn.set_grid_modifier_inputs(modifier, counts=(1, 7, 5), gap=0.04)
+    source.hotools_rigid_body.mass = 35.0
+    source.hotools_rigid_body.start_deactivated = True
     fracture.ensure_product_collection(source, scene)
     pieces = fracture.refresh_fracture_products(source)
     assert len(pieces) == 35
@@ -275,6 +276,11 @@ def verify_loaded_asset(*, label="run"):
     assert scene.get("hotools_acceptance") == "jolt_fracture_wall_v1"
     source = bpy.data.objects[SOURCE_NAME]
     ball = bpy.data.objects[BALL_NAME]
+    source_props = source.hotools_rigid_fracture
+    assert source_props.schema_version == fracture.FRACTURE_SCHEMA_VERSION
+    assert fracture_gn.is_managed_fracture_group(
+        source.modifiers[source_props.modifier_name].node_group
+    )
     pieces = list(fracture.validate_fracture_manifest(source))
     dynamic_pieces = [obj for obj in pieces if obj.get("hotools_acceptance_role") == "breakable"]
     static_pieces = [obj for obj in pieces if obj.get("hotools_acceptance_role") == "anchor"]

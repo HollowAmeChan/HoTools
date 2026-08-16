@@ -21,9 +21,14 @@ class PG_Hotools_RigidFracture(PropertyGroup):
         default=False,
     )
     asset_id: StringProperty(name="资产 ID", default="")
-    schema_version: IntProperty(name="Schema", default=1, min=1, options={"HIDDEN"})
+    schema_version: IntProperty(name="Schema", default=2, min=1, options={"HIDDEN"})
     modifier_name: StringProperty(name="几何节点修改器", default="")
-    piece_id_attribute: StringProperty(name="碎块 ID 属性", default="hotools_piece_id")
+    piece_id_attribute: StringProperty(
+        name="碎块 ID 属性",
+        description="HoTools 内部身份属性；固定为 hotools_piece_id",
+        default="hotools_piece_id",
+        options={"HIDDEN"},
+    )
     split_mode: EnumProperty(
         name="拆分方式",
         items=(("CONNECTED_COMPONENT", "连通块", "按 evaluated mesh 的不连通面岛拆成独立物体"),),
@@ -43,6 +48,23 @@ class PG_Hotools_RigidFracture(PropertyGroup):
     )
     product_fingerprint: StringProperty(name="产物指纹", default="", options={"HIDDEN"})
     last_error: StringProperty(name="诊断", default="")
+    mass_mode: EnumProperty(
+        name="质量计算",
+        items=(
+            ("SOURCE_MASS", "按本体总质量", "按碎块体积占比分配本体刚体的质量"),
+            ("DENSITY", "按材料密度", "碎块质量等于世界空间体积乘以材料密度"),
+        ),
+        default="SOURCE_MASS",
+    )
+    density: FloatProperty(
+        name="材料密度",
+        description="每立方米质量；仅在按材料密度计算时使用",
+        default=1000.0,
+        min=0.001,
+        soft_max=10000.0,
+        unit="MASS",
+    )
+    # Version-1 defaults remain hidden so existing .blend files keep their RNA data.
     piece_body_type: EnumProperty(
         name="新碎块类型",
         items=(
@@ -50,16 +72,27 @@ class PG_Hotools_RigidFracture(PropertyGroup):
             ("STATIC", "静态", "新碎块作为静态刚体"),
         ),
         default="DYNAMIC",
+        options={"HIDDEN"},
     )
-    piece_mass: FloatProperty(name="新碎块质量", default=1.0, min=0.001, soft_max=1000.0)
-    piece_friction: FloatProperty(name="新碎块摩擦", default=0.5, min=0.0, max=1.0)
-    piece_restitution: FloatProperty(name="新碎块弹性", default=0.0, min=0.0, max=1.0)
+    piece_mass: FloatProperty(
+        name="新碎块质量", default=1.0, min=0.001, soft_max=1000.0,
+        options={"HIDDEN"},
+    )
+    piece_friction: FloatProperty(
+        name="新碎块摩擦", default=0.5, min=0.0, max=1.0,
+        options={"HIDDEN"},
+    )
+    piece_restitution: FloatProperty(
+        name="新碎块弹性", default=0.0, min=0.0, max=1.0,
+        options={"HIDDEN"},
+    )
     piece_start_deactivated: BoolProperty(
         name="新碎块初始停用",
         description="新动态碎块等待碰撞或显式命令唤醒",
         default=True,
+        options={"HIDDEN"},
     )
-    piece_breakable: BoolProperty(name="新碎块可破碎", default=True)
+    piece_breakable: BoolProperty(name="新碎块可破碎", default=True, options={"HIDDEN"})
 
 
 class PG_Hotools_RigidFracturePiece(PropertyGroup):
@@ -70,6 +103,8 @@ class PG_Hotools_RigidFracturePiece(PropertyGroup):
     piece_id: StringProperty(name="Piece ID", default="")
     product_revision: IntProperty(name="Product Revision", default=0, min=0)
     breakable: BoolProperty(name="可破碎", default=True)
+    volume: FloatProperty(name="体积", default=0.0, min=0.0, options={"HIDDEN"})
+    mass_fraction: FloatProperty(name="质量占比", default=0.0, min=0.0, max=1.0, options={"HIDDEN"})
 
 
 RIGID_FRACTURE_BLENDER_PROPERTIES = {
