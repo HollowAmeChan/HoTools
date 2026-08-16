@@ -61,6 +61,9 @@ collision_property = importlib.import_module(
 rigid_property = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.rigid.properties"
 )
+fracture_property = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.rigid_fracture.properties"
+)
 rigid_schema = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.rigid.schema"
 )
@@ -186,6 +189,22 @@ EXPECTED_PROPERTY_CONTRACTS = {
             "rack_and_pinion_ratio",
         ),
     },
+    "PG_Hotools_RigidFracture": {
+        "sha256": "9d2e727d1a0fe00cc9f93c2d10a7eec545681fc3db6d97ffa46284ab6ac701e9",
+        "fields": (
+            "enabled", "asset_id", "schema_version", "modifier_name",
+            "piece_id_attribute", "split_mode", "product_collection",
+            "product_revision", "product_status", "product_fingerprint",
+            "last_error", "piece_body_type", "piece_mass", "piece_friction",
+            "piece_restitution", "piece_start_deactivated", "piece_breakable",
+        ),
+    },
+    "PG_Hotools_RigidFracturePiece": {
+        "sha256": "e21a4f46de5697d3c28c252fc475ee6b19321875cad4bf51998f11ba63eb7530",
+        "fields": (
+            "managed", "owner_asset_id", "piece_id", "product_revision", "breakable",
+        ),
+    },
 }
 
 
@@ -239,6 +258,8 @@ def test_persistent_property_contracts_are_frozen():
         mesh_property.PG_Hotools_MeshCollision,
         rigid_property.PG_Hotools_RigidBody,
         rigid_property.PG_Hotools_RigidConstraint,
+        fracture_property.PG_Hotools_RigidFracture,
+        fracture_property.PG_Hotools_RigidFracturePiece,
     )
     actual = {cls.__name__: _property_contract(cls) for cls in classes}
     assert actual == EXPECTED_PROPERTY_CONTRACTS, json.dumps(actual, ensure_ascii=False, indent=2)
@@ -265,6 +286,9 @@ def test_components_own_shared_and_solver_adapter_capabilities():
     )["consumes_capabilities"] == ["simple_cloth"]
     assert rigid_property.PG_Hotools_RigidBody.__module__.endswith("PhysicsWorld.rigid.properties")
     assert rigid_property.PG_Hotools_RigidConstraint.__module__.endswith("PhysicsWorld.rigid.properties")
+    assert fracture_property.PG_Hotools_RigidFracture.__module__.endswith(
+        "PhysicsWorld.rigid_fracture.properties"
+    )
     assert physics_utils._COLLISION_GROUP_COUNT == collision_groups.COLLISION_GROUP_COUNT
     assert physics_utils._ALL_COLLISION_GROUPS_MASK == collision_groups.ALL_COLLISION_GROUPS_MASK
     assert physics_utils._COLLISION_GROUP_COLORS is collision_groups.COLLISION_GROUP_COLORS
@@ -572,7 +596,7 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     solver_registry.unregister_solver_blender_properties()
 
     binding_count = solver_registry.register_physics_world_blender_properties()
-    assert binding_count >= 5, {
+    assert binding_count >= 7, {
         "binding_count": binding_count,
         "registry": blender_registry.blender_property_registry_snapshot(),
     }
@@ -580,7 +604,8 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     assert hasattr(bpy.types.Object, "hotools_object_collision")
     registered_domains = blender_registry.registered_blender_property_domains()
     assert registered_domains[0] == "collision"
-    assert registered_domains[-2:] == ("simple_cloth", "rigid")
+    assert "simple_cloth" in registered_domains
+    assert registered_domains[-2:] == ("rigid_fracture", "rigid")
     assert "mc2" not in registered_domains
     assert solver_registry.register_physics_world_blender_properties() == binding_count
 
@@ -630,6 +655,8 @@ def _contract_property_declaration() -> dict:
             mesh_property.PG_Hotools_MeshCollision,
             rigid_property.PG_Hotools_RigidBody,
             rigid_property.PG_Hotools_RigidConstraint,
+            fracture_property.PG_Hotools_RigidFracture,
+            fracture_property.PG_Hotools_RigidFracturePiece,
         ),
         "bindings": (
             {
@@ -661,6 +688,18 @@ def _contract_property_declaration() -> dict:
                 "name": "hotools_rigid_constraint",
                 "property": "pointer",
                 "type": rigid_property.PG_Hotools_RigidConstraint,
+            },
+            {
+                "owner": bpy.types.Object,
+                "name": "hotools_rigid_fracture",
+                "property": "pointer",
+                "type": fracture_property.PG_Hotools_RigidFracture,
+            },
+            {
+                "owner": bpy.types.Object,
+                "name": "hotools_rigid_fracture_piece",
+                "property": "pointer",
+                "type": fracture_property.PG_Hotools_RigidFracturePiece,
             },
         ),
     }
@@ -773,6 +812,8 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
         base_pose_obj = _new_mesh_object("PW_PropertyContractBasePose")
         constraint_obj = bpy.data.objects.new("PW_PropertyContractConstraint", None)
         bpy.context.scene.collection.objects.link(constraint_obj)
+        product_collection = bpy.data.collections.new("PW_PropertyContractPieces")
+        bpy.context.scene.collection.children.link(product_collection)
 
         bone = armature.data.bones["contract_bone"]
         instances = {
@@ -805,6 +846,16 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
                     "reference_constraint_a": physical_obj,
                     "reference_constraint_b": base_pose_obj,
                 },
+            ),
+            "PG_Hotools_RigidFracture": (
+                physical_obj.hotools_rigid_fracture,
+                fracture_property.PG_Hotools_RigidFracture,
+                {"product_collection": product_collection},
+            ),
+            "PG_Hotools_RigidFracturePiece": (
+                physical_obj.hotools_rigid_fracture_piece,
+                fracture_property.PG_Hotools_RigidFracturePiece,
+                {},
             ),
         }
         for instance, cls, pointers in instances.values():
@@ -842,6 +893,14 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
             "PG_Hotools_RigidConstraint": (
                 constraint_obj.hotools_rigid_constraint,
                 rigid_property.PG_Hotools_RigidConstraint,
+            ),
+            "PG_Hotools_RigidFracture": (
+                physical_obj.hotools_rigid_fracture,
+                fracture_property.PG_Hotools_RigidFracture,
+            ),
+            "PG_Hotools_RigidFracturePiece": (
+                physical_obj.hotools_rigid_fracture_piece,
+                fracture_property.PG_Hotools_RigidFracturePiece,
             ),
         }
         after = {

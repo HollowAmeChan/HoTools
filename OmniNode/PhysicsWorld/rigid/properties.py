@@ -1,7 +1,14 @@
 """由 rigid.schema 生成 Rigid/Jolt Blender PropertyGroup 与稳定 binding。"""
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty
+from bpy.props import (
+    BoolProperty,
+    EnumProperty,
+    FloatProperty,
+    FloatVectorProperty,
+    IntProperty,
+    PointerProperty,
+)
 from bpy.types import PropertyGroup
 
 from .schema import RIGID_BODY_RNA_FIELDS, RIGID_CONSTRAINT_RNA_FIELDS

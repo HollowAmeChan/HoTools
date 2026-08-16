@@ -10,9 +10,18 @@ from __future__ import annotations
 import bpy
 
 from ..types import PhysicsObjectScope, PhysicsWorldCache
+from ..scope import (
+    PHYSICS_SCOPE_COLLECTION_BATCH_CHANNEL,
+    build_collection_batches,
+)
 from ..utils.blender_scene import update_view_layer_if_allowed
 from .declaration import RIGID_SOLVER_DECLARATION
 from .implicit_objects import active_generated_constraint_slot_ids
+from ..rigid_fracture.resolver import (
+    FRACTURE_SCOPE_SIGNATURE_RESOURCE_KEY,
+    FRACTURE_SLOT_INDEX_RESOURCE_KEY,
+    resolve_fracture_scope_objects,
+)
 from .names import (
     RIGID_BACKEND_RESOURCE_KEY,
     RIGID_BODY_SLOT_KIND,
@@ -53,18 +62,21 @@ def _scope_world_matrix_values_by_pointer(
         return None
 
 
-def _scope_world_matrix_values(scope: PhysicsObjectScope, obj):
+def _scope_world_matrix_values(scope: PhysicsObjectScope, obj, extra_matrix_values=None):
     """按 Scope 冻结的 Collection 顺序读取 Object.matrix_world 批量切片。"""
     try:
+        pointer = int(obj.as_pointer())
+        if extra_matrix_values and pointer in extra_matrix_values:
+            return extra_matrix_values[pointer]
         return _scope_world_matrix_values_by_pointer(scope, int(obj.as_pointer()))
     except Exception:
         return None
 
 
-def _active_rigid_body_slot_ids(scope: PhysicsObjectScope) -> set[str]:
+def _active_rigid_body_slot_ids(objects) -> set[str]:
     """快速读取当前 scope 的启用刚体身份，不解析完整 spec。"""
     active_ids: set[str] = set()
-    for obj in _flatten(getattr(scope, "objects", ())):
+    for obj in _flatten(objects):
         props = getattr(obj, "hotools_rigid_body", None)
         if props is None or not bool(getattr(props, "enabled", False)):
             continue
@@ -93,7 +105,10 @@ def clear_scope_dynamic_rigid_deltas(world: PhysicsWorldCache, scope: PhysicsObj
         return
 
     updated = set()
-    for obj in _flatten(getattr(scope, "objects", ())):
+    rigid_objects, _piece_metadata, _signature = resolve_fracture_scope_objects(
+        getattr(scope, "objects", ()),
+    )
+    for obj in rigid_objects:
         rb = getattr(obj, "hotools_rigid_body", None)
         if rb is None or not bool(getattr(rb, "enabled", False)):
             continue
@@ -315,6 +330,7 @@ def _mark_all_rigid_slots_for_resync(world: PhysicsWorldCache) -> None:
 def _sync_kinematic_poses_from_scope(
     world: PhysicsWorldCache,
     scope: PhysicsObjectScope,
+    extra_matrix_values=None,
 ) -> None:
     """连续帧只同步运动学目标，不重新读取整套刚体 PropertyGroup。"""
     for slot in world.solver_slots.values():
@@ -323,10 +339,10 @@ def _sync_kinematic_poses_from_scope(
         spec = slot.data.get("spec")
         if spec is None or str(getattr(spec, "body_type", "")) != "KINEMATIC":
             continue
-        values = _scope_world_matrix_values_by_pointer(
-            scope,
-            int(getattr(spec, "obj_ptr", 0) or 0),
-        )
+        pointer = int(getattr(spec, "obj_ptr", 0) or 0)
+        values = extra_matrix_values.get(pointer) if extra_matrix_values else None
+        if values is None:
+            values = _scope_world_matrix_values_by_pointer(scope, pointer)
         if values is None:
             continue
         try:
@@ -388,6 +404,50 @@ def _prune_stale_rigid_slots(
     return len(stale_ids)
 
 
+def _publish_fracture_collection_batches(
+    world: PhysicsWorldCache,
+    scope: PhysicsObjectScope,
+    piece_metadata: dict[int, dict],
+) -> dict[int, object]:
+    public_collection_ptrs = {
+        int(collection.as_pointer())
+        for collection in getattr(scope, "collections", ())
+    }
+    collections = []
+    seen = set()
+    for metadata in piece_metadata.values():
+        source = metadata.get("source")
+        props = getattr(source, "hotools_rigid_fracture", None)
+        collection = getattr(props, "product_collection", None) if props is not None else None
+        if collection is None:
+            continue
+        pointer = int(collection.as_pointer())
+        if pointer in public_collection_ptrs or pointer in seen:
+            continue
+        seen.add(pointer)
+        collections.append(collection)
+
+    if not collections:
+        return {}
+    batches, _locations = build_collection_batches(collections)
+    public_object_ptrs = set(getattr(scope, "collection_locations", {}))
+    matrix_values = {}
+    for batch in batches:
+        overlap = public_object_ptrs.intersection(batch["object_ptrs"])
+        if overlap:
+            raise RuntimeError("破碎产物集合与公共 Scope Collection 重复包含对象")
+        world.publish_exchange(
+            batch,
+            channel=PHYSICS_SCOPE_COLLECTION_BATCH_CHANNEL,
+            producer="rigid_fracture_scope",
+        )
+        values = batch["matrix_world_f32"]
+        for index, pointer in enumerate(batch["object_ptrs"]):
+            start = index * 16
+            matrix_values[int(pointer)] = values[start:start + 16]
+    return matrix_values
+
+
 def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
     """从当前对象作用域收集刚体和约束规格。"""
     if not isinstance(world, PhysicsWorldCache) or not isinstance(scope, PhysicsObjectScope):
@@ -396,8 +456,24 @@ def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjec
         return
 
     frame_context = getattr(world, "frame_context", None)
-    if not bool(getattr(frame_context, "registration_refresh_required", True)):
-        active_body_ids = _active_rigid_body_slot_ids(scope)
+    rigid_objects, piece_metadata, fracture_signature = resolve_fracture_scope_objects(
+        getattr(scope, "objects", ()),
+    )
+    previous_fracture_signature = world.backend_resources.get(
+        FRACTURE_SCOPE_SIGNATURE_RESOURCE_KEY,
+    )
+    fracture_changed = previous_fracture_signature != fracture_signature
+    world.backend_resources[FRACTURE_SCOPE_SIGNATURE_RESOURCE_KEY] = fracture_signature
+    fracture_matrix_values = _publish_fracture_collection_batches(
+        world,
+        scope,
+        piece_metadata,
+    )
+    if (
+        not bool(getattr(frame_context, "registration_refresh_required", True))
+        and not fracture_changed
+    ):
+        active_body_ids = _active_rigid_body_slot_ids(rigid_objects)
         active_constraint_ids = {
             slot_id
             for slot_id, slot in world.solver_slots.items()
@@ -405,7 +481,7 @@ def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjec
         }
         if _prune_stale_rigid_slots(world, active_body_ids, active_constraint_ids):
             world.replace_required = True
-        _sync_kinematic_poses_from_scope(world, scope)
+        _sync_kinematic_poses_from_scope(world, scope, fracture_matrix_values)
         return
 
     solver_id = "_rigid_scope_sync"
@@ -416,15 +492,23 @@ def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjec
         spec_sync_dirty = False
         restart = bool(getattr(world.frame_context, "restart_required", False))
 
-        for obj in _flatten(scope.objects):
+        fracture_slot_index = {}
+        for obj in rigid_objects:
             if scope.include_rigid_body:
                 spec = build_rigid_body_spec(
                     obj,
                     use_authored_transform=restart,
-                    world_matrix_values=_scope_world_matrix_values(scope, obj),
+                    world_matrix_values=_scope_world_matrix_values(
+                        scope,
+                        obj,
+                        fracture_matrix_values,
+                    ),
                 )
                 if spec is not None:
                     active_body_ids.add(spec.slot_id)
+                    metadata = piece_metadata.get(int(obj.as_pointer()))
+                    if metadata is not None:
+                        fracture_slot_index[spec.slot_id] = metadata
                     slot = world.ensure_solver_slot(spec.slot_id, RIGID_BODY_SLOT_KIND)
                     if slot.world_generation != world.generation:
                         slot.data.clear()
@@ -479,6 +563,7 @@ def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjec
                     pass
 
         pruned = _prune_stale_rigid_slots(world, active_body_ids, active_constraint_ids)
+        world.backend_resources[FRACTURE_SLOT_INDEX_RESOURCE_KEY] = fracture_slot_index
         if spec_sync_dirty:
             _mark_all_rigid_slots_for_resync(world)
         if pruned or spec_sync_dirty:

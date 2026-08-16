@@ -1,0 +1,61 @@
+# -*- coding: utf-8 -*-
+"""Blender 5.2 registration and operator smoke test for rigid fracture UI."""
+
+from __future__ import annotations
+
+import importlib
+import os
+import sys
+import types
+
+import bpy
+
+
+HOTOOLS = os.path.abspath(os.path.join(os.path.dirname(__file__), *('..',) * 4))
+PW_ROOT = os.path.join(HOTOOLS, "OmniNode", "PhysicsWorld")
+for path in (os.path.dirname(HOTOOLS), HOTOOLS):
+    if path not in sys.path:
+        sys.path.insert(0, path)
+for package_name, package_path in (
+    ("HoTools", HOTOOLS),
+    ("HoTools.OmniNode", os.path.join(HOTOOLS, "OmniNode")),
+    ("HoTools.OmniNode.Function", os.path.join(HOTOOLS, "OmniNode", "Function")),
+    ("HoTools.OmniNode.PhysicsWorld", PW_ROOT),
+):
+    module = types.ModuleType(package_name)
+    module.__path__ = [package_path]
+    module.__package__ = package_name
+    sys.modules[package_name] = module
+
+
+registry = importlib.import_module("HoTools.OmniNode.PhysicsWorld.registry")
+ui = importlib.import_module("HoTools.OmniNode.PhysicsWorld.ui")
+panels = importlib.import_module("HoTools.OmniNode.PhysicsWorld.ui.panels")
+
+
+def main():
+    registry.register_physics_world_blender_properties()
+    ui.register()
+    try:
+        mesh = bpy.data.meshes.new("FractureUISourceMesh")
+        source = bpy.data.objects.new("FractureUISource", mesh)
+        bpy.context.scene.collection.objects.link(source)
+        bpy.context.view_layer.objects.active = source
+        source.select_set(True)
+        source.hotools_rigid_fracture.enabled = True
+
+        assert panels.PT_Hotools_Physics_RigidFracture.poll(bpy.context)
+        assert bpy.ops.ho.rigid_fracture_add_default_gn.poll()
+        assert bpy.ops.ho.rigid_fracture_add_default_gn() == {"FINISHED"}
+        assert bpy.ops.ho.rigid_fracture_create_collection() == {"FINISHED"}
+        props = source.hotools_rigid_fracture
+        assert props.modifier_name in source.modifiers
+        assert props.product_collection is not None
+        print("[PASS] rigid fracture UI registered; GN and collection operators finished")
+    finally:
+        ui.unregister()
+        registry.unregister_physics_world_blender_properties()
+
+
+if __name__ == "__main__":
+    main()

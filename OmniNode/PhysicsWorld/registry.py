@@ -22,7 +22,7 @@ _BUILTIN_SOLVER_DOMAINS = (
     "xpbd.simple_mesh_xpbd",
     "xpbd.bone_xpbd",
 )
-_BUILTIN_COMPONENT_DOMAINS = ("collision", "field", "simple_cloth")
+_BUILTIN_COMPONENT_DOMAINS = ("collision", "field", "simple_cloth", "rigid_fracture")
 _RUNTIME_SOLVER_MODULES: dict[str, dict] = {}
 _REGISTERED_COMPONENT_PROPERTY_DOMAINS: list[str] = []
 _REGISTERED_SOLVER_PROPERTY_DOMAINS: list[str] = []

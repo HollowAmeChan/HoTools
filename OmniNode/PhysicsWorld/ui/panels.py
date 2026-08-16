@@ -139,6 +139,7 @@ class PT_Hotools_PhysicsPanel(Panel):
         obj_col    = getattr(obj, "hotools_object_collision", None)
         mesh_col   = getattr(obj, "hotools_mesh_collision", None)
         rigid      = getattr(obj, "hotools_rigid_body", None)
+        fracture   = getattr(obj, "hotools_rigid_fracture", None)
         constraint = getattr(obj, "hotools_rigid_constraint", None)
         field_props = getattr(obj, "hotools_field", None)
 
@@ -155,6 +156,10 @@ class PT_Hotools_PhysicsPanel(Panel):
         if rigid is not None:
             grid.prop(rigid, "enabled", text="刚体",
                       icon="RIGID_BODY", toggle=True)
+
+        if obj.type == "MESH" and fracture is not None:
+            grid.prop(fracture, "enabled", text="刚体破碎",
+                      icon="MOD_EXPLODE", toggle=True)
 
         if obj.type == "EMPTY" and constraint is not None:
             grid.prop(constraint, "enabled", text="刚体约束",
@@ -418,6 +423,78 @@ class PT_Hotools_Physics_RigidBody(Panel):
         row.prop(props, "lock_angular_x", toggle=True, text="角X")
         row.prop(props, "lock_angular_y", toggle=True, text="角Y")
         row.prop(props, "lock_angular_z", toggle=True, text="角Z")
+
+
+class PT_Hotools_Physics_RigidFracture(Panel):
+    bl_idname = "OBJECT_PT_Hotools_Physics_RigidFracture"
+    bl_label = "刚体破碎"
+    bl_parent_id = _PARENT
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "object"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj is None or obj.type != "MESH":
+            return False
+        props = getattr(obj, "hotools_rigid_fracture", None)
+        return props is not None and bool(getattr(props, "enabled", False))
+
+    def draw(self, context):
+        obj = context.object
+        props = obj.hotools_rigid_fracture
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        status_row = layout.row()
+        status_row.alert = props.product_status in {"OUTDATED", "ERROR"}
+        status_row.prop(props, "product_status", text="状态")
+        layout.label(text=f"版本 {props.product_revision}")
+        if props.last_error:
+            error = layout.row()
+            error.alert = True
+            error.label(text=props.last_error, icon="ERROR")
+
+        layout.separator()
+        layout.label(text="生成器", icon="GEOMETRY_NODES")
+        layout.prop_search(props, "modifier_name", obj, "modifiers", text="修改器")
+        layout.prop(props, "split_mode")
+        layout.prop(props, "piece_id_attribute")
+        layout.operator("ho.rigid_fracture_add_default_gn", icon="NODETREE")
+
+        layout.separator()
+        layout.label(text="产物", icon="OUTLINER_COLLECTION")
+        layout.prop(props, "product_collection")
+        row = layout.row(align=True)
+        row.operator("ho.rigid_fracture_create_collection", icon="COLLECTION_NEW")
+        row.operator("ho.rigid_fracture_refresh", icon="FILE_REFRESH")
+
+        view = layout.row(align=True)
+        op = view.operator("ho.rigid_fracture_visibility", text="本体", icon="OBJECT_DATA")
+        op.mode = "SOURCE"
+        op = view.operator("ho.rigid_fracture_visibility", text="碎块", icon="MOD_EXPLODE")
+        op.mode = "PIECES"
+        op = view.operator("ho.rigid_fracture_visibility", text="全部", icon="HIDE_OFF")
+        op.mode = "BOTH"
+        layout.operator("ho.rigid_fracture_select_pieces", icon="RESTRICT_SELECT_OFF")
+
+        layout.separator()
+        layout.label(text="新碎块默认值", icon="RIGID_BODY")
+        layout.prop(props, "piece_body_type")
+        layout.prop(props, "piece_mass")
+        layout.prop(props, "piece_friction")
+        layout.prop(props, "piece_restitution")
+        layout.prop(props, "piece_start_deactivated")
+        layout.prop(props, "piece_breakable")
+        layout.operator("ho.rigid_fracture_reapply_defaults", icon="RECOVER_LAST")
+
+        if getattr(obj.hotools_rigid_body, "enabled", False):
+            warning = layout.row()
+            warning.alert = True
+            warning.label(text="破碎启用时本体刚体会被运行时排除", icon="INFO")
 
 
 # ---------------------------------------------------------------------------

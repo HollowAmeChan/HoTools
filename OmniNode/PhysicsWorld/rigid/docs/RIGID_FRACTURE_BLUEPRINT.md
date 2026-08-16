@@ -68,37 +68,44 @@ Source 是资产 owner，不是破碎后的物理 body。Piece 是普通 Blender
 | Blender 测试 | native、adapter、后台 Blender、save/reopen 与性能门禁 | 可以增加生成 `.blend` 的端到端 acceptance |
 | evaluated mesh 读取 | Physics Bake、MC2 和 GN probes 已验证 `evaluated_get().to_mesh()` | 可作为显式刷新时的 mesh snapshot 入口 |
 
-### 必须补齐
+### 地基落实状态
 
-| 缺口 | 当前事实 | 第一阶段要求 |
+| 项目 | 当前事实 | 冻结边界 |
 |---|---|---|
-| 破碎持久属性 | 没有 `Object.hotools_rigid_fracture` 和 Piece owner metadata | 增加独立 PropertyGroup、schema、binding、round-trip 测试 |
-| GN 产物事务 | 没有通用 Realize/拆岛/受管替换实现 | 新建 authoring 模块、临时对象、验证、原子提交和 Undo |
-| 产品身份 | body slot 只用当前 Object/Data pointer | 增加 asset ID、piece ID、revision 和 manifest；pointer 仍只作本次运行 slot |
-| Source 排除 | 当前 collector 只检查 `hotools_rigid_body.enabled` | 破碎 owner 启用时必须无条件排除 Source body |
-| 链接集合展开 | Scope 只展开节点直接输入的 Collection | rigid fracture resolver 必须把 owner 链接的受管 Piece 加入刚体视图和写回批次 |
-| 初始休眠 | body 允许睡眠，但 native `AddBody` 当前始终传 `EActivation::Activate` | 增加显式初始激活字段，并支持 `DontActivate` 创建 |
-| 接触身份 | 事件只有普通 slot ID | runtime manifest 需要 `slot -> asset/piece` 反向索引 |
-| 局部激活 | 当前只接受显式 `set_active` 命令，没有 assembly policy | 增加命中 Piece、预定义 breakable region 和后续半径/邻接传播 |
+| 破碎持久属性 | Source/Piece PropertyGroup 已独立注册并通过 round-trip | 由 `physicsWorld.rigid_fracture` 组件持有 |
+| GN 产物事务 | 已实现 evaluated mesh 连通块拆分、受管替换、失败保留旧 READY 产物 | 默认 GN 必须输出已 Realize 的面几何 |
+| 产品身份 | 已有 asset ID、piece ID、revision、fingerprint 和 manifest 校验 | Object/Data pointer 仍只作本次运行 slot |
+| Source 排除 | resolver 已无条件排除启用破碎的 Source | Source 即使同时启用普通刚体也不双注册 |
+| 链接集合展开 | 已私有展开 owner/revision 匹配 Piece，并发布 Product Collection 批次 | 公共 Scope 与其他 solver 不被改写 |
+| 初始休眠 | `start_deactivated` 已贯通 RNA/spec/adapter/py313 native | Dynamic 使用 `DontActivate`，碰撞可在 Jolt 内自动唤醒 |
+| 接触身份 | 已建立 `slot -> asset/piece` 反向索引 | 接触结果仍沿用普通刚体事件通道 |
+| 局部激活 | 第一 acceptance 使用 Jolt 接触自动唤醒命中 Piece | 半径、邻接传播和 assembly policy 进入 F4 |
 | 冲量阈值 | `OnContactAdded` 发生在求解前，当前事件不含求解冲量 | 第一 acceptance 不承诺 impulse threshold；后续单独扩展 native 观测 |
-| 作者操作到缓存失效 | world 内有 registration refresh 标记，但没有破碎 Operator 的公共失效入口 | 刷新成功后显式清理/失效模拟 cache，并请求下一次 Begin 重注册 |
-| 破碎测试资产 | 当前 fixture 没有受管 GN 资产和 `.blend` | 增加 authoring、native activation、pipeline 和保存文件四层测试 |
+| 作者操作到缓存失效 | 刷新成功后已清理统一 runtime cache | 下一次 Begin 会完整重建刚体注册 |
+| 破碎测试资产 | authoring + resolver 后台 fixture 已通过，最终墙体 `.blend` 尚未生成 | F3 增加完整 pipeline、保存文件和重开验证 |
 
-结论：现有地基支持这条流程，不需要更换 solver、scope、result 或 writeback 架构；但不能只增加一个面板按钮。必须先补“资产事务 + scope resolver + 初始非激活”三个纵向切片，才可能得到可信的墙体测试。
+结论：现有地基支持这条流程，不需要更换 solver、scope、result 或 writeback 架构；资产事务、scope resolver、Product Collection 批次和初始非激活已经落地，下一出口是 F3 墙体文件。
 
 ## 冻结产品语义
 
 ### Source 属性
 
-新增 `Object.hotools_rigid_fracture`，由 `physicsWorld.rigid` 持有。第一版字段：
+新增 `Object.hotools_rigid_fracture`，由独立的 `physicsWorld.rigid_fracture` core component 持有；`physicsWorld.rigid` 只消费其 resolver。实现目录固定为：
+
+- `rigid_fracture/properties.py`：Source/Piece 持久属性；
+- `rigid_fracture/authoring.py`：GN、Collection、刷新事务与作者操作；
+- `rigid_fracture/resolver.py`：rigid 私有 Scope 展开与 slot 身份索引；
+- `rigid/scope_sync.py`：消费 resolver，继续生成普通 `RigidBodySpec`。
+
+第一版字段：
 
 | 分组 | 字段 |
 |---|---|
 | Identity | `enabled`、`asset_id`、`schema_version` |
 | Generator | `modifier_name`、`piece_id_attribute`、`split_mode` |
 | Products | `product_collection`、`product_revision`、`product_status`、`product_fingerprint` |
-| Defaults | Piece 的 body type、质量、摩擦、弹性、shape 与激活模板 |
-| Activation | `activation_mode`、可破碎区域策略；半径/阈值字段在实现支持前保持禁用或不注册 |
+| Defaults | `piece_body_type`、`piece_mass`、`piece_friction`、`piece_restitution`、`piece_start_deactivated`、`piece_breakable` |
+| Activation | 半径、阈值和 assembly policy 在实现支持前不注册 |
 
 Modifier 不是 Blender ID，持久引用使用 Source 内的 modifier name；节点组可以作为诊断信息，但不能替代 modifier identity。Product Collection 使用 `PointerProperty(Collection)`。
 

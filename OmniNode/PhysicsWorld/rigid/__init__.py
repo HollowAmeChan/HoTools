@@ -13,7 +13,7 @@ SOLVER_MODULE = {
     "nodes": (".nodes",),
     "capabilities": ".capabilities:RIGID_CAPABILITIES",
     "blender_properties": ".properties:RIGID_BLENDER_PROPERTIES",
-    "property_dependencies": ("collision",),
+    "property_dependencies": ("collision", "rigid_fracture"),
     "debug_draw_modes": ".debug:RIGID_DEBUG_DRAW_MODES",
     "scope_restart_handlers": (
         ".scope_sync:clear_scope_dynamic_rigid_deltas",
