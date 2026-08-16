@@ -147,6 +147,33 @@ def test_adapter_batch_body_registration():
     assert columns[-1] == {"rigid:test": 0}
     adapter.dispose("adapter-batch-test")
 
+
+def test_adapter_start_deactivated_body():
+    world = PhysicsWorldCache()
+    adapter = ensure_jolt_adapter(world)
+    spec = RigidBodySpec(
+        obj=None,
+        obj_ptr=3,
+        data_ptr=3,
+        simulation_order_key=("test", "start_deactivated"),
+        world_position=(0.0, 0.0, 3.0),
+        shape_type="SPHERE",
+        start_deactivated=True,
+    )
+    assert adapter.sync_bodies_batch([("rigid:start_deactivated", spec)]) == {}
+    before = adapter.get_body_state("rigid:start_deactivated")
+    assert before is not None and before["active"] is False and before["sleeping"] is True
+    for _ in range(10):
+        adapter.step(1.0 / 60.0, 1)
+    parked = adapter.get_body_state("rigid:start_deactivated")
+    assert parked is not None and abs(parked["position"][2] - 3.0) < 1.0e-6
+    assert adapter.set_body_active("rigid:start_deactivated", True) is True
+    adapter.step(1.0 / 60.0, 1)
+    falling = adapter.get_body_state("rigid:start_deactivated")
+    assert falling is not None and falling["active"] is True
+    assert falling["linear_velocity"][2] < 0.0
+    adapter.dispose("adapter-start-deactivated-test")
+
 def test_add_remove_bodies():
     jw = hotools_jolt.JoltWorld(32, 64, 32)
 
@@ -392,6 +419,7 @@ if __name__ == "__main__":
         ("node optimization setting replacement", test_node_optimization_setting_replacement),
         ("Jolt restart flushes native bodies", test_restart_flushes_native_bodies),
         ("adapter body batch registration", test_adapter_batch_body_registration),
+        ("adapter start deactivated body", test_adapter_start_deactivated_body),
         ("创建 JoltWorld",          test_create_world),
         ("添加/删除刚体",           test_add_remove_bodies),
         ("重力下落验证",            test_gravity_fall),

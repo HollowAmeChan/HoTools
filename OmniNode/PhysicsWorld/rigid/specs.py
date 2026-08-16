@@ -102,6 +102,7 @@ class RigidBodySpec:
         "angular_damping",
         "gravity_factor",
         "allow_sleeping",
+        "start_deactivated",
         "motion_quality",
         "max_linear_velocity",
         "max_angular_velocity",
@@ -140,6 +141,7 @@ class RigidBodySpec:
         angular_damping: float = 0.05,
         gravity_factor: float = 1.0,
         allow_sleeping: bool = True,
+        start_deactivated: bool = False,
         motion_quality: str = "DISCRETE",
         max_linear_velocity: float = 500.0,
         max_angular_velocity: float = 47.1239,
@@ -179,6 +181,7 @@ class RigidBodySpec:
         self.angular_damping: float = angular_damping
         self.gravity_factor: float = gravity_factor
         self.allow_sleeping: bool = allow_sleeping
+        self.start_deactivated: bool = start_deactivated
         self.motion_quality: str = motion_quality
         self.max_linear_velocity: float = max_linear_velocity
         self.max_angular_velocity: float = max_angular_velocity
@@ -214,6 +217,7 @@ class RigidBodySpec:
             "angular_damping": self.angular_damping,
             "gravity_factor": self.gravity_factor,
             "allow_sleeping": self.allow_sleeping,
+            "start_deactivated": self.start_deactivated,
             "motion_quality": self.motion_quality,
             "max_linear_velocity": self.max_linear_velocity,
             "max_angular_velocity": self.max_angular_velocity,
@@ -796,6 +800,7 @@ def build_rigid_body_spec(
     angular_damping = _clamp(float(getattr(props, "angular_damping", 0.05)), 0.0, 1.0)
     gravity_factor = float(getattr(props, "gravity_factor", 1.0))
     allow_sleeping = bool(getattr(props, "allow_sleeping", True))
+    start_deactivated = bool(getattr(props, "start_deactivated", False))
     motion_quality = str(getattr(props, "motion_quality", "DISCRETE"))
     if motion_quality not in {"DISCRETE", "LINEAR_CAST"}:
         motion_quality = "DISCRETE"
@@ -833,6 +838,7 @@ def build_rigid_body_spec(
         angular_damping=angular_damping,
         gravity_factor=gravity_factor,
         allow_sleeping=allow_sleeping,
+        start_deactivated=start_deactivated,
         motion_quality=motion_quality,
         max_linear_velocity=max_linear_velocity,
         max_angular_velocity=max_angular_velocity,

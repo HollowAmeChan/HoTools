@@ -373,6 +373,7 @@ class JoltAdapter:
             angular_damping=float(getattr(spec, "angular_damping", 0.05)),
             gravity_factor=float(getattr(spec, "gravity_factor", 1.0)),
             allow_sleeping=bool(getattr(spec, "allow_sleeping", True)),
+            start_deactivated=bool(getattr(spec, "start_deactivated", False)),
             motion_quality=str(getattr(spec, "motion_quality", "DISCRETE")),
             max_linear_velocity=float(getattr(spec, "max_linear_velocity", 500.0)),
             max_angular_velocity=float(getattr(spec, "max_angular_velocity", 47.1239)),

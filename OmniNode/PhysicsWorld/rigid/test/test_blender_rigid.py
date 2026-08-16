@@ -285,6 +285,9 @@ def test_props_registered():
     assert hasattr(obj, "hotools_rigid_body"),       "缺 hotools_rigid_body"
     assert hasattr(obj, "hotools_object_collision"), "缺 hotools_object_collision"
     assert obj.hotools_rigid_body.body_type == "DYNAMIC"
+    assert obj.hotools_rigid_body.start_deactivated is False
+    obj.hotools_rigid_body.start_deactivated = True
+    assert build_rigid_body_spec(obj).start_deactivated is True
     registry = validate_solver_registry()
     assert registry["valid"], registry["problems"]
     assert registry["result_channels"].get("rigid_query_result") == "rigid"

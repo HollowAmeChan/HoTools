@@ -409,7 +409,7 @@ python OmniNode\PhysicsWorld\rigid\test\run_native_semantics.py `
 详细产品合同见 [刚体破碎资产蓝本](RIGID_FRACTURE_BLUEPRINT.md)。验收必须按顺序覆盖：
 
 1. native：Dynamic body 使用 `DontActivate` 创建后，在没有接触时不受重力产生位移；活动球命中后由 Jolt 激活并得到有限速度。
-2. adapter/spec：`start_deactivated=False` 保持所有旧 fixture 的默认轨迹；True 能跨双 ABI 映射，并在 restart 后回到作者初始状态。
+2. adapter/spec：`start_deactivated=False` 保持所有旧 fixture 的默认轨迹；True 在 Blender 5.2 / py313 生产路径完成映射，并在 restart 后回到作者初始状态。本轮不编译或运行 py311。
 3. Blender authoring：默认 GN evaluated mesh 显式刷新为独立 Piece Objects；manifest、稳定 ID、属性保留、失败回滚、Undo 和 save/reopen 有测试。
 4. pipeline：Source 被排除，linked Product Collection 只展开 owner/revision 匹配的受管 Piece；隐藏状态不改变参与集合。
 5. acceptance：保存并后台打开 `rigid/test/assets/jolt_fracture_wall.blend`，运行球撞墙场景。

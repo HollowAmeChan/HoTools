@@ -62,6 +62,7 @@ _BODY_UPDATE_POLICIES = {
     "linear_velocity": "初始值或运行时命令",
     "angular_velocity": "初始值或运行时命令",
     "gravity_factor": "运行时命令或规格签名",
+    "start_deactivated": "初始值；变化时重建 body",
     "motion_quality": "运行时命令或规格签名",
 }
 _CONSTRAINT_UPDATE_POLICIES = {"enabled": "每帧收集规格"}

@@ -165,6 +165,7 @@ def _rigid_body_sync_signature(spec) -> tuple:
         _round_float(getattr(spec, "angular_damping", 0.05)),
         _round_float(getattr(spec, "gravity_factor", 1.0)),
         bool(getattr(spec, "allow_sleeping", True)),
+        bool(getattr(spec, "start_deactivated", False)),
         str(getattr(spec, "motion_quality", "DISCRETE") or "DISCRETE"),
         _round_float(getattr(spec, "max_linear_velocity", 500.0)),
         _round_float(getattr(spec, "max_angular_velocity", 47.1239)),

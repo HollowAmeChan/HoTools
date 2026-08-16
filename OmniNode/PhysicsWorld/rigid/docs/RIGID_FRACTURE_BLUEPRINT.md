@@ -231,6 +231,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 - 冻结本文、公共 pipeline 入口和测试出口。
 - 增加 `start_deactivated` 到 spec/adapter/native，但默认保持当前 Active 行为。
 - 新增 native、adapter、Blender fixture：非激活体不受重力位移，活动球命中后同一步或下一可观察帧激活。
+- 本轮实现、构建、测试和 `.blend` 保存统一使用 Blender 5.2 / Python 3.13；py311 兼容验证暂缓，不作为 F0-F3 门槛。
 
 出口：现有 golden 默认轨迹不变；初始激活语义有独立 oracle。
 
@@ -279,7 +280,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 |---|---|
 | 纯 Python/schema | 字段默认值、enum、manifest 校验、duplicate ID、状态转换 |
 | Native | `DontActivate`、重力静止、碰撞唤醒、reset、active/sleeping readback |
-| Adapter | spec 映射、批注册混合 Active/Inactive、slot identity、事件映射 |
+| Adapter | Blender 5.2 / py313 下的 spec 映射、批注册混合 Active/Inactive、slot identity、事件映射 |
 | Blender authoring | 默认 GN、刷新、拆岛、属性保留、失败回滚、Undo、save/reopen |
 | Blender pipeline | Source 排除、Piece 展开、隐藏无关、Collection batch、writeback |
 | Acceptance | 球撞墙局部破碎、外圈静止、finite、repeat/reset |

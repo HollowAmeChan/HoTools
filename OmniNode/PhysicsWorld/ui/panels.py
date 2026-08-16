@@ -404,6 +404,7 @@ class PT_Hotools_Physics_RigidBody(Panel):
         layout.label(text="求解", icon="MOD_PHYSICS")
         layout.prop(props, "motion_quality")
         layout.prop(props, "allow_sleeping")
+        layout.prop(props, "start_deactivated")
         layout.prop(props, "is_sensor")
         layout.prop(props, "collide_kinematic_vs_non_dynamic")
 

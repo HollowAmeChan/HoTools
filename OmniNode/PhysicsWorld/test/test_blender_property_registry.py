@@ -126,7 +126,7 @@ EXPECTED_PROPERTY_CONTRACTS = {
         ),
     },
     "PG_Hotools_RigidBody": {
-        "sha256": "24be8f418efe9930f183624ab2ea985f6a73da61915739d4bfa66aa1b2711fdb",
+        "sha256": "726dc0e0b3dbc19536c833287f314a4c37a5179edeaf99dc711fce1c021931c8",
         "fields": (
             "enabled", "body_type", "mass", "friction", "restitution",
             "rigid_collision_group", "rigid_collides_with_groups", "shape_type",
@@ -134,7 +134,7 @@ EXPECTED_PROPERTY_CONTRACTS = {
             "shape_plane_half_extent", "shape_top_radius", "shape_bottom_radius",
             "shape_convex_radius", "shape_offset", "shape_rotation",
             "linear_velocity", "angular_velocity", "linear_damping",
-            "angular_damping", "gravity_factor", "allow_sleeping", "motion_quality",
+            "angular_damping", "gravity_factor", "allow_sleeping", "start_deactivated", "motion_quality",
             "max_linear_velocity", "max_angular_velocity", "is_sensor",
             "collide_kinematic_vs_non_dynamic", "lock_linear_x", "lock_linear_y",
             "lock_linear_z", "lock_angular_x", "lock_angular_y", "lock_angular_z",
@@ -285,7 +285,7 @@ def test_rigid_rna_and_capabilities_share_one_schema():
             rigid_capabilities.RIGID_CONSTRAINT_CAPABILITY,
         ),
     )
-    assert tuple(len(schema) for _storage, schema, _cls, _capability in pairs) == (34, 96)
+    assert tuple(len(schema) for _storage, schema, _cls, _capability in pairs) == (35, 96)
     for storage, schema, cls, capability in pairs:
         schema_names = tuple(str(field["name"]) for field in schema)
         assert tuple(cls.__annotations__) == schema_names

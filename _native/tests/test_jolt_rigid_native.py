@@ -81,7 +81,8 @@ def _contact_events(jw) -> list[tuple]:
 
 
 def _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0), radius=0.5,
-                is_sensor=False):
+                is_sensor=False, linear_velocity=(0.0, 0.0, 0.0),
+                start_deactivated=False):
     return jw.add_body(
         body_type=body_type,
         mass=1.0,
@@ -92,6 +93,8 @@ def _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0), radius=0.5,
         shape_type="SPHERE",
         shape_radius=radius,
         is_sensor=is_sensor,
+        linear_velocity=linear_velocity,
+        start_deactivated=start_deactivated,
     )
 
 
@@ -399,6 +402,49 @@ def test_set_gravity_zero():
         jw.step(0.05, 1)
     pos, _ = jw.get_body_transform(h)
     assert abs(pos[2] - 5.0) < 0.01, f"零重力下 Z 应保持 5.0，得 {pos[2]}"
+    jw.clear()
+
+
+def test_start_deactivated_stays_put_and_wakes_on_collision():
+    """初始停用体不受重力推进，活动刚体命中时由 Jolt 求解内唤醒。"""
+    jw = _make_world()
+    target = _add_sphere(
+        jw,
+        pos=(0.0, 0.0, 3.0),
+        start_deactivated=True,
+    )
+    initial = jw.get_body_state(target)
+    assert initial[4] is False and initial[5] is True
+
+    for _ in range(20):
+        jw.step(1.0 / 60.0, 1)
+    parked = jw.get_body_state(target)
+    assert parked[4] is False and parked[5] is True
+    assert abs(parked[0][2] - 3.0) < 1.0e-6
+    assert max(abs(value) for value in parked[2]) < 1.0e-6
+
+    jw.set_gravity((0.0, 0.0, 0.0))
+    projectile = _add_sphere(
+        jw,
+        pos=(-3.0, 0.0, 3.0),
+        linear_velocity=(8.0, 0.0, 0.0),
+    )
+    woke = False
+    for _ in range(60):
+        jw.step(1.0 / 60.0, 1)
+        state = jw.get_body_state(target)
+        if state[4]:
+            woke = True
+            break
+
+    assert woke, "活动球命中后目标体应被自动激活"
+    state = jw.get_body_state(target)
+    assert state[0][0] > 1.0e-3 or state[2][0] > 1.0e-3
+    assert any(
+        {event[1], event[2]} == {target, projectile}
+        for event in _contact_events(jw)
+        if event[0] in {"added", "persisted"}
+    )
     jw.clear()
 
 

@@ -712,7 +712,8 @@ public:
         float                     shape_plane_half_extent,
         float                     shape_top_radius,
         float                     shape_bottom_radius,
-        float                     shape_convex_radius
+        float                     shape_convex_radius,
+        bool                      start_deactivated
     )
     {
         // 形状
@@ -825,7 +826,10 @@ public:
             throw nb::python_error();
         }
 
-        bi.AddBody(body->GetID(), EActivation::Activate);
+        const EActivation activation = (
+            motion == EMotionType::Dynamic && start_deactivated
+        ) ? EActivation::DontActivate : EActivation::Activate;
+        bi.AddBody(body->GetID(), activation);
 
         uint32_t handle = mNextHandle++;
         mBodies[handle] = {body->GetID(), motion, filter_id};
@@ -2084,6 +2088,7 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("shape_top_radius") = 0.5f,
              nb::arg("shape_bottom_radius") = 0.3f,
              nb::arg("shape_convex_radius") = 0.05f,
+             nb::arg("start_deactivated") = false,
              "注册刚体，返回 handle（uint32）。")
 
         .def("remove_body", &JoltWorld::remove_body,

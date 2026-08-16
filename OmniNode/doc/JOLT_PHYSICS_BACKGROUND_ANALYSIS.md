@@ -342,7 +342,7 @@ Shape 扩展晚于 GN 对象化和 Object 批路径。两个概念必须分开�
 ### M0：破碎合同与初始激活地基
 
 - 冻结 Source/Piece owner、显式刷新、Scope resolver 和球撞墙 acceptance。
-- 在普通刚体 spec/adapter/native 增加默认兼容的 `start_deactivated`，验证重力静止、碰撞唤醒、restart 和双 ABI。
+- 在普通刚体 spec/adapter/native 增加默认兼容的 `start_deactivated`，验证重力静止、碰撞唤醒和 restart；本轮只使用 Blender 5.2 / py313，py311 验证暂缓。
 - 保留并更新全部资源导航；删除近期 Path/Ragdoll planned 声明，不复制施工流水账。
 
 出口：现有 golden 默认轨迹不变；非激活 Dynamic body 的语义有独立 native/adapter/Blender oracle。
