@@ -153,6 +153,8 @@ _native/
 
 - `_native/docs/BOOLEAN_OUTER_HULL.md`
 - `_native/docs/JOLT_BLENDER_COMPAT.md`
+- `OmniNode/doc/JOLT_PHYSICS_BACKGROUND_ANALYSIS.md`
+- `OmniNode/PhysicsWorld/rigid/docs/README.md`
 - `OmniNode/doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`
 - `OmniNode/doc/PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`
 - `OmniNode/doc/MC2_BLUEPRINT.md`

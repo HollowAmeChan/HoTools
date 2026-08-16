@@ -2,7 +2,7 @@
 
 ## 目的
 
-本文记录 `PhysicsWorld` 公共刚体写回的实测边界，以及已经确认的优化取舍。写回属于物理世界公共事务，不能为了 Jolt 单独绕开统一写回协议。
+本文记录 `PhysicsWorld` 公共刚体 Object 写回的实测边界，以及已经确认的优化取舍。写回属于物理世界公共事务，不能为了 Jolt 单独绕开统一写回协议。产品路线见 [Jolt Physics 产品化路线图](../../../doc/JOLT_PHYSICS_BACKGROUND_ANALYSIS.md)。
 
 ## 当前路径
 
@@ -32,5 +32,8 @@ Native 反算内核还对常见的全零 rest Euler 和单位旋转增量走快�
 ## 后续边界
 
 1. 保持公共结果流和统一三种写回模式，不引入 Jolt 专用写回旁路。
-2. 若需要继续降低 Blender 侧开销，应优先减少 Python 事务对象构造和重复索引；不要重新启用已验证变慢的 sparse 通知筛选。
-3. 任何进一步优化都必须同时验证跳帧、reset、dispose、scope 重建和动态目标删除后的 delta 清理。
+2. 近期所有参与模拟和写回的实体仍是 Blender Objects。GN/modifier 结果先在显式创作操作中应用、Realize 并拆分为 Objects，随后复用本路径。
+3. 下一步先建立稳定 Object body table：manifest revision 不变时复用 slot/object/native row 映射，稳定帧只批量提交运动学变换、热参数和命令。
+4. 若需要继续降低 Blender 侧开销，应优先减少 Python 事务对象构造和重复索引；不要重新启用已验证变慢的 sparse 通知筛选。
+5. 任何进一步优化都必须同时验证跳帧、reset、dispose、scope 重建和动态目标删除后的 delta 清理。
+6. 直接 GN runtime instance 写回只有在 Object/depsgraph 被证明为剩余主瓶颈，并另行冻结 stable instance identity、约束/命令/bake 和公共 writeback 合同后才立项；当前文档不定义该路径。

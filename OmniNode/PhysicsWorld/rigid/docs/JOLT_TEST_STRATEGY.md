@@ -1,10 +1,10 @@
 # Rigid/Jolt 语义测试策略与验收矩阵
 
-日期：2026-07-11
-
 状态：可执行验收基线。P0 三层语义、确定性、容量/事件溢出、双 ABI soak、Blender 性能门禁和首版 approved golden 已闭环。
 
-适用版本：HoTools `rigid_jolt`、Jolt Physics `v5.2.0`、Blender 4.5。当前 native backend 使用 `JobSystemSingleThreaded`。
+适用版本：HoTools `rigid_jolt`、Jolt Physics `v5.2.0`、Blender 4.5/5.x。Native backend 同时支持单线程和显式 Jolt worker thread pool；测试必须记录实际 `worker_threads`。
+
+资源入口：fixture、runner、golden 和性能阈值均位于本目录；产品优先级见 [`JOLT_PHYSICS_BACKGROUND_ANALYSIS.md`](../../../doc/JOLT_PHYSICS_BACKGROUND_ANALYSIS.md)，约束语义见 [`CONSTRAINT_REFERENCE.md`](CONSTRAINT_REFERENCE.md)。
 
 ## 结论
 
@@ -21,43 +21,28 @@
 - Jolt、binding、adapter、Blender 写回中哪一层导致轨迹偏差；
 - 升级 Jolt、编译器或 ABI 后，哪些变化合理、哪些是回归。
 
-所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。2026-07-11 实跑结果为 py311 S1/S2 `60/60`、S3 `60/60 × repeat 2`、py311/py313 跨 ABI `60/60 × repeat 2`、双 ABI 两场景各 10,000 帧 soak、旧式 Blender 后台集成 `33/33`、冻结性能矩阵 `7/7`；旧式集成仍只记作链路 smoke。
+所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。当前已批准基线为 60 个 fixture、S1/S2/S3 三层、py311/py313 跨 ABI、两类 10,000 帧 soak、冻结性能矩阵和版本化 golden；精确通过数由机器报告维护，不在本文追加运行日志。
 
-### 2026-07-10 实现状态
+### 当前实现
 
 可执行切片 `physicsWorld/rigid/test/` 已落地：
 
 - `hotools_jolt_fixture_v1` 严格 JSON schema；
-- `native_binding_v1` runner，按 fixture body id 稳定创建刚体；
-- position/rotation/velocity/active/sleeping 的 canonical JSONL trace 与原始 float32 bit pattern；
-- 每个 fixture 使用两个全新 `JoltWorld` 做 bitwise trace 重放；
-- `finite_all`、半隐式自由落体、零重力恒速、冲量质量关系与显式 body state oracle；
-- 60 个 P0 fixture，覆盖刚体参数、形状、碰撞、过滤、事件、查询、约束和断裂策略；
-- 十一种已接入约束均有 schema、state trace 和独立物理 oracle；
-- Fixed 相对变换、Point 锚点重合/自由旋转、Distance 区间残差收敛 oracle；
-- Hinge 局部 Z 单轴旋转、Slider 局部 Z 单轴平移、Cone swing/twist oracle；
-- Hinge 正负角度 limit、Slider 正负线性 limit 的双向撞限 oracle；
-- py311/py313 各自 60/60 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
-- `run_cross_abi_semantics.py` 自动发现 CPython 3.11/3.13，固定加载匹配的 `_Lib/py311` / `_Lib/py313` 模块，并输出机器可读差分报告；3.11.9 与 3.13.9 全矩阵 `60/60 × repeat 2` 的最大绝对误差为 `2.220446049250313e-16`，通过 `abs=2e-5`、`rel=1e-6` 门限；
-- `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
-- 生产 spec 已分离 pointer-based `slot_id` 与语义 `simulation_order_key`；`DET-003` 覆盖 scope 枚举打乱后的 Jolt 添加顺序和 trace，相同 key 冲突会明确拒绝并进入 slot diagnostics。
-- `adapter_binding_v1` 已复用全部 60 个 P0 fixture、canonical trace 和 assertions；py311 当前构建的 S1/S2 全矩阵差分最大绝对误差为 `0.0`，并已接入 native test discovery。
-- `blender_pipeline_v1` 已复用全部 60 个 P0 fixture，覆盖 RNA、scope、world setting、timeline command、contact/query、十一种约束、breakable policy、旋转及独立 A/B frame、result、Quaternion writeback、same-frame、jump、reset 和 dispose；`BREAK-001/002` 只在断裂前公共区间与 S1 差分，策略结果由独立 S3 oracle 验收。
-- `benchmark_blender_rigid.py` 已覆盖 1/128/1024 body、32/256 constraint 和 32/256 contact，分别采集 native step、Blender pipeline、writeback 的 P50/P95、接触事件数和工作集高水位；`performance_thresholds.json` 固定 Blender 4.5 / Windows Release 门禁，默认报告执行 P50/P95/工作集阈值。
+- `native_binding_v1`、`adapter_binding_v1`、`blender_pipeline_v1` 三层 runner 共用 fixture、canonical trace 和 assertions；
+- position、rotation、velocity、active、sleeping、constraint、contact、sensor 和 query 使用规范化 JSONL，确定性 lane 另保留原始 float bit pattern；
+- 60 个 P0 fixture 覆盖 body、shape、碰撞、过滤、事件、查询、十一种约束、断裂、生命周期和写回；
+- S1 使用解析、Jolt 官方语义和不变量 oracle；S2/S3 用差分定位 adapter、RNA、scope、result 和 writeback 映射错误；
+- `slot_id` 与 `simulation_order_key` 已分离，枚举扰动、重复 key、同进程重放和跨进程 physical hash 均有确定性 case；
+- `run_cross_abi_semantics.py` 固定加载 py311/py313 对应模块并生成机器可读差分，精确构建号、通过数和误差只存在于运行产物；
+- `_native/tests/test_jolt_semantic_matrix.py`、双 ABI soak、版本化 golden 和 Blender 性能矩阵已经接入门禁；
+- `benchmark_blender_rigid.py` 分别采集 native step、Blender pipeline、Object writeback、逻辑计数和工作集，阈值只由 `performance_thresholds.json` 维护。
 
-当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、Cone/SwingTwist 旋转及独立 A/B frame、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义；S2、S3 已覆盖同一套 60 个 P0 fixture，S3 另验收 breakable 强语义，跨 ABI 自动容差差分也已覆盖全部 60 个 fixture。性能阈值和首版 60-fixture golden 已冻结并通过双 ABI 比较，当前 P0 release 门禁全部闭环。
+### 当前扩展决定
 
-### 2026-07-11 实施决定
-
-在三层 fixture 闭环成立前，暂停新增 Path、ShapeCast、overlap、compound shape 和其它高级能力。下一批工作固定为：
-
-1. 先写失败的 `DET-003`，再为 body、constraint 和有序 command 引入独立 `simulation_order_key`；pointer-based `slot_id` 只负责当前进程的生命周期和去重。
-2. 实现 `adapter_binding_v1` runner 和 trace comparator，让现有 P0 fixture 经 `RigidBodySpec` / `ConstraintSpec` / `JoltAdapter` 运行并与 S1 对拍。（2026-07-11 已完成）
-3. 实现 `blender_pipeline_v1` runner，覆盖自由落体、旋转 frame 约束和 same-frame/jump/reset/dispose，并扩展全部 P0。（2026-07-11 已完成）
-4. 补齐 `BREAK-001/002`、跨 ABI 容差差分和当前只部分覆盖的参数矩阵。（断裂与跨 ABI 门禁已于 2026-07-11 完成）
-5. 完成 overflow、soak、冻结性能门禁和首版 golden 审批。（均已于 2026-07-11 完成）
-
-每一步都必须复用本目录的 schema、canonical trace 和 assertions。旧式手工后台测试继续保留为链路 smoke，不替代 S3。
+- 近期先验证 GN 应用/拆分后的 Blender Objects、稳定 Object manifest、批同步和公共 Object 写回；所有物理参与者仍是 Objects。
+- 约束扩展只补当前十一种类型的参数、命令、诊断和节点协议；长期不增加 Path、Vehicle、Soft Body 或 Ragdoll。
+- `FULL_MESH_STATIC` 和作者提供 mesh 的 `CONVEX_HULL` 进入后续独立 fixture；直接 GN runtime instances 不属于当前 matrix。
+- 每项新能力继续复用本目录 schema、canonical trace 和 assertions。旧式手工后台测试只作链路 smoke，不替代 S3。
 
 ## 验收边界
 
@@ -415,40 +400,65 @@ python OmniNode\PhysicsWorld\rigid\test\run_native_semantics.py `
 
 性能门槛已冻结在 `performance_thresholds.json`。默认 benchmark 要求 Blender 4.5 / Windows AMD64、warmup >= 10、samples >= 60，并分别约束 native step、完整 Blender pipeline、writeback 的 P50/P95 和工作集高水位；未知自定义 case 必须使用 `--no-threshold-check` 明确进入探索模式。
 
-## 落地顺序
+## 下一阶段增量验收
 
-### Phase 0：试验台
+现有试验台、三层语义矩阵、确定性、soak、性能门槛和 approved golden 都是持续基线，不再作为待落地阶段重复记录。新工作按产品路线图进入以下增量 lane：
 
-- 建 schema、canonical trace、通用 assertions、artifact manifest；
-- 将现有自由落体、落地、RayCast、contact、生命周期迁入 fixture；
-- 保留旧入口直到新 runner 稳定；不增加“语义已通过”结论。
+### 刚体破碎首条纵向切片
 
-完成标准：一个 fixture 能在 S1/S2/S3 三层运行并产生可比较 trace。
+详细产品合同见 [刚体破碎资产蓝本](RIGID_FRACTURE_BLUEPRINT.md)。验收必须按顺序覆盖：
 
-### Phase 1：P0 刚体语义
+1. native：Dynamic body 使用 `DontActivate` 创建后，在没有接触时不受重力产生位移；活动球命中后由 Jolt 激活并得到有限速度。
+2. adapter/spec：`start_deactivated=False` 保持所有旧 fixture 的默认轨迹；True 能跨双 ABI 映射，并在 restart 后回到作者初始状态。
+3. Blender authoring：默认 GN evaluated mesh 显式刷新为独立 Piece Objects；manifest、稳定 ID、属性保留、失败回滚、Undo 和 save/reopen 有测试。
+4. pipeline：Source 被排除，linked Product Collection 只展开 owner/revision 匹配的受管 Piece；隐藏状态不改变参与集合。
+5. acceptance：保存并后台打开 `rigid/test/assets/jolt_fracture_wall.blend`，运行球撞墙场景。
 
-- 完成 FREE/BODY/SHAPE/COLL/FILTER/DET 的 P0；
-- 固定 stable-id 添加顺序；
-- 建 py311/py313 差分与同进程 bitwise 重放。
+球撞墙的最低 oracle：
 
-完成标准：基础刚体可声明“参数与 Jolt v5.2.0 语义已验收”。
+- 接触前所有 `DYNAMIC + start_deactivated` 墙块相对作者姿态位移不超过容差；
+- 球命中后至少一个中央可破碎 Piece 变为 active 并产生可测位移；
+- 外圈 Static 锚定 Piece 全部保持作者姿态；
+- 不是所有墙块都发生位移，结果因此是局部破坏而不是整墙自由落体；
+- transform、速度和 contact point 全部 finite；
+- reset 后同一命中 Piece 集合和关键帧轨迹在冻结容差内可重放；
+- `.blend` 可以直接打开检查，但可执行脚本仍是 pass/fail 的唯一 oracle。
 
-### Phase 2：约束验收
+第一条 acceptance 不要求冲量阈值、半径传播、bond、Cluster 或 convex shape。未实现能力不得通过只显示 UI 或用 sleeping 冒充结构强度进入通过条件。
 
-- 按 Fixed -> Point -> Distance -> Hinge -> Slider -> Cone -> SwingTwist 完成矩阵；
-- 每种先做自由度残差，再 limit/spring/friction/motor，再 frame 和断裂交互；
-- 从 Jolt v5.2.0 unit tests 提炼 Hinge/Slider/Distance 数值 case。
+### Object 资产准备
 
-完成标准：`CONSTRAINT_REFERENCE.md` 每条已支持能力都链接至少一个自动 case ID。
+- GN/Modifier 结果显式应用、Realize 并拆分后，只产生独立 Mesh Objects；第一落地消费者是刚体破碎资产；
+- 重复执行使用 `asset_id + piece_id` 维护稳定 manifest，不泄漏旧对象或静默改变身份；
+- 失败原子回滚，支持 Undo，并明确诊断空几何、非 Mesh、退化 piece 和数量上限；
+- 生成对象继续走当前支持的 primitive shape，不把凸外观误报成 Jolt ConvexHull。
 
-### Phase 3：稳定性与性能
+完成标准：同一资产重复生成后，Object 身份、刚体属性、注册顺序和 S3 轨迹可重放。
 
-- pairwise/high-risk 组合；
-- 10,000 帧 soak、堆叠、约束链、overflow；
-- body/constraint/contact 性能矩阵；
-- 维护冻结 release 性能门槛并完成首版 golden。
+### Object 表与批写回
 
-完成标准：正式报告分别给出语义、确定性、稳定性、性能结论，不用一个通过数掩盖不同维度。
+- 注册阶段冻结 `body_id -> Object` 稳定表，逐帧不得重新扫描 Collection；
+- native transform column、result stream 与公共 Collection writeback 共用同一顺序和长度协议；
+- 覆盖对象删除、隐藏、失效引用、部分活动体、same-frame 和 reset/dispose；
+- 把 prepare、native step、materialize、assign、depsgraph update 分段计时并进入现有性能矩阵。
+
+完成标准：大批 Object 写回不改变物理结果，且性能报告能把 Jolt step 与 Blender 写回成本分开归因。
+
+### 约束与世界设置完整性
+
+- 只扩展现有十一种约束的 spring、motor、limit、friction、runtime command、frame 和 diagnostics；
+- 每个新增世界设置验证默认值、取值域、hot/scheduler/rebuild 更新类别以及确定性影响；
+- `Path`、Vehicle、Soft Body、Ragdoll 不进入 fixture schema 和 planned case。
+
+完成标准：每个公开字段均有 S0 合同、至少一个明确 oracle，并覆盖实际更新路径。
+
+### 后续 Shape
+
+- `FULL_MESH_STATIC` 单独覆盖确定三角化、winding、active edge、缓存、RayCast/contact/debug 和拒绝动态 body；
+- `CONVEX_HULL` 单独覆盖作者 mesh snapshot、finite/退化/共面输入、质量属性和 static/dynamic/kinematic；
+- 两种 shape 都不得复用 GN runtime instance 身份协议；直接实例模拟以后另立合同和性能基线。
+
+完成标准：shape 从公共 spec 到 native、结果、debug、错误诊断和 S1/S2/S3 验收形成独立纵向切片。
 
 ## 新能力 Definition of Done
 

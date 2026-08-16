@@ -1,310 +1,98 @@
-# hotools_jolt — Blender 兼容性踩坑记录
+# `hotools_jolt` Blender 兼容约束
 
-> 本文档记录将 Jolt Physics 集成进 Blender 插件（nanobind .pyd）时遇到的所有崩溃问题、根本原因及修复方案。
-> Jolt 的 Win32 `Mutex.h` 修补现在由 `_native/CMakeLists.txt` 中的 `hotools_patch_jolt_mutex()` 在配置阶段自动应用。本文仍保留手工补丁内容，作为历史说明和构建结果核对依据。
+本文记录仍然影响构建、升级和运行时设计的长期约束。历史崩溃调查、手工编辑生成工程和逐次修复过程只保留在 Git；当前构建不得要求开发者修改 `build/` 下的 Jolt 源码、CMake cache 或 `.vcxproj`。
 
----
+## 资源导航
 
-## 崩溃现象
+- 永久构建配置：`_native/CMakeLists.txt`
+- 构建入口：`_native/build.bat`
+- CMake presets：`_native/CMakePresets.json`
+- Jolt binding：`_native/src/jolt_rigid.cpp`
+- Native 回归：`_native/tests/test_jolt_rigid_native.py`
+- 三层语义测试：`OmniNode/PhysicsWorld/rigid/test/`
+- 测试策略：`OmniNode/PhysicsWorld/rigid/docs/JOLT_TEST_STRATEGY.md`
+- 产品路线：`OmniNode/doc/JOLT_PHYSICS_BACKGROUND_ANALYSIS.md`
+- 固定 Jolt 版本：`5.2.0`
 
-- Blender 里调用任何 `hotools_jolt` 相关节点时，Blender 直接闪退
-- 错误码：`EXCEPTION_ACCESS_VIOLATION`，崩溃模块：`MSVCP140.dll`
-- 调用栈：`hotools_jolt.pyd → Mtx_trylock → Thrd_yield → 崩溃`
-- 独立 Python（`D:\Blender\Blender 4.5\4.5\python\bin\python.exe`）里完全正常
+Jolt 源码优先来自 `_native/extern/JoltPhysics`，否则由 FetchContent 放入 `_native/.fetch-cache` / build 依赖目录。生成目录不是永久修改源。
 
----
+## 已确认的 Blender 进程边界
 
-## 根本原因
+在目标 Windows Blender 进程中，早期集成曾稳定复现以下调用栈：
 
-### tbbmalloc_proxy.dll 破坏 MSVCP140 TLS
-
-Blender 4.5 在进程启动时加载了 `tbbmalloc_proxy.dll`（Intel TBB 内存代理）。  
-该 DLL 在 **我们的 .pyd 加载之前** 就已经替换了进程级别的全局 `malloc/free/new/delete`。  
-这一替换操作破坏了 `MSVCP140.dll` 的 **TLS（线程本地存储）初始化状态**。
-
-后果：`std::mutex::lock()` 在 MSVCP140 里的实现路径为：
-
-```
-std::mutex::lock()
-  → _Mtx_lock() / Mtx_trylock()     [MSVCP140 内部，spin 等待时调用 yield]
-    → Thrd_yield()                   [访问已损坏的 TLS]
-      → EXCEPTION_ACCESS_VIOLATION   [读取 NULL 指针]
+```text
+hotools_jolt.pyd
+  -> MSVCP140 Mtx_trylock / Thrd_yield
+  -> EXCEPTION_ACCESS_VIOLATION
 ```
 
-**受影响的所有 MSVCP140 STL 类型：**
-- `std::mutex` — 直接崩溃
-- `std::shared_mutex` — 同上
-- `std::call_once` / `std::once_flag` — 内部使用 mutex，同上
-- `std::this_thread::get_id()` — 使用 TLS，在 assert 里调用时崩溃
-- `std::this_thread::yield()` — 同 `Thrd_yield`，直接崩溃
+独立 Blender Python 进程正常，而加载完整 Blender 后失败；项目内调查把它定位到 Blender 的 `tbbmalloc_proxy.dll`、MSVC runtime TLS 与 STL thread primitive 的组合。HoTools 因此把以下约束视为产品事实，而不是每次升级重新碰运气：
 
----
+- Jolt Windows `Mutex` / `SharedMutex` 使用 Win32 `CRITICAL_SECTION` / `SRWLOCK` patch。
+- Jolt Profiler 和 DebugRenderer 在 extension 构建中关闭。
+- 初始化不使用 `std::call_once`；binding 使用原子状态完成 Jolt 全局注册。
+- 模块加载时预热 Win32 critical section，再初始化 Jolt types。
+- Jolt extension 关闭 AVX/AVX2，并使用与 Python extension 一致的动态 CRT。
 
-## 修复清单
+这些约束不表示整个项目永远不能使用多线程。当前 `JoltWorld` 已支持 `JobSystemSingleThreaded` 和 Jolt 原生 `JobSystemThreadPool`；线程池内部使用的是上述已修补的 Jolt 同步原语。新增独立 registry、worker 或异步任务仍需单独通过 Blender 进程测试，不能推断普通 `std::mutex` 自动安全。
 
-### 修复 1：Jolt Mutex.h — 替换为 Win32 原生实现 ⚠️ 最关键
+## 自动化所有权
 
-**文件：** CMake 配置阶段自动处理的 Jolt 源码 `Jolt/Core/Mutex.h`。
+| 约束 | 永久 owner | 行为 |
+|---|---|---|
+| Win32 Jolt mutex patch | `_native/CMakeLists.txt::hotools_patch_jolt_mutex` | 配置阶段幂等应用；Jolt 源布局不匹配时直接失败 |
+| Profiler / DebugRenderer | `_native/CMakeLists.txt` cache options | 在添加 Jolt target 前强制关闭 |
+| AVX / AVX2 | `_native/CMakeLists.txt` | Jolt extension 构建强制关闭 |
+| 动态 CRT | `_native/CMakeLists.txt` | extension 与 Blender Python ABI 保持一致 |
+| 全局初始化 | `_native/src/jolt_rigid.cpp` | 原子状态、幂等注册、模块加载时执行 |
+| 线程策略 | `JoltWorld` constructor | `worker_threads=0` 单线程，正数为 Jolt thread pool |
 
-在 `#ifdef JPH_PLATFORM_BLUE` 的 `#else` 分支前，插入 `#elif defined(_WIN32)` 块：
+禁止恢复以下旧流程：
 
-```cpp
-#elif defined(_WIN32)
+- 手工改 `build/*/CMakeCache.txt`；
+- 注释 FetchContent 中的 `Jolt.cmake`；
+- 手工删除 `.vcxproj` 宏；
+- 把 patch 直接提交到 `build/*/_deps/joltphysics-src`；
+- 用一次成功的独立 Python import 替代 Blender 进程验证。
 
-// HoTools patch: Blender loads tbbmalloc_proxy.dll which corrupts MSVCP140.dll TLS state.
-// Any std::mutex::lock() call crashes via Mtx_trylock -> Thrd_yield accessing invalid TLS.
-// Use Win32 CRITICAL_SECTION (Mutex) and SRWLOCK (SharedMutex) to bypass MSVCP140 entirely.
-#ifndef WIN32_LEAN_AND_MEAN
-#  define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
+若自动 patch 失效，正确修复是更新 `hotools_patch_jolt_mutex()` 对固定 Jolt 版本的布局识别并增加配置测试，不是恢复生成目录手工步骤。
 
-class MutexBase : public NonCopyable
-{
-public:
-    MutexBase()                             { InitializeCriticalSection(&mCS); }
-    ~MutexBase()                            { DeleteCriticalSection(&mCS); }
-    inline void     lock()                  { EnterCriticalSection(&mCS); }
-    inline bool     try_lock()              { return TryEnterCriticalSection(&mCS) != 0; }
-    inline void     unlock()               { LeaveCriticalSection(&mCS); }
-private:
-    CRITICAL_SECTION mCS;
-};
+## 构建
 
-class SharedMutexBase : public NonCopyable
-{
-public:
-    SharedMutexBase()                       { mSRW = SRWLOCK_INIT; }
-    inline void     lock()                  { AcquireSRWLockExclusive(&mSRW); }
-    inline bool     try_lock()              { return TryAcquireSRWLockExclusive(&mSRW) != 0; }
-    inline void     unlock()               { ReleaseSRWLockExclusive(&mSRW); }
-    inline void     lock_shared()           { AcquireSRWLockShared(&mSRW); }
-    inline bool     try_lock_shared()       { return TryAcquireSRWLockShared(&mSRW) != 0; }
-    inline void     unlock_shared()         { ReleaseSRWLockShared(&mSRW); }
-private:
-    SRWLOCK         mSRW;
-};
-
-#else
-```
-
-> **注意：** 注释必须用英文。Jolt 的 `.vcxproj` 没有 `/utf-8` 选项，中文注释在代码页 936 下
-> 会触发 warning C4819（视为 error）导致编译失败。
-
-**为什么有效：** `CRITICAL_SECTION` 和 `SRWLOCK` 是 Win32 内核原语，完全不经过 MSVCP140，不涉及 TLS。
-
----
-
-### 修复 2：CMakeLists.txt — 禁用 Profiler 和 DebugRenderer
-
-**文件：** `_native/CMakeLists.txt`
-
-在 Jolt `add_subdirectory` 之前加入：
-
-```cmake
-# Blender 进程中 tbbmalloc_proxy 干扰 MSVCP140 的 std::mutex 初始化。
-# Profiler（Profiler::mLock）和 DebugRenderer 均包含 std::mutex 成员，
-# PhysicsSystem::Init() 首次锁该 mutex 时会崩溃。
-# Jolt 的实际选项名：PROFILER_IN_DEBUG_AND_RELEASE / DEBUG_RENDERER_IN_DEBUG_AND_RELEASE
-set(PROFILER_IN_DEBUG_AND_RELEASE       OFF CACHE BOOL "" FORCE)
-set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
-```
-
-> **注意：** cmake CACHE 机制复杂，仅修改 CMakeLists.txt 不够——还需要手动编辑
-> `build/vs2022-py311/CMakeCache.txt`（见下方流程），并注释掉 `Jolt.cmake` 里的
-> 对应 `target_compile_definitions` 行（因为 cmake 不会重新生成 vcxproj）。
-
----
-
-### 修复 3：jolt_rigid.cpp — 替换 std::call_once 为 std::atomic
-
-**文件：** `_native/src/jolt_rigid.cpp`
-
-```cpp
-// 不使用 std::call_once / std::once_flag（内部依赖 MSVCP140 mutex，在 Blender 里崩溃）
-// 改用 lock-free atomic：0=未初始化 1=初始化中 2=已完成
-static std::atomic<int> g_jolt_init_state{0};
-
-static void ensure_jolt_initialized() {
-    if (g_jolt_init_state.load(std::memory_order_acquire) == 2)
-        return;
-    int expected = 0;
-    if (g_jolt_init_state.compare_exchange_strong(
-            expected, 1, std::memory_order_acq_rel)) {
-        RegisterDefaultAllocator();
-        Factory::sInstance = new Factory();
-        RegisterTypes();
-        g_jolt_init_state.store(2, std::memory_order_release);
-    } else {
-        while (g_jolt_init_state.load(std::memory_order_acquire) < 2) {}
-    }
-}
-```
-
-在 `NB_MODULE` 里提前调用（不要等到 JoltWorld 构造时）：
-
-```cpp
-NB_MODULE(hotools_jolt, m) {
-#ifdef _WIN32
-    // tbbmalloc_proxy warmup: ensure Win32 thread primitives are initialized
-    {
-        CRITICAL_SECTION cs;
-        InitializeCriticalSection(&cs);
-        EnterCriticalSection(&cs);
-        LeaveCriticalSection(&cs);
-        DeleteCriticalSection(&cs);
-    }
-#endif
-    ensure_jolt_initialized();
-    // ... 注册类 ...
-}
-```
-
----
-
-## 重建流程
-
-Jolt 源码会被重新下载或解压，但 CMake 会在添加 Jolt target 前检查并修补 `Mutex.h`。若 Jolt 源码布局发生变化，配置会直接失败，避免生成未经修补的 Blender pyd。
-
-### 第 1 步：cmake 配置
-
-```powershell
-$cmake = 'D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
-$src   = 'C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools\_native'
-& $cmake --preset vs2022-py311 -S $src
-& $cmake --preset vs2022-py313 -S $src
-```
-
-### 第 2 步：修改 CMakeCache.txt（两个 build 目录各一次）
-
-```
-build/vs2022-py311/CMakeCache.txt
-build/vs2022-py313/CMakeCache.txt
-```
-
-将以下两行从 `ON` 改为 `OFF`：
-
-```
-DEBUG_RENDERER_IN_DEBUG_AND_RELEASE:BOOL=OFF
-PROFILER_IN_DEBUG_AND_RELEASE:BOOL=OFF
-```
-
-### 第 3 步：注释掉 Jolt.cmake 里的 compile_definitions（两份各操作）
-
-**文件：** `build/vs2022-py311/_deps/joltphysics-src/Jolt/Jolt.cmake`（第 572–583 行附近）
-
-```cmake
-# Enable the debug renderer
-if (DEBUG_RENDERER_IN_DISTRIBUTION)
-    # target_compile_definitions(Jolt PUBLIC "JPH_DEBUG_RENDERER")  # HoTools: disabled
-elseif (DEBUG_RENDERER_IN_DEBUG_AND_RELEASE)
-    # target_compile_definitions(...)  # HoTools: disabled
-endif()
-
-# Enable the profiler
-if (PROFILER_IN_DISTRIBUTION)
-    # target_compile_definitions(Jolt PUBLIC "JPH_PROFILE_ENABLED")  # HoTools: disabled
-elseif (PROFILER_IN_DEBUG_AND_RELEASE)
-    # target_compile_definitions(...)  # HoTools: disabled
-endif()
-```
-
-### 第 4 步：从 Jolt.vcxproj 里删除 JPH_PROFILE_ENABLED / JPH_DEBUG_RENDERER 宏
-
-用 Python 脚本（见下方）或手动删除两个 vcxproj 里 `PreprocessorDefinitions` 中的这两个宏。
-
-```python
-import re
-files = [
-    r"build\vs2022-py311\hotools_jolt.vcxproj",
-    r"build\vs2022-py311\_deps\joltphysics-build\Jolt.vcxproj",
-    r"build\vs2022-py313\hotools_jolt.vcxproj",
-    r"build\vs2022-py313\_deps\joltphysics-build\Jolt.vcxproj",
-]
-for path in files:
-    with open(path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    content = re.sub(r';JPH_PROFILE_ENABLED(?=;|")', '', content)
-    content = re.sub(r';JPH_DEBUG_RENDERER(?=;|")', '', content)
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write(content)
-    print("Updated:", path)
-```
-
-### 第 5 步：全量重编
-
-```powershell
-$msbuild = 'D:\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe'
-
-# 先全量重编 Jolt.lib（因为 Mutex.h 是头文件，需要 /t:Rebuild）
-& $msbuild "build\vs2022-py311\_deps\joltphysics-build\Jolt.vcxproj" /p:Configuration=Release /p:Platform=x64 /v:minimal /m /t:Rebuild
-& $msbuild "build\vs2022-py313\_deps\joltphysics-build\Jolt.vcxproj" /p:Configuration=Release /p:Platform=x64 /v:minimal /m /t:Rebuild
-
-# 再编译 hotools_jolt.pyd
-& $msbuild "build\vs2022-py311\hotools_jolt.vcxproj" /p:Configuration=Release /p:Platform=x64 /v:minimal /m
-& $msbuild "build\vs2022-py313\hotools_jolt.vcxproj" /p:Configuration=Release /p:Platform=x64 /v:minimal /m
-```
-
----
-
-## 测试验证
-
-无头 Blender 运行测试脚本（位于插件根目录）：
+在 `_native/` 下使用模块化构建：
 
 ```bat
-"D:\Blender\blender-5.2.0-windows-x64\blender.exe" --factory-startup --background --python OmniNode\PhysicsWorld\rigid\test\test_blender_jolt_smoke.py
+build.bat 311 jolt
+build.bat 313 jolt
 ```
 
-期望输出（最后几行）：
+产物：
 
-```
-[TEST] JoltWorld OK: <hotools_jolt.JoltWorld object at 0x...>
-[TEST] add_body OK, handle = 1
-[TEST] step OK, X.XXX ms
-[TEST] body pos after 1 step: [0.0, 4.9973, 0.0]
-[TEST] 全部通过！
+```text
+_Lib/py311/HotoolsPackage/hotools_jolt.cp311-win_amd64.pyd
+_Lib/py313/HotoolsPackage/hotools_jolt.cp313-win_amd64.pyd
 ```
 
----
+需要重新 configure 时使用 `CMakePresets.json` 中的 `vs2022-py311-jolt` / `vs2022-py313-jolt`。普通增量实现改动不需要手工操作 Jolt 工程。
 
-## 其他踩坑
+## 验证门槛
 
-### AVX2 导致崩溃
+兼容性改动至少验证：
 
-Python 调用栈不保证 32 字节对齐，`vmovaps` 指令对不对齐的内存读写会触发 `EXCEPTION_ILLEGAL_INSTRUCTION`。
+1. py311 与 py313 `hotools_jolt` 可在目标 Blender 进程 import、构造和 dispose。
+2. 单线程与至少一个正数 `worker_threads` 的 world 可创建、step 和清理。
+3. Native rigid 回归和三层 semantic fixture 通过。
+4. Blender background smoke 覆盖 body、contact、constraint 和 world rebuild。
+5. 插件 unregister、load/undo、Cache Delete 和 world replacement 后没有仍运行的 Jolt job 或陈旧 handle。
 
-**修复：** `CMakeLists.txt` 中：
+独立 Python 测试只覆盖 ABI/binding，不覆盖 Blender allocator、已加载 DLL、frame handler 或 depsgraph 环境。
 
-```cmake
-set(USE_AVX2 OFF CACHE BOOL "" FORCE)
-set(USE_AVX  OFF CACHE BOOL "" FORCE)
-```
+## 升级 Jolt
 
-### HoTools import 路径错误
+升级固定版本时按以下顺序：
 
-`physicsWorld/rigid/nodes.py` 原来有 `from ..solver import step_rigid_bodies`（双点），
-应为 `from .solver import step_rigid_bodies`（单点），因为 `solver.py` 就在 `rigid/` 目录下。
-
-### build.bat 选择性编译模块
-
-`build.bat [all|311|313] [all|native|jolt]` 会把模块名传给 CMake `--target`。
-MC2 日常开发使用 `build.bat 313 native`，不会链接或重写 `hotools_jolt`；Jolt 单独验证使用
-`build.bat 313 jolt`。需要诊断底层 VS 工程时仍可直接使用 PowerShell + MSBuild（见上方重编流程）。
-
-### cmake 不重新生成 vcxproj
-
-cmake 检测 Jolt 是 FetchContent 子目录时，对 `CMakeCache.txt` 的修改不会自动触发
-vcxproj 重新生成。需要手动修改 vcxproj 里的 `PreprocessorDefinitions`（见步骤 5）。
-
----
-
-## 文件改动速查
-
-| 文件 | 改动类型 | 内容 |
-|------|---------|------|
-| `_native/CMakeLists.txt` | 永久 | 禁用 AVX2/AVX、Profiler、DebugRenderer |
-| `_native/src/jolt_rigid.cpp` | 永久 | lock-free init、Win32 warmup、NB_MODULE 提前初始化 |
-| `_native/CMakeLists.txt` | **持久化自动修补** | 配置阶段写入 Win32 CRITICAL_SECTION + SRWLOCK |
-| `build/.../Jolt/Jolt.cmake` | **每次重建后重新 patch** | 注释掉 Profiler/DebugRenderer compile_definitions |
-| `build/.../Jolt.vcxproj` | **每次重建后重新 patch** | 删除 JPH_PROFILE_ENABLED / JPH_DEBUG_RENDERER 宏 |
-| `build/.../hotools_jolt.vcxproj` | **每次重建后重新 patch** | 同上 |
+1. 审核 `Jolt/Core/Mutex.h` 布局和 patch 命中；不匹配必须配置失败。
+2. 审核 Profiler、DebugRenderer、CRT、SIMD 和 job system 选项名是否变化。
+3. 双 ABI clean configure/build，不复用旧 Jolt object files。
+4. 运行单线程/线程池 Blender smoke、完整 semantic/golden、soak 和性能门禁。
+5. 只有上述结果通过后更新本页版本与产品文档；不要在文档中追加升级流水账。

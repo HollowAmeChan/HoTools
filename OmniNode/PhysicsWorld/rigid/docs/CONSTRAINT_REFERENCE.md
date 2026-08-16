@@ -106,11 +106,24 @@ RackAndPinion 必须按顺序引用 pinion 的 Hinge 和 rack 的 Slider，并�
 - `disable_collisions`：HoTools pair-filter policy，不是 Jolt constraint 字段。
 - `breakable` / `breaking_threshold`：HoTools 在 step 后读取 lambda/impulse 并禁用约束，不是 Jolt 独立约束类型。
 
-## Jolt 原生但 HoTools 尚未接入
+## 当前补齐范围
 
-| Jolt 类型 | 能力 | 接入前置 |
-|---|---|---|
-| Path | Hermite spline path、path fraction、motor | 路径资源生命周期与曲线调试 |
-| Vehicle | 虚拟轮/履带车辆系统 | 独立 vehicle domain，不并入通用约束面板 |
+近期不增加新的约束类型。现有十一种类型优先补齐：
+
+- frequency/damping 与 stiffness/damping 两种 spring mode；
+- 对称便捷限制之外的 motor force/torque min/max；
+- stable constraint identity、运行时 enable/disable、motor target、limit 和 break reset 命令；
+- backend 实际 A/B world frame、误差和稳定诊断码；
+- 按约束族拆分显式节点，替换当前超宽生成约束属性节点；
+- Gear/RackAndPinion 使用 request 内 stable constraint ID，并在 native 调用前完成依赖排序和循环诊断。
+
+## 长期排除项
+
+| 能力 | 决定 |
+|---|---|
+| Path | 长期不接；不进入当前 planned node 或里程碑 |
+| Vehicle | 独立系统，长期不并入通用刚体约束面板 |
+| Soft Body | 不进入 rigid constraint 路线，也不替代现有布料/XPBD solver |
+| Ragdoll | 长期不提供独立产品；当前约束工作不以布娃娃为目标扩张 |
 
 来源：[Jolt 官方约束总览](https://jrouwe.github.io/JoltPhysics/index.html#constraints)。

@@ -6,7 +6,7 @@
 
 - **应该写**：所有solver共同遵守的阶段职责、数据所有权、生命周期、声明协议、dirty/update语义、exchange/result/writeback和native context公共约束。
 - **不应该写**：某个solver当前完成度、专属算法顺序/公式、fixture数量、产品输入限制、下一交付或迁移流水。
-- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；Field/Volume/Wind 的产品与实施合同写`PHYSICS_FIELD_VOLUME_BLUEPRINT.md`；MC2稳定产品合同写`MC2_BLUEPRINT.md`，GPU后端专项写`MC2_GPU_BACKEND_DESIGN.md`；基础 Mesh XPBD 的数值、冻结范围和迁移写`MESH_XPBD_BLUEPRINT.md`；显式端点 Bone XPBD 的拓扑、Pin、写回和约束扩展写`BONE_XPBD_BLUEPRINT.md`；通用Bake、关键帧与外部几何缓存写`PHYSICS_BAKE_NODE_BLUEPRINT.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
+- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；Rigid/Jolt 的 Object 工作流、能力范围、节点/Socket 和 shape 路线写`JOLT_PHYSICS_BACKGROUND_ANALYSIS.md`；Field/Volume/Wind 的产品与实施合同写`PHYSICS_FIELD_VOLUME_BLUEPRINT.md`；MC2稳定产品合同写`MC2_BLUEPRINT.md`，GPU后端专项写`MC2_GPU_BACKEND_DESIGN.md`；基础 Mesh XPBD 的数值、冻结范围和迁移写`MESH_XPBD_BLUEPRINT.md`；显式端点 Bone XPBD 的拓扑、Pin、写回和约束扩展写`BONE_XPBD_BLUEPRINT.md`；通用Bake、关键帧与外部几何缓存写`PHYSICS_BAKE_NODE_BLUEPRINT.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
 - **准入原则**：一条规则只有被两个以上domain共享，或明确属于Physics World公共边界，才进入本文；solver私有规则留在该domain。
 
 ## 文档路由
@@ -18,6 +18,7 @@
 - **`MESH_XPBD_BLUEPRINT.md`（Simple Mesh XPBD 域蓝本）**：XPBD 家族内基础网格域的严格数值合同、冻结能力、native 边界、生产验收和旧路径删除顺序。
 - **`BONE_XPBD_BLUEPRINT.md`（Bone XPBD 域蓝本）**：XPBD 家族内显式 BoneSegment 端点图、共点共享、Pin/Tail 写回、共享 native 边界、数值限制与后续约束路线。
 - **`PHYSICS_BAKE_NODE_BLUEPRINT.md`（通用 Bake 蓝图）**：Physics World结果到Bone/Object关键帧、Mesh外部缓存、跳帧清理、播放代理和Finalize的产品与实施合同。
+- **`JOLT_PHYSICS_BACKGROUND_ANALYSIS.md`（Rigid/Jolt 产品路线）**：当前 Object-only 产品边界、GN 应用/拆分资产工作流、批同步/写回、显式属性/Socket、约束/世界设置与后续 shape 路线。
 - **`../ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
 
 本文只写"结构应该怎样"；具体 solver 当前做到哪里见实现状态文档，历史过程由 Git 保存。
@@ -108,6 +109,33 @@ Cache Read
 - scope 按 Collection 保存同一帧的稳定 Object 顺序，并用 `foreach_get` 冻结基础 transform 缓冲。World Begin 把批次发布到 frame exchange。Collection 只是读取边界，不自动取得其中所有 Object 写通道的所有权。
 - Collection 批次只在当前图执行和当前帧有效。写回前必须核对 Collection 身份、对象数量和指针顺序；帧内编辑使批次失效时必须回退到稳定身份逐对象写回，不能把数据写给错位对象。
 - `PhysicsObjectScope.objects` 只作为公共 collector 和旧内部测试调用的展平兼容视图；新节点、solver 和性能路径不得把裸 Object 列表重新定义为公开范围协议。
+
+### Rigid Fracture Asset
+
+刚体破碎是 `physicsWorld.rigid` 的 authoring adapter，不是新的 solver 或公共 Scope 类型。Source Object 必须位于公开 Physics Object Scope 中；它链接的 Product Collection 是该 Source 声明的受管资源依赖，可以由 rigid collector 展开为普通 Piece Objects。
+
+固定装配顺序：
+
+```text
+PhysicsObjectScope
+  -> rigid fracture owner resolver
+  -> validate Source / Product Collection / manifest / revision
+  -> exclude fracture Source from rigid body registration
+  -> expand only managed Piece Objects owned by that Source
+  -> ordinary RigidBodySpec collector
+```
+
+边界：
+
+- Source 是资产 owner，不是 Piece 生成后的 Jolt body。即使 Source 同时启用 `hotools_rigid_body`，resolver 也必须排除它并发布明确诊断。
+- Product Collection 不因被链接就把所有成员送入物理。只有 owner ID、piece ID、revision 和 managed 标志完整匹配的 Mesh Object 可以进入 rigid 派生视图；外来对象保持原有 Scope 语义。
+- rigid resolver 可以为 Product Collection 发布帧内 transform/writeback 批次，但不能修改其它 solver 看到的公共 `PhysicsObjectScope.objects`，也不能让其它 domain 自动取得这些 Piece 的 authoring 所有权。
+- Product Collection 为空、过期、身份重复或引用失效时，必须在创建 Jolt body 前整批失败；不得静默回退到 Source，也不得部分注册。
+- GN 求值、Realize、拆分、创建/删除 Object、manifest 替换和可见性修改只允许发生在显式 Blender Operator。World Begin、collector、solver prepare/step 和 writeback 都不得修补资产。
+- 刷新成功是结构变化，必须使旧模拟 cache、body slots、contact snapshot 和批次失效。仅修改现有 Piece 的普通热参数继续服从 rigid 自身更新合同。
+- 第一阶段 Piece 仍是普通 Blender Object，使用公共 result stream 和 Object writeback；不得为破碎建立 native 到 Blender RNA 的私有旁路。
+
+详细字段、刷新事务、激活语义和验收见 `PhysicsWorld/rigid/docs/RIGID_FRACTURE_BLUEPRINT.md`。
 
 ### Simple Cloth Object
 
@@ -799,6 +827,8 @@ PhysicsWorldCache / solver slot
 | `Object.hotools_field` | `physicsWorld.field` 的 `field_air_velocity` capability | Field Empty 创作、scope collector、公共采样与 preview；MC2 CPU 产品链 active consumer |
 | `Object.hotools_rigid_body` | `physicsWorld.rigid` 的 `rigid_body` capability | Rigid/Jolt、scope、UI |
 | `Object.hotools_rigid_constraint` | `physicsWorld.rigid` 的 `rigid_constraint` capability | Rigid/Jolt、scope、UI |
+| `Object.hotools_rigid_fracture` | `physicsWorld.rigid` 的 fracture asset capability，计划中 | Source authoring、Product Collection、刷新状态与运行时 resolver |
+| `Object.hotools_rigid_fracture_piece` | `physicsWorld.rigid` 的 managed Piece metadata，计划中 | owner/revision 校验；物理参数仍读取 `hotools_rigid_body` |
 | `Scene.ho_*` 物理叠加层字段 | `physicsWorld.ui` | 面板、header、GPU preview |
 
 所有权规则：

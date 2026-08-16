@@ -19,7 +19,6 @@ from .names import (
     RIGID_MATERIAL_PRESET_OBJECT_TAG,
     RIGID_QUERY_RESULT_CHANNEL,
     RIGID_QUERY_WRITER_ID,
-    RIGID_RAGDOLL_PROXY_OBJECT_TAG,
     RIGID_SOLVER_ID,
     RIGID_SENSOR_EVENT_CHANNEL,
     RIGID_SOLVER_STATS_CHANNEL,
@@ -52,7 +51,6 @@ RIGID_SOLVER_DECLARATION = {
     "planned_nodes": [
         "刚体查询-ShapeCast",
         "刚体隐式材质预设注册",
-        "刚体Ragdoll代理注册",
     ],
     "writers": [
         RIGID_BODY_REGISTER_WRITER_ID,
@@ -113,11 +111,10 @@ RIGID_SOLVER_DECLARATION = {
         ],
         "planned": [
             RIGID_MATERIAL_PRESET_OBJECT_TAG,
-            RIGID_RAGDOLL_PROXY_OBJECT_TAG,
         ],
         "entry_kind": "刚体生成对象或 Jolt 设置",
         "producer_nodes": ["Jolt设置", "刚体生成约束注册"],
-        "planned_producer_nodes": ["刚体隐式材质预设注册", "刚体Ragdoll代理注册"],
+        "planned_producer_nodes": ["刚体隐式材质预设注册"],
         "update_policy": "按标签 / stable_id / 签名懒更新",
         "conflict_policy": "相同标签和 stable_id 时后写覆盖先写",
     },
@@ -165,8 +162,8 @@ RIGID_JOLT_CAPABILITY_BACKLOG = [
     },
     {
         "capability": "高级约束类型",
-        "status": "SwingTwist、SixDOF 与 Pulley 公共链路已接；Path/Gear/RackAndPinion 计划中",
-        "boundary": "每种类型同时补 spec、binding、result、专用 renderer、用户文档和测试",
+        "status": "当前十一种类型公共链路已接；近期不增加 Path",
+        "boundary": "优先补现有类型的 spring/motor/runtime control、诊断、显式节点和测试",
     },
     {
         "capability": "高级形状",
