@@ -82,7 +82,7 @@ class Align(bpy.types.Operator):
     inbetween: BoolProperty(name="对齐到两者之间", default=False)
     is_inbetween: BoolProperty(name="显示两者之间选项", default=True)
     inbetween_flip: BoolProperty(name="翻转", default=False)
-    mode: EnumProperty(name='模式', items=obj_align_mode_items, default='ACTIVE')
+    mode: EnumProperty(name='模式', items=obj_align_mode_items, default='FLOOR')
     location: BoolProperty(name='对齐位置', default=True)
     rotation: BoolProperty(name='对齐旋转', default=True)
     scale: BoolProperty(name='对齐缩放', default=False)
