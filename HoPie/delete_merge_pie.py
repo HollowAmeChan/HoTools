@@ -9,28 +9,28 @@ def _mesh_operator(pie, operator_id, text, icon, **properties):
     return operator
 
 
-def _merge_to_selection_end(context, use_last):
+def _can_merge_native(context):
     active = context.active_object
-    if not active or active.type != 'MESH' or context.mode != 'EDIT_MESH':
-        return {'CANCELLED'}
+    if context.mode != 'EDIT_MESH' or not active or active.type != 'MESH':
+        return False
 
     bm = bmesh.from_edit_mesh(active.data)
     selected = [vert for vert in bm.verts if vert.select]
-    if len(selected) < 2:
-        return {'CANCELLED'}
+    active_element = bm.select_history.active
+    return (
+        len(selected) >= 2
+        and isinstance(active_element, bmesh.types.BMVert)
+        and active_element.select
+    )
 
-    history = [
-        element
-        for element in bm.select_history
-        if isinstance(element, bmesh.types.BMVert) and element.select
-    ]
-    if history:
-        target = history[-1] if use_last else history[0]
-    else:
-        target = selected[-1] if use_last else selected[0]
-    bmesh.ops.pointmerge(bm, verts=selected, merge_co=target.co.copy())
-    bmesh.update_edit_mesh(active.data, loop_triangles=False, destructive=True)
-    return {'FINISHED'}
+
+def _execute_native_merge(context, merge_type):
+    if not _can_merge_native(context):
+        return {'CANCELLED'}
+    try:
+        return bpy.ops.mesh.merge(type=merge_type)
+    except RuntimeError:
+        return {'CANCELLED'}
 
 
 class OP_MergeToFirst(bpy.types.Operator):
@@ -47,7 +47,7 @@ class OP_MergeToFirst(bpy.types.Operator):
         )
 
     def execute(self, context):
-        return _merge_to_selection_end(context, use_last=False)
+        return _execute_native_merge(context, 'FIRST')
 
 
 class OP_MergeToLast(bpy.types.Operator):
@@ -64,7 +64,7 @@ class OP_MergeToLast(bpy.types.Operator):
         )
 
     def execute(self, context):
-        return _merge_to_selection_end(context, use_last=True)
+        return _execute_native_merge(context, 'LAST')
 
 
 class HO_MT_delete_merge_pie(bpy.types.Menu):

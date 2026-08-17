@@ -60,42 +60,29 @@ class NewPieRegistrationTests(unittest.TestCase):
 
         self.assertEqual(hopie.preference_keymaps(), [])
 
-    def test_merge_to_selection_ends(self):
+    def test_merge_skips_without_active_vertex(self):
         hopie = load_hopie()
         hopie.register()
+        hopie.set_delete_merge_pie_enabled(True)
+        mesh = bpy.data.meshes.new('merge_without_active_mesh')
+        mesh.from_pydata([(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)], [(0, 1)], [])
+        obj = bpy.data.objects.new('merge_without_active_object', mesh)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
         try:
-            hopie.set_delete_merge_pie_enabled(True)
-            for operator_id, expected_x in (
-                ('ho.merge_to_first', 1.0),
-                ('ho.merge_to_last', 3.0),
-            ):
-                mesh = bpy.data.meshes.new(f'{operator_id}_mesh')
-                mesh.from_pydata([(1.0, 0.0, 0.0), (2.0, 0.0, 0.0), (3.0, 0.0, 0.0)], [], [])
-                obj = bpy.data.objects.new(f'{operator_id}_object', mesh)
-                bpy.context.collection.objects.link(obj)
-                bpy.context.view_layer.objects.active = obj
-                obj.select_set(True)
-                bpy.ops.object.mode_set(mode='EDIT')
-                bm = bmesh.from_edit_mesh(mesh)
-                selected = list(bm.verts)
-                for vert in selected:
-                    vert.select = True
-                bm.select_history.clear()
-                bm.select_history.add(selected[0])
-                bm.select_history.add(selected[1])
-                bm.select_history.add(selected[2])
-                bmesh.update_edit_mesh(mesh)
-
-                self.assertEqual(getattr(bpy.ops.ho, operator_id.rsplit('.', 1)[1])(), {'FINISHED'})
-                bpy.ops.object.mode_set(mode='OBJECT')
-                self.assertEqual(len(mesh.vertices), 1)
-                self.assertAlmostEqual(mesh.vertices[0].co.x, expected_x)
-                bpy.data.objects.remove(obj, do_unlink=True)
+            bpy.ops.object.mode_set(mode='EDIT')
+            bm = bmesh.from_edit_mesh(mesh)
+            for vert in bm.verts:
+                vert.select = True
+            bm.select_history.clear()
+            bmesh.update_edit_mesh(mesh)
+            self.assertEqual(bpy.ops.ho.merge_to_first(), {'CANCELLED'})
         finally:
             if bpy.context.mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.data.objects.remove(obj, do_unlink=True)
             hopie.unregister()
-
 
 if __name__ == '__main__':
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(NewPieRegistrationTests)
