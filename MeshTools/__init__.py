@@ -52,7 +52,6 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         )
         layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname, icon='ADD')
         layout.operator(OP_ModalFillMeshHole.bl_idname, icon='FACESEL')
-        layout.operator(TransformEdgeConstrained.bl_idname, icon='MOD_EDGESPLIT')
 
 
 def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
