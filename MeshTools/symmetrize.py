@@ -14,21 +14,21 @@ from Utils.symmetrize import symmetrize
 
 
 AXIS_ITEMS = (
-    ('X', 'X', 'Symmetrize along X'),
-    ('Y', 'Y', 'Symmetrize along Y'),
-    ('Z', 'Z', 'Symmetrize along Z'),
+    ('X', 'X', '沿 X 轴对称化'),
+    ('Y', 'Y', '沿 Y 轴对称化'),
+    ('Z', 'Z', '沿 Z 轴对称化'),
 )
 DIRECTION_ITEMS = (
-    ('POSITIVE', 'Positive', 'Keep the positive side'),
-    ('NEGATIVE', 'Negative', 'Keep the negative side'),
+    ('POSITIVE', '正向', '保留正向一侧'),
+    ('NEGATIVE', '负向', '保留负向一侧'),
 )
 NORMAL_METHOD_ITEMS = (
-    ('INDEX', 'Index', 'Pair custom normals by vertex index'),
-    ('LOCATION', 'Location', 'Pair custom normals by vertex location'),
+    ('INDEX', '索引', '按顶点索引配对自定义法线'),
+    ('LOCATION', '位置', '按顶点位置配对自定义法线'),
 )
 FIX_CENTER_ITEMS = (
-    ('CLEAR', 'Clear', 'Clear the center seam normals'),
-    ('TRANSFER', 'Transfer', 'Transfer center seam normals'),
+    ('CLEAR', '清除', '清除中心接缝法线'),
+    ('TRANSFER', '传递', '传递中心接缝法线'),
 )
 
 
@@ -79,30 +79,30 @@ def _object_axes(matrix):
     }
 
 
-class Symmetrize(bpy.types.Operator):
+class OP_Symmetrize(bpy.types.Operator):
     bl_idname = 'ho.symmetrize'
-    bl_label = 'Symmetrize'
-    bl_description = 'Symmetrize the active mesh using an Alt-X radial flick'
+    bl_label = '对称化'
+    bl_description = '使用 Alt-X 径向操作对当前网格进行对称化'
     bl_options = {'REGISTER', 'UNDO'}
 
-    objmode: BoolProperty(name='Object Mode', default=False)
-    flick: BoolProperty(name='Flick', default=True)
-    axis: EnumProperty(name='Axis', items=AXIS_ITEMS, default='X')
-    direction: EnumProperty(name='Direction', items=DIRECTION_ITEMS, default='POSITIVE')
-    threshold: FloatProperty(name='Threshold', default=0.0001, min=0.0)
-    partial: BoolProperty(name='Selected Only', default=False)
-    remove: BoolProperty(name='Remove Other Side', default=False)
-    remove_redundant_center: BoolProperty(name='Remove Redundant Center', default=True)
-    is_custom_normal: BoolProperty(default=False, options={'HIDDEN'})
-    mirror_custom_normals: BoolProperty(name='Mirror Custom Normals', default=True)
+    objmode: BoolProperty(name='对象模式', default=False)  # type: ignore
+    flick: BoolProperty(name='径向操作', default=True)  # type: ignore
+    axis: EnumProperty(name='轴', items=AXIS_ITEMS, default='X')  # type: ignore
+    direction: EnumProperty(name='方向', items=DIRECTION_ITEMS, default='POSITIVE')  # type: ignore
+    threshold: FloatProperty(name='阈值', default=0.0001, min=0.0)  # type: ignore
+    partial: BoolProperty(name='仅选定', default=False)  # type: ignore
+    remove: BoolProperty(name='删除另一侧', default=False)  # type: ignore
+    remove_redundant_center: BoolProperty(name='删除冗余中心', default=True)  # type: ignore
+    is_custom_normal: BoolProperty(default=False, options={'HIDDEN'})  # type: ignore
+    mirror_custom_normals: BoolProperty(name='镜像自定义法线', default=True)  # type: ignore
     custom_normal_method: EnumProperty(
-        name='Custom Normal Pairing', items=NORMAL_METHOD_ITEMS, default='INDEX'
-    )
-    fix_center: BoolProperty(name='Fix Center Seam', default=False)
+        name='自定义法线配对', items=NORMAL_METHOD_ITEMS, default='INDEX'
+    )  # type: ignore
+    fix_center: BoolProperty(name='固定中心接缝', default=False)  # type: ignore
     fix_center_method: EnumProperty(
-        name='Center Fix Method', items=FIX_CENTER_ITEMS, default='CLEAR'
-    )
-    clear_sharps: BoolProperty(name='Clear Center Sharps', default=True)
+        name='中心修复方法', items=FIX_CENTER_ITEMS, default='CLEAR'
+    )  # type: ignore
+    clear_sharps: BoolProperty(name='清除中心锐边', default=True)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -117,8 +117,8 @@ class Symmetrize(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         row = layout.row(align=True)
-        row.prop(self, 'partial', text='Selected Only', toggle=True)
-        row.prop(self, 'remove', text='Remove' if self.remove else 'Symmetrize', toggle=True)
+        row.prop(self, 'partial', text='仅选定', toggle=True)
+        row.prop(self, 'remove', text='删除' if self.remove else '对称化', toggle=True)
         row = layout.row(align=True)
         row.prop(self, 'axis', expand=True)
         row.prop(self, 'direction', expand=True)

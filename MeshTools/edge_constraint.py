@@ -123,21 +123,21 @@ def printd(data, title):
     print(title)
     print(data)
 
-transform_mode_items = [('ROTATE', 'Rotate', ''),
-                        ('SCALE', 'Scale', '')]
+transform_mode_items = [('ROTATE', '旋转', '旋转边缘'),
+                        ('SCALE', '缩放', '缩放边缘')]
 
-transform_axis_items = [('VIEW', 'View', ''),
-                        ('X', 'X', ''),
-                        ('Y', 'Y', ''),
-                        ('Z', 'Z', '')]
+transform_axis_items = [('VIEW', '视图', '沿视图方向'),
+                        ('X', 'X', '沿本地 X 轴'),
+                        ('Y', 'Y', '沿本地 Y 轴'),
+                        ('Z', 'Z', '沿本地 Z 轴')]
 
-constrain_mode_items = [('DIRECT', 'Direct', ''),
-                        ('PROXIMITY', 'Proximity', ''),
-                        ('INTERSECTION', 'Intersection', ''),
-                        ('PLANE_INTERSECTION', 'Plane Intersection', ''),
-                        ('PROJECTED_PLANE_INTERSECTION', 'Projected Plane Intersection', ''),
-                        ('DIRECT_PLANE_INTERSECTION', 'Direct Plane Intersection', ''),
-                        ('MOUSEDIR_PLANE_INTERSECTION', 'MouseDir Plane Intersection', '')]
+constrain_mode_items = [('DIRECT', '直接相交', '直接求相邻边相交'),
+                        ('PROXIMITY', '最近点', '取最近交点'),
+                        ('INTERSECTION', '边线相交', '求边线相交'),
+                        ('PLANE_INTERSECTION', '平面相交', '求平面相交'),
+                        ('PROJECTED_PLANE_INTERSECTION', '投影平面相交', '投影到平面后求交'),
+                        ('DIRECT_PLANE_INTERSECTION', '直接平面相交', '直接与约束平面相交'),
+                        ('MOUSEDIR_PLANE_INTERSECTION', '鼠标方向平面相交', '沿鼠标方向求平面相交')]
 
 axis_color_mapping = {'X': red,
                       'Y': green,
@@ -167,7 +167,7 @@ def clamp_point_to_segment(point, segment):
     factor = (point - start).dot(direction) / length_squared
     return start + direction * max(0.0, min(1.0, factor))
 
-class TransformEdgeConstrained(bpy.types.Operator):
+class OP_TransformEdgeConstrained(bpy.types.Operator):
     bl_idname = "ho.transform_edge_constrained"
     bl_label = "边缘约束变换"
     bl_description = "沿相邻拓扑边约束旋转或缩放，且不会超出原边段"
@@ -177,13 +177,13 @@ class TransformEdgeConstrained(bpy.types.Operator):
     edgeindex: IntProperty(default=-1)# type: ignore
     faceindex: IntProperty(default=-1)# type: ignore
 
-    transform_mode: EnumProperty(name='Transform Mode', items=transform_mode_items, default='ROTATE')# type: ignore
-    transform_axis: EnumProperty(name='Transform Axis', items=transform_axis_items, default='VIEW')# type: ignore
-    constrain_mode: EnumProperty(name='Constrain Mode', items=constrain_mode_items, default='DIRECT_PLANE_INTERSECTION')# type: ignore
-    end_align: BoolProperty(name="Align Ends to Face Edge", default=True)# type: ignore
-    draw_end_align: BoolProperty(name="Draw Align Ends Option", default=False)# type: ignore
-    face_align: BoolProperty(name="Face Align", default=False)# type: ignore
-    draw_face_align: BoolProperty(name="Draw Align Ends Option", default=False)# type: ignore
+    transform_mode: EnumProperty(name='变换模式', items=transform_mode_items, default='ROTATE')# type: ignore
+    transform_axis: EnumProperty(name='变换轴', items=transform_axis_items, default='VIEW')# type: ignore
+    constrain_mode: EnumProperty(name='约束模式', items=constrain_mode_items, default='DIRECT_PLANE_INTERSECTION')# type: ignore
+    end_align: BoolProperty(name="端点对齐面边", default=True)# type: ignore
+    draw_end_align: BoolProperty(name="显示端点对齐选项", default=False)# type: ignore
+    face_align: BoolProperty(name="面对齐", default=False)# type: ignore
+    draw_face_align: BoolProperty(name="显示面对齐选项", default=False)# type: ignore
     @classmethod
     def poll(cls, context):
         if context.mode == 'EDIT_MESH' and context.active_object:

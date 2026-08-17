@@ -4,8 +4,14 @@ from . import boolean
 from .align import Align, AlignRelative
 from .bone_chain import OP_CreatBoneChainByMeshFlow
 from .hole_fill import OP_ModalFillMeshHole
-from .edge_constraint import TransformEdgeConstrained
-from .symmetrize import Symmetrize
+from .edge_constraint import OP_TransformEdgeConstrained
+from .symmetrize import OP_Symmetrize
+from .select import (
+    OP_EnhancedSelect,
+    OP_SelectLoop,
+    OP_SelectSharpChain,
+    OP_SelectVertexGroup,
+)
 from .visual_boolean import OP_VisualBooleanCut
 from .placement import (
     OP_AutoPlaceObjectBottom,
@@ -14,6 +20,8 @@ from .placement import (
     OP_SnapSelectedFaceOrthogonal,
 )
 from .view import OP_AlignViewToAvgNormal
+
+TransformEdgeConstrained = OP_TransformEdgeConstrained
 
 
 def reg_props():
@@ -68,8 +76,12 @@ cls = [
     OP_AlignViewToAvgNormal,
     OP_CreatBoneChainByMeshFlow,
     OP_ModalFillMeshHole,
-    TransformEdgeConstrained,
-    Symmetrize,
+    OP_TransformEdgeConstrained,
+    OP_Symmetrize,
+    OP_EnhancedSelect,
+    OP_SelectLoop,
+    OP_SelectSharpChain,
+    OP_SelectVertexGroup,
     OP_VisualBooleanCut,
     VIEW3D_MT_edit_mesh_hotools,
 ]
@@ -93,7 +105,7 @@ def register():
             region_type='WINDOW',
         )
         keymap_item = keymap.keymap_items.new(
-            TransformEdgeConstrained.bl_idname,
+            OP_TransformEdgeConstrained.bl_idname,
             type='R',
             value='PRESS',
             alt=True,
@@ -103,7 +115,15 @@ def register():
         addon_keymaps.append((keymap, keymap_item))
 
         keymap_item = keymap.keymap_items.new(
-            Symmetrize.bl_idname,
+            OP_EnhancedSelect.bl_idname,
+            type='LEFTMOUSE',
+            value='PRESS',
+            alt=True,
+        )
+        addon_keymaps.append((keymap, keymap_item))
+
+        keymap_item = keymap.keymap_items.new(
+            OP_Symmetrize.bl_idname,
             type='X',
             value='PRESS',
             alt=True,
