@@ -18,7 +18,7 @@ from .utils import (
 
 class CursorToOrigin(bpy.types.Operator):
     bl_idname = 'ho.cursor_to_origin'
-    bl_label = '光标归零'
+    bl_label = '游标归零'
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -40,7 +40,7 @@ class CursorToOrigin(bpy.types.Operator):
 
 class CursorToSelected(bpy.types.Operator):
     bl_idname = 'ho.cursor_to_selected'
-    bl_label = '光标对齐到选中项'
+    bl_label = '游标->选中项'
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -94,7 +94,7 @@ class CursorToSelected(bpy.types.Operator):
 
 class SelectedToCursor(bpy.types.Operator):
     bl_idname = 'ho.selected_to_cursor'
-    bl_label = '选中项对齐到光标'
+    bl_label = '选中项->游标'
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -141,7 +141,7 @@ def _selected_component_matrix(context, active):
 
 class OriginToActive(bpy.types.Operator):
     bl_idname = 'ho.origin_to_active'
-    bl_label = '原点对齐到活动项'
+    bl_label = '原点->活动项'
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -190,7 +190,7 @@ class OriginToActive(bpy.types.Operator):
 
 class OriginToCursor(bpy.types.Operator):
     bl_idname = 'ho.origin_to_cursor'
-    bl_label = '原点对齐到光标'
+    bl_label = '原点->游标'
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -233,7 +233,7 @@ class OriginToCursor(bpy.types.Operator):
 
 class OriginToBottomBounds(bpy.types.Operator):
     bl_idname = 'ho.origin_to_bottom_bounds'
-    bl_label = '原点对齐到包围盒底部'
+    bl_label = '原点->底部'
     bl_options = {'REGISTER', 'UNDO'}
     evaluated: BoolProperty(name='使用求值后的包围盒', default=False)
 
@@ -263,24 +263,32 @@ class OriginToBottomBounds(bpy.types.Operator):
 
 
 class HO_MT_cursor_pie(bpy.types.Menu):
-    bl_label = 'HoTools 光标与原点'
+    bl_label = 'HoTools 游标与原点'
     bl_idname = 'HO_MT_cursor_pie'
 
     def draw(self, context):
         pie = self.layout.menu_pie()
+        addon = context.preferences.addons.get('HoTools') if hasattr(context, 'preferences') else None
+        show_grid = bool(getattr(getattr(addon, 'preferences', None), 'hoTools_cursorShowToGrid', False))
+
         if context.mode == 'EDIT_MESH':
             selection = tuple(context.scene.tool_settings.mesh_select_mode)
             label = '顶点' if selection == (True, False, False) else '边' if selection == (False, True, False) else '面' if selection == (False, False, True) else '选中项'
-            pie.operator(CursorToSelected.bl_idname, text=f'光标对齐到{label}', icon='PIVOT_CURSOR')
-            pie.operator('view3d.snap_selected_to_cursor', text='选中项对齐到光标', icon='RESTRICT_SELECT_OFF').use_offset = False
+            pie.operator(CursorToSelected.bl_idname, text=f'游标->{label}', icon='PIVOT_CURSOR')
         else:
-            pie.operator(CursorToSelected.bl_idname, text='光标对齐到选中项', icon='PIVOT_CURSOR')
-            pie.operator(SelectedToCursor.bl_idname, text='选中项对齐到光标', icon='RESTRICT_SELECT_OFF')
+            pie.operator(CursorToSelected.bl_idname, text='游标->选中项', icon='PIVOT_CURSOR')
+
+        if context.mode == 'OBJECT':
+            pie.operator(SelectedToCursor.bl_idname, text='选中项->游标', icon='RESTRICT_SELECT_OFF')
+        else:
+            pie.operator('view3d.snap_selected_to_cursor', text='选中项->游标', icon='RESTRICT_SELECT_OFF').use_offset = False
 
         if context.mode in {'OBJECT', 'EDIT_MESH'}:
             box = pie.split()
             column = box.column(align=True)
-            column.separator()
+            if show_grid:
+                column.separator()
+                column.separator()
             row = column.split(factor=0.25)
             row.separator()
             row.label(text='对象原点')
@@ -288,25 +296,40 @@ class HO_MT_cursor_pie(bpy.types.Menu):
             if context.mode == 'OBJECT':
                 row = column.split(factor=0.5, align=True)
                 row.scale_y = 1.5
-                row.operator('object.origin_set', text='对齐到几何体', icon='MESH_DATA').type = 'ORIGIN_GEOMETRY'
-                row.operator(OriginToCursor.bl_idname, text='对齐到光标', icon='LAYER_ACTIVE')
+                row.operator('object.origin_set', text='原点->几何体', icon='MESH_DATA').type = 'ORIGIN_GEOMETRY'
+                row.operator(OriginToCursor.bl_idname, text='原点->游标', icon='LAYER_ACTIVE')
                 row = column.split(factor=0.5, align=True)
                 row.scale_y = 1.5
-                row.operator(OriginToActive.bl_idname, text='对齐到活动项', icon='TRANSFORM_ORIGINS')
-                row.operator(OriginToBottomBounds.bl_idname, text='对齐到底部', icon='AXIS_TOP')
+                row.operator(OriginToActive.bl_idname, text='原点->活动项', icon='TRANSFORM_ORIGINS')
+                row.operator(OriginToBottomBounds.bl_idname, text='原点->底部', icon='AXIS_TOP')
             else:
-                row = column.row(align=True)
-                row.scale_y = 1.5
-                icon = 'VERTEXSEL' if label == '顶点' else 'EDGESEL' if label == '边' else 'FACESEL'
-                row.operator(OriginToActive.bl_idname, text=f'原点对齐到{label}', icon=icon)
-                row.operator(OriginToCursor.bl_idname, text='原点对齐到光标', icon='LAYER_ACTIVE')
+                if selection in {(True, False, False), (False, True, False), (False, False, True)}:
+                    row = column.row(align=True)
+                    row.scale_y = 1.5
+                    icon = 'VERTEXSEL' if label == '顶点' else 'EDGESEL' if label == '边' else 'FACESEL'
+                    row.operator(OriginToActive.bl_idname, text=f'原点->{label}', icon=icon)
+                    row.operator(OriginToCursor.bl_idname, text='原点->游标', icon='LAYER_ACTIVE')
+                else:
+                    row = column.split(factor=0.25, align=True)
+                    row.scale_y = 1.5
+                    row.separator()
+                    row.operator(OriginToCursor.bl_idname, text='原点->游标', icon='LAYER_ACTIVE')
         else:
             pie.separator()
 
-        pie.operator(CursorToOrigin.bl_idname, text='光标对齐到世界原点', icon='PIVOT_CURSOR')
-        pie.operator('view3d.snap_selected_to_cursor', text='选中项对齐到光标（偏移）', icon='RESTRICT_SELECT_OFF').use_offset = True
-        pie.operator('view3d.snap_cursor_to_grid', text='光标对齐到网格', icon='PIVOT_CURSOR')
-        pie.operator('view3d.snap_selected_to_grid', text='选中项对齐到网格', icon='RESTRICT_SELECT_OFF')
+        # HyperCursor is intentionally not a HoTools dependency, but its slot
+        # remains separated so the remaining items keep M3's radial positions.
+        pie.separator()
+        pie.operator(CursorToOrigin.bl_idname, icon='PIVOT_CURSOR')
+        pie.operator('view3d.snap_selected_to_cursor', text='选中项->游标（偏移）', icon='RESTRICT_SELECT_OFF').use_offset = True
+        if show_grid:
+            pie.operator('view3d.snap_cursor_to_grid', text='游标->网格', icon='PIVOT_CURSOR')
+        else:
+            pie.separator()
+        if show_grid:
+            pie.operator('view3d.snap_selected_to_grid', text='选中项->网格', icon='RESTRICT_SELECT_OFF')
+        else:
+            pie.separator()
 
 
 CURSOR_PIE_CLASSES = (
