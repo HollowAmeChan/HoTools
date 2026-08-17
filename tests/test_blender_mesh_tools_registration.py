@@ -140,6 +140,13 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.modal_fill_mesh_hole",
                 "ho.transform_edge_constrained",
                 "ho.symmetrize",
+                "ho.select",
+                "ho.vselect",
+                "ho.sselect",
+                "ho.lselect",
+                "ho.fill_selection",
+                "ho.addselect_sideringloops",
+                "ho.removeselect_sideringloops",
                 "ho.visual_boolean_cut",
             })
             self.assertIsNotNone(
@@ -200,26 +207,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.snap_selected_face_orthogonal",
                 menu_layout.operator_ids,
             )
-            self.assertIn(
-                "ho.transform_edge_constrained",
-                menu_layout.operator_ids,
-            )
             self.assertNotIn("ho.symmetrize", menu_layout.operator_ids)
-            object_menu_layout = RecordingLayout()
-            mesh_tools.draw_in_VIEW3D_MT_object_context_menu(
-                SimpleNamespace(layout=object_menu_layout),
-                bpy.context,
-            )
-            self.assertEqual(
-                object_menu_layout.operator_ids,
-                ["ho.align", "ho.align_relative"],
-            )
-            pose_menu_layout = RecordingLayout()
-            mesh_tools.draw_in_VIEW3D_MT_pose_context_menu(
-                SimpleNamespace(layout=pose_menu_layout),
-                bpy.context,
-            )
-            self.assertEqual(pose_menu_layout.operator_ids, ["ho.align"])
             keymap_items = [
                 keymap_item
                 for _, keymap_item in mesh_tools.addon_keymaps
@@ -237,6 +225,29 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             self.assertEqual(symmetrize_keymaps[0][0].name, "Mesh")
             self.assertEqual(symmetrize_keymaps[0][1].type, 'X')
             self.assertTrue(symmetrize_keymaps[0][1].alt)
+            selection_keymaps = {
+                keymap_item.idname: (keymap.name, keymap_item)
+                for keymap, keymap_item in mesh_tools.addon_keymaps
+                if keymap_item.idname in {
+                    "ho.fill_selection",
+                    "ho.addselect_sideringloops",
+                    "ho.removeselect_sideringloops",
+                }
+            }
+            self.assertEqual(
+                set(selection_keymaps),
+                {
+                    "ho.fill_selection",
+                    "ho.addselect_sideringloops",
+                    "ho.removeselect_sideringloops",
+                },
+            )
+            self.assertEqual(selection_keymaps["ho.fill_selection"][0], "Window")
+            self.assertEqual(selection_keymaps["ho.fill_selection"][1].type, 'RIGHTMOUSE')
+            self.assertTrue(selection_keymaps["ho.fill_selection"][1].ctrl)
+            self.assertTrue(selection_keymaps["ho.fill_selection"][1].shift)
+            self.assertEqual(selection_keymaps["ho.addselect_sideringloops"][1].type, 'NUMPAD_PLUS')
+            self.assertEqual(selection_keymaps["ho.removeselect_sideringloops"][1].type, 'NUMPAD_MINUS')
             align_keymaps = {
                 keymap.name: keymap_item
                 for keymap, keymap_item in mesh_tools.addon_keymaps

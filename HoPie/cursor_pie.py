@@ -263,7 +263,7 @@ class OriginToBottomBounds(bpy.types.Operator):
 
 
 class HO_MT_cursor_pie(bpy.types.Menu):
-    bl_label = 'HoTools 游标与原点'
+    bl_label = '饼: 游标与原点'
     bl_idname = 'HO_MT_cursor_pie'
 
     def draw(self, context):

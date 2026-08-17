@@ -347,7 +347,7 @@ class AlignUV(bpy.types.Operator):
 
 
 class HO_MT_align_pie(bpy.types.Menu):
-    bl_label = 'HoTools 对齐'
+    bl_label = '饼: 对齐'
     bl_idname = 'HO_MT_align_pie'
 
     def draw(self, context):
@@ -456,7 +456,7 @@ class HO_MT_align_pie(bpy.types.Menu):
 
 
 class HO_MT_uv_align_pie(bpy.types.Menu):
-    bl_label = 'HoTools UV 对齐'
+    bl_label = '饼: UV对齐'
     bl_idname = 'HO_MT_uv_align_pie'
 
     def draw(self, context):

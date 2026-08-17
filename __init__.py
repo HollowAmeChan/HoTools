@@ -29,6 +29,15 @@ from bpy.props import BoolProperty, FloatProperty
 import rna_keymap_ui
 
 
+def _preference_keymaps():
+    return [
+        *getattr(FastOperators, 'addon_keymaps', []),
+        *getattr(VertexGroupTools.vertexGroupOperators, 'addon_keymaps', []),
+        *MeshTools.addon_keymaps,
+        *HoPie.preference_keymaps(),
+    ]
+
+
 bl_info = {
     "name": "HoTools",
     "author": "Hollow_ame",
@@ -189,9 +198,9 @@ class AddonPreference(bpy.types.AddonPreferences):
                     col.context_pointer_set("keymap", km)
                     rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
 
-        if MeshTools.addon_keymaps or HoPie.preference_keymaps():
+        if _preference_keymaps():
             col = layout.column()
-            for km, kmi in [*MeshTools.addon_keymaps, *HoPie.preference_keymaps()]:
+            for km, kmi in _preference_keymaps():
                 col.context_pointer_set("keymap", km)
                 rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
 
@@ -229,11 +238,11 @@ class AddonPreference(bpy.types.AddonPreferences):
         _draw_module_box(layout, self, 'hoTools_ui_hopie_expanded', 'HoPie', draw_content=draw_hopie)
 
         def draw_keymaps(content):
-            for keymap, keymap_item in [*MeshTools.addon_keymaps, *HoPie.preference_keymaps()]:
+            for keymap, keymap_item in _preference_keymaps():
                 content.context_pointer_set('keymap', keymap)
                 rna_keymap_ui.draw_kmi([], kc, keymap, keymap_item, content, 0)
 
-        if MeshTools.addon_keymaps or HoPie.preference_keymaps():
+        if _preference_keymaps():
             _draw_module_box(layout, self, 'hoTools_ui_keymaps_expanded', '快捷键', draw_content=draw_keymaps)
 
 

@@ -2675,6 +2675,9 @@ cls = [
 ]
 
 
+addon_keymaps = []
+
+
 def register():
     for i in cls:
         bpy.utils.register_class(i)
@@ -2685,10 +2688,19 @@ def register():
 
     # OP_Switch_VG_byCursor默认绑定 alt+ 右键
     km = bpy.context.window_manager.keyconfigs.addon.keymaps.new(name="Window", space_type="EMPTY", region_type="WINDOW")
-    km.keymap_items.new(OP_VertexGroupTools_Switch_VG_byCursor.bl_idname,type='RIGHTMOUSE', value='PRESS', alt=True)
+    kmi = km.keymap_items.new(
+        OP_VertexGroupTools_Switch_VG_byCursor.bl_idname,
+        type='RIGHTMOUSE',
+        value='PRESS',
+        alt=True,
+    )
+    addon_keymaps.append((km, kmi))
 
 
 def unregister():
+    for km, kmi in addon_keymaps:
+        km.keymap_items.remove(kmi)
+    addon_keymaps.clear()
     for i in cls:
         bpy.utils.unregister_class(i)
     ureg_props()

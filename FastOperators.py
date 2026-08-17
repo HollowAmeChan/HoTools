@@ -642,7 +642,7 @@ def draw_in_TOPBAR_MT_editor_menus(self, context):
     layout.alert = False
 
 
-cls = [OP_select_inside_face_loop, OP_RestartBlender,
+cls = [OP_RestartBlender,
        OP_sync_render_visibility,
        OP_CopyALL_modifiers_to_selected,
        OP_CustomSplitNormals_Import, OP_CustomSplitNormals_Export,
@@ -666,23 +666,6 @@ def register():
 
     # 快捷键设置可以被preference保存，不用担心注册阶段写死
     wm = bpy.context.window_manager
-    # 填充选择-默认绑定 Ctrl + Shift + 右键
-    km = wm.keyconfigs.addon.keymaps.new(
-        name="Window", space_type="EMPTY", region_type="WINDOW")
-    kmi = km.keymap_items.new(OP_select_inside_face_loop.bl_idname,
-                              type='RIGHTMOUSE', value='PRESS', ctrl=True, shift=True)
-    kmi.active = True
-
-    # 加减选环线-默认绑定 Alt + 小键盘"+/-"
-    km = wm.keyconfigs.addon.keymaps.new(
-        name="Window", space_type="EMPTY", region_type="WINDOW")
-    kmi = km.keymap_items.new(OP_AddSelectSideRingLoops.bl_idname,
-                              type='NUMPAD_PLUS', value='PRESS', alt=True)
-    kmi.active = True
-    kmi = km.keymap_items.new(OP_RemoveSelectSideRingLoops.bl_idname,
-                              type='NUMPAD_MINUS', value='PRESS', alt=True)
-    kmi.active = True
-
     reg_props()
 
 

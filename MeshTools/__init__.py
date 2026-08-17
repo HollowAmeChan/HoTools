@@ -12,6 +12,8 @@ from .select import (
     OP_SelectSharpChain,
     OP_SelectVertexGroup,
 )
+from .fill_selection import OP_FillSelection
+from .ring_select import OP_AddSelectSideRingLoops, OP_RemoveSelectSideRingLoops
 from .visual_boolean import OP_VisualBooleanCut
 from .placement import (
     OP_AutoPlaceObjectBottom,
@@ -82,6 +84,9 @@ cls = [
     OP_SelectLoop,
     OP_SelectSharpChain,
     OP_SelectVertexGroup,
+    OP_FillSelection,
+    OP_AddSelectSideRingLoops,
+    OP_RemoveSelectSideRingLoops,
     OP_VisualBooleanCut,
     VIEW3D_MT_edit_mesh_hotools,
 ]
@@ -122,7 +127,37 @@ def register():
         )
         addon_keymaps.append((keymap, keymap_item))
 
+        mesh_keymap = keymap
+        keymap = keyconfig.keymaps.new(
+            name='Window',
+            space_type='EMPTY',
+            region_type='WINDOW',
+        )
         keymap_item = keymap.keymap_items.new(
+            OP_FillSelection.bl_idname,
+            type='RIGHTMOUSE',
+            value='PRESS',
+            ctrl=True,
+            shift=True,
+        )
+        addon_keymaps.append((keymap, keymap_item))
+
+        keymap_item = keymap.keymap_items.new(
+            OP_AddSelectSideRingLoops.bl_idname,
+            type='NUMPAD_PLUS',
+            value='PRESS',
+            alt=True,
+        )
+        addon_keymaps.append((keymap, keymap_item))
+        keymap_item = keymap.keymap_items.new(
+            OP_RemoveSelectSideRingLoops.bl_idname,
+            type='NUMPAD_MINUS',
+            value='PRESS',
+            alt=True,
+        )
+        addon_keymaps.append((keymap, keymap_item))
+
+        keymap_item = mesh_keymap.keymap_items.new(
             OP_Symmetrize.bl_idname,
             type='X',
             value='PRESS',
@@ -130,7 +165,7 @@ def register():
         )
         keymap_item.properties.flick = True
         keymap_item.properties.objmode = False
-        addon_keymaps.append((keymap, keymap_item))
+        addon_keymaps.append((mesh_keymap, keymap_item))
 
         for keymap_name in ("Object Mode", "Pose"):
             keymap = keyconfig.keymaps.new(
