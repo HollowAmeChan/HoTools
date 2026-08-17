@@ -173,17 +173,17 @@ class TransformEdgeConstrained(bpy.types.Operator):
     bl_description = "沿相邻拓扑边约束旋转或缩放，且不会超出原边段"
     bl_options = {'REGISTER', 'UNDO'}
 
-    objmode: BoolProperty(default=False)
-    edgeindex: IntProperty(default=-1)
-    faceindex: IntProperty(default=-1)
+    objmode: BoolProperty(default=False)# type: ignore
+    edgeindex: IntProperty(default=-1)# type: ignore
+    faceindex: IntProperty(default=-1)# type: ignore
 
-    transform_mode: EnumProperty(name='Transform Mode', items=transform_mode_items, default='ROTATE')
-    transform_axis: EnumProperty(name='Transform Axis', items=transform_axis_items, default='VIEW')
-    constrain_mode: EnumProperty(name='Constrain Mode', items=constrain_mode_items, default='DIRECT_PLANE_INTERSECTION')
-    end_align: BoolProperty(name="Align Ends to Face Edge", default=True)
-    draw_end_align: BoolProperty(name="Draw Align Ends Option", default=False)
-    face_align: BoolProperty(name="Face Align", default=False)
-    draw_face_align: BoolProperty(name="Draw Align Ends Option", default=False)
+    transform_mode: EnumProperty(name='Transform Mode', items=transform_mode_items, default='ROTATE')# type: ignore
+    transform_axis: EnumProperty(name='Transform Axis', items=transform_axis_items, default='VIEW')# type: ignore
+    constrain_mode: EnumProperty(name='Constrain Mode', items=constrain_mode_items, default='DIRECT_PLANE_INTERSECTION')# type: ignore
+    end_align: BoolProperty(name="Align Ends to Face Edge", default=True)# type: ignore
+    draw_end_align: BoolProperty(name="Draw Align Ends Option", default=False)# type: ignore
+    face_align: BoolProperty(name="Face Align", default=False)# type: ignore
+    draw_face_align: BoolProperty(name="Draw Align Ends Option", default=False)# type: ignore
     @classmethod
     def poll(cls, context):
         if context.mode == 'EDIT_MESH' and context.active_object:

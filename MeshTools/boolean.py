@@ -277,7 +277,7 @@ class OP_BooleanModifier(Operator):
     """使用 CGAL 精确布尔运算。"""
 
     bl_options = {'REGISTER', 'UNDO'}
-    remove_cutter: BoolProperty(default=False, name="删除非活动物体")
+    remove_cutter: BoolProperty(default=False, name="删除非活动物体")# type: ignore
     operation = 'DIFFERENCE'
     operation_label = "差集"
 
@@ -325,7 +325,7 @@ class OP_BooleanModifier(Operator):
 class OP_BooleanIntersection(OP_BooleanModifier):
     bl_idname = "ho.boolean_intersection"
     bl_options = {'REGISTER', 'UNDO'}
-    remove_cutter: BoolProperty(default=False, name="删除非活动物体")
+    remove_cutter: BoolProperty(default=False, name="删除非活动物体")# type: ignore
     bl_label = "交集"
     operation = 0
     operation_label = "布尔交集"
@@ -334,7 +334,7 @@ class OP_BooleanIntersection(OP_BooleanModifier):
 class OP_BooleanUnion(OP_BooleanModifier):
     bl_idname = "ho.boolean_union"
     bl_options = {'REGISTER', 'UNDO'}
-    remove_cutter: BoolProperty(default=False, name="删除非活动物体")
+    remove_cutter: BoolProperty(default=False, name="删除非活动物体")# type: ignore
     bl_label = "并集"
     operation = 1
     operation_label = "布尔并集"
@@ -343,7 +343,7 @@ class OP_BooleanUnion(OP_BooleanModifier):
 class OP_BooleanDifference(OP_BooleanModifier):
     bl_idname = "ho.boolean_difference"
     bl_options = {'REGISTER', 'UNDO'}
-    remove_cutter: BoolProperty(default=False, name="删除非活动物体")
+    remove_cutter: BoolProperty(default=False, name="删除非活动物体")# type: ignore
     bl_label = "差集"
     operation = 2
     operation_label = "布尔差集"

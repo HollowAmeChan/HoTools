@@ -79,26 +79,26 @@ class Align(bpy.types.Operator):
     bl_description = '按轴对齐对象的位置、旋转和缩放，或将对象放置到两目标之间'
     bl_options = {'REGISTER', 'UNDO'}
 
-    inbetween: BoolProperty(name="对齐到两者之间", default=False)
-    is_inbetween: BoolProperty(name="显示两者之间选项", default=True)
-    inbetween_flip: BoolProperty(name="翻转", default=False)
-    mode: EnumProperty(name='模式', items=obj_align_mode_items, default='FLOOR')
-    location: BoolProperty(name='对齐位置', default=True)
-    rotation: BoolProperty(name='对齐旋转', default=True)
-    scale: BoolProperty(name='对齐缩放', default=False)
-    loc_x: BoolProperty(name='X', default=True)
-    loc_y: BoolProperty(name='Y', default=True)
-    loc_z: BoolProperty(name='Z', default=True)
-    rot_x: BoolProperty(name='X', default=True)
-    rot_y: BoolProperty(name='Y', default=True)
-    rot_z: BoolProperty(name='Z', default=True)
-    sca_x: BoolProperty(name='X', default=True)
-    sca_y: BoolProperty(name='Y', default=True)
-    sca_z: BoolProperty(name='Z', default=True)
-    parent_to_bone: BoolProperty(name='父级到骨骼', default=True)
-    align_z_to_y: BoolProperty(name='Z 轴对齐 Y 轴', default=True)
-    roll: BoolProperty(name='滚转', default=False)
-    roll_amount: FloatProperty(name='滚转角度', default=90)
+    inbetween: BoolProperty(name="对齐到两者之间", default=False) # type: ignore
+    is_inbetween: BoolProperty(name="显示两者之间选项", default=True)# type: ignore
+    inbetween_flip: BoolProperty(name="翻转", default=False)# type: ignore
+    mode: EnumProperty(name='模式', items=obj_align_mode_items, default='FLOOR')# type: ignore
+    location: BoolProperty(name='对齐位置', default=True)# type: ignore
+    rotation: BoolProperty(name='对齐旋转', default=True)# type: ignore
+    scale: BoolProperty(name='对齐缩放', default=False)# type: ignore
+    loc_x: BoolProperty(name='X', default=True)# type: ignore
+    loc_y: BoolProperty(name='Y', default=True)# type: ignore
+    loc_z: BoolProperty(name='Z', default=True)# type: ignore
+    rot_x: BoolProperty(name='X', default=True)# type: ignore
+    rot_y: BoolProperty(name='Y', default=True)# type: ignore
+    rot_z: BoolProperty(name='Z', default=True)# type: ignore
+    sca_x: BoolProperty(name='X', default=True)# type: ignore
+    sca_y: BoolProperty(name='Y', default=True)# type: ignore
+    sca_z: BoolProperty(name='Z', default=True)# type: ignore
+    parent_to_bone: BoolProperty(name='父级到骨骼', default=True)# type: ignore
+    align_z_to_y: BoolProperty(name='Z 轴对齐 Y 轴', default=True)# type: ignore
+    roll: BoolProperty(name='滚转', default=False)# type: ignore
+    roll_amount: FloatProperty(name='滚转角度', default=90)# type: ignore
     def draw(self, context):
         layout = self.layout
 
@@ -386,7 +386,7 @@ class AlignRelative(bpy.types.Operator):
     bl_description = "把所选对象的相对布局复制或实例化到新的目标对象"
     bl_options = {'REGISTER', 'UNDO'}
 
-    instance: BoolProperty(name="Instance", default=False)
+    instance: BoolProperty(name="Instance", default=False)# type: ignore
     @classmethod
     def poll(cls, context):
         if context.mode == 'OBJECT':
