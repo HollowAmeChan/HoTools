@@ -23,7 +23,7 @@ def ureg_props():
 
 
 class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
-    """Mesh tools shown in the edit-mesh context menu."""
+    """编辑模式右键菜单"""
 
     bl_idname = "VIEW3D_MT_edit_mesh_hotools"
     bl_label = "Hotools Mesh"
@@ -59,17 +59,6 @@ def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
     self.layout.menu(VIEW3D_MT_edit_mesh_hotools.bl_idname)
 
 
-def draw_in_VIEW3D_MT_object_context_menu(self, context):
-    layout = self.layout
-    layout.separator()
-    layout.operator(Align.bl_idname, icon='ORIENTATION_GLOBAL')
-    layout.operator(AlignRelative.bl_idname, icon='DUPLICATE')
-
-
-def draw_in_VIEW3D_MT_pose_context_menu(self, context):
-    self.layout.operator(Align.bl_idname, icon='ORIENTATION_GLOBAL')
-
-
 cls = [
     Align,
     AlignRelative,
@@ -96,13 +85,6 @@ def register():
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
     )
-    bpy.types.VIEW3D_MT_object_context_menu.append(
-        draw_in_VIEW3D_MT_object_context_menu
-    )
-    bpy.types.VIEW3D_MT_pose_context_menu.append(
-        draw_in_VIEW3D_MT_pose_context_menu
-    )
-
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if keyconfig:
         keymap = keyconfig.keymaps.new(
@@ -143,12 +125,6 @@ def unregister():
 
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
-    )
-    bpy.types.VIEW3D_MT_object_context_menu.remove(
-        draw_in_VIEW3D_MT_object_context_menu
-    )
-    bpy.types.VIEW3D_MT_pose_context_menu.remove(
-        draw_in_VIEW3D_MT_pose_context_menu
     )
     for i in reversed(cls):
         bpy.utils.unregister_class(i)
