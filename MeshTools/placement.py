@@ -2,7 +2,6 @@ from dataclasses import dataclass
 import math
 
 import bmesh
-import blf
 import bpy
 import gpu
 from bpy.props import BoolProperty, FloatProperty, FloatVectorProperty
@@ -16,6 +15,7 @@ from .viewport_draw import (
     foreground_uniform_color_shader,
     restore_3d_state,
 )
+from Utils.hud import draw_mouse_hud
 
 
 def polygon_area_vector(points):
@@ -782,66 +782,23 @@ class OP_AutoPlaceObjectBottom(Operator):
         restore_3d_state()
 
     def draw_text(self):
-        font_id = 0
-        blf.size(font_id, 16)
-        x = self.mouse.x + 20
-        y = self.mouse.y + 20
-
-        blf.enable(font_id, blf.SHADOW)
-        blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
-        blf.shadow_offset(font_id, 1, -1)
-
-        def draw_key_value(key_text, value_text, offset_y):
-            blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-            blf.position(font_id, x, y + offset_y, 0)
-            blf.draw(font_id, key_text)
-            key_width, _height = blf.dimensions(font_id, key_text)
-            blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-            blf.position(font_id, x + key_width, y + offset_y, 0)
-            blf.draw(font_id, value_text)
-
-        draw_key_value(
-            "滚轮:",
-            f"共面角度 {math.degrees(self.coplanar_angle):.1f}°",
-            0,
-        )
-        draw_key_value(
-            "M键:",
-            f"合并近似共面 {'开' if self.merge_coplanar else '关'}",
-            22,
-        )
-        draw_key_value(
-            "E键:",
-            "求值后网格" if self.use_evaluated_mesh else "基础网格",
-            44,
-        )
-        draw_key_value(
-            "O键:",
-            f"保持原点变换 {'开' if self.keep_origin_transform else '关'}",
-            66,
-        )
-        draw_key_value(
-            "R键:",
-            "重建凸包",
-            88,
-        )
-        draw_key_value(
-            "候选面:",
-            str(len(self.candidates)),
-            110,
-        )
+        lines = [
+            ("滚轮:", f"共面角度 {math.degrees(self.coplanar_angle):.1f}°"),
+            ("M键:", f"合并近似共面 {'开' if self.merge_coplanar else '关'}"),
+            ("E键:", "求值后网格" if self.use_evaluated_mesh else "基础网格"),
+            ("O键:", f"保持原点变换 {'开' if self.keep_origin_transform else '关'}"),
+            ("R键:", "重建凸包"),
+            ("候选面:", str(len(self.candidates))),
+        ]
         if getattr(self, "show_target_axis_hud", False):
             target_axis = "-"
             if 0 <= self.hovered_index < len(self.candidates):
                 target_axis = world_axis_label(nearest_world_axis(
                     self.candidates[self.hovered_index].normal
                 ))
-            draw_key_value(
-                "目标轴:",
-                target_axis,
-                132,
-            )
-        blf.disable(font_id, blf.SHADOW)
+            lines.append(("目标轴:", target_axis))
+
+        draw_mouse_hud(self.mouse, lines)
 
     def finish(self, context):
         handle_3d = getattr(self, "_draw_handle", None)

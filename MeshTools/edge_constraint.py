@@ -1,6 +1,5 @@
 import bpy
 import bmesh
-import blf
 from bpy.props import EnumProperty, BoolProperty, IntProperty
 from bpy_extras.view3d_utils import (
     location_3d_to_region_2d,
@@ -18,6 +17,7 @@ from Utils.viewport_draw import (
     draw_points,
     draw_vector,
 )
+from Utils.hud import draw_mouse_hud_rows
 
 
 ctrl = {'LEFT_CTRL', 'RIGHT_CTRL'}
@@ -194,24 +194,6 @@ class TransformEdgeConstrained(bpy.types.Operator):
         return False
 
     def draw_HUD(self):
-        font_id = 0
-        blf.size(font_id, 16)
-        blf.enable(font_id, blf.SHADOW)
-        blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
-        blf.shadow_offset(font_id, 1, -1)
-
-        x = self.mousepos.x + 20
-        y = self.mousepos.y + 20
-
-        def draw_key_value(key_text, value_text, offset_y, value_color=(1.0, 1.0, 1.0, 1.0)):
-            blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-            blf.position(font_id, x, y + offset_y, 0)
-            blf.draw(font_id, key_text)
-            key_width, _ = blf.dimensions(font_id, key_text)
-            blf.color(font_id, *value_color)
-            blf.position(font_id, x + key_width, y + offset_y, 0)
-            blf.draw(font_id, value_text)
-
         if self.is_zero_scaling:
             state = "归零缩放"
         elif self.transform_mode == 'SCALE':
@@ -229,46 +211,46 @@ class TransformEdgeConstrained(bpy.types.Operator):
             'MOUSEDIR_PLANE_INTERSECTION': "鼠标方向平面相交",
         }
         state_color = (1.0, 0.85, 0.2, 1.0) if self.is_snapping else (0.35, 1.0, 0.35, 1.0)
-        draw_key_value("状态: ", state, 0, state_color)
+        rows = [(0, "状态: ", state, state_color)]
         offset = 22
 
         if self.transform_mode == 'ROTATE' and not self.is_zero_scaling:
-            draw_key_value("约束: ", mode_names[self.constrain_mode], offset)
+            rows.append((offset, "约束: ", mode_names[self.constrain_mode]))
             offset += 22
 
         axis = f"本地 {self.transform_axis}" if self.is_axis_locking else "视图"
-        draw_key_value("轴向: ", axis, offset)
+        rows.append((offset, "轴向: ", axis))
         offset += 26
-        draw_key_value("左键/空格: ", "确认", offset)
+        rows.append((offset, "左键/空格: ", "确认"))
         offset += 22
-        draw_key_value("右键/Esc: ", "取消", offset)
+        rows.append((offset, "右键/Esc: ", "取消"))
         offset += 22
-        draw_key_value("R / S: ", "旋转 / 缩放", offset)
+        rows.append((offset, "R / S: ", "旋转 / 缩放"))
         offset += 22
-        draw_key_value("Shift: ", "归零缩放", offset)
+        rows.append((offset, "Shift: ", "归零缩放"))
         offset += 22
-        draw_key_value("X/Y/Z / C: ", "锁定轴向 / 清除", offset)
+        rows.append((offset, "X/Y/Z / C: ", "锁定轴向 / 清除"))
         offset += 22
 
         if self.transform_mode == 'ROTATE' and not self.is_zero_scaling:
-            draw_key_value("Ctrl: ", "5° 角度吸附", offset)
+            rows.append((offset, "Ctrl: ", "5° 角度吸附"))
             offset += 22
-            draw_key_value("滚轮 / 1/2: ", "切换约束方式", offset)
+            rows.append((offset, "滚轮 / 1/2: ", "切换约束方式"))
             offset += 22
         elif not self.is_axis_locking and not self.is_zero_scaling:
-            draw_key_value("Alt: ", "锁定缩放方向", offset)
+            rows.append((offset, "Alt: ", "锁定缩放方向"))
             offset += 22
 
         if self.draw_end_align:
-            draw_key_value("E: ", f"端点对齐 {'面边' if self.end_align else '横向'}", offset)
+            rows.append((offset, "E: ", f"端点对齐 {'面边' if self.end_align else '横向'}"))
             offset += 22
         if self.draw_face_align:
-            draw_key_value("F: ", f"面对齐 {'开' if self.face_align else '关'}", offset)
+            rows.append((offset, "F: ", f"面对齐 {'开' if self.face_align else '关'}"))
             offset += 22
         if len(self.data) > 1:
-            draw_key_value("Q: ", f"独立原点 {'开' if self.individual_origins else '关'}", offset)
+            rows.append((offset, "Q: ", f"独立原点 {'开' if self.individual_origins else '关'}"))
 
-        blf.disable(font_id, blf.SHADOW)
+        draw_mouse_hud_rows((self.mousepos.x, self.mousepos.y), rows)
 
     def draw_VIEW3D(self):
         modal = True

@@ -1,4 +1,3 @@
-import blf
 import bpy
 import gpu
 import numpy as np
@@ -9,6 +8,7 @@ from bpy_extras import view3d_utils
 
 from . import boolean as boolean_tools
 from .viewport_draw import draw_polygons, draw_segments, restore_3d_state
+from Utils.hud import begin_hud, draw_hud_lines, end_hud, measure_hud_lines
 
 
 class OP_VisualBooleanCut(Operator):
@@ -323,12 +323,6 @@ class OP_VisualBooleanCut(Operator):
         restore_3d_state()
 
     def draw_text(self):
-        font_id = 0
-        blf.size(font_id, 16)
-        blf.enable(font_id, blf.SHADOW)
-        blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.65)
-        blf.shadow_offset(font_id, 1, -1)
-
         if self.closed:
             status = "已闭合，可按 Enter 切割"
         elif self.drag_index >= 0:
@@ -351,11 +345,8 @@ class OP_VisualBooleanCut(Operator):
 
         line_height = 22
         padding = 20
-        line_widths = [
-            blf.dimensions(font_id, key + value)[0]
-            for key, value in lines
-        ]
-        hud_width = max(line_widths, default=0.0)
+        font_id = begin_hud(shadow_alpha=0.65)
+        hud_width = measure_hud_lines(font_id, lines)
         hud_height = (len(lines) - 1) * line_height + 18
         mouse_x = self.hover_screen.x if self.hover_screen else 0.0
         mouse_y = self.hover_screen.y if self.hover_screen else 0.0
@@ -377,15 +368,16 @@ class OP_VisualBooleanCut(Operator):
         else:
             y = max(hud_height + 8.0, min(y_above, region_height - 8.0))
 
-        for index, (key, value) in enumerate(lines):
-            blf.color(font_id, 1.0, 0.82, 0.18, 1.0)
-            blf.position(font_id, x, y - index * 22, 0)
-            blf.draw(font_id, key)
-            key_width, _ = blf.dimensions(font_id, key)
-            blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-            blf.position(font_id, x + key_width, y - index * 22, 0)
-            blf.draw(font_id, value)
-        blf.disable(font_id, blf.SHADOW)
+        draw_hud_lines(
+            font_id,
+            x,
+            y,
+            lines,
+            line_height=line_height,
+            direction=-1,
+            key_color=(1.0, 0.82, 0.18, 1.0),
+        )
+        end_hud(font_id)
 
     def _apply_cut(self, context):
         active = context.object

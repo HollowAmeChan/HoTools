@@ -2,7 +2,6 @@ from collections import defaultdict
 import math
 
 import bmesh
-import blf
 import bpy
 import gpu
 import numpy as np
@@ -12,6 +11,7 @@ from bpy_extras import view3d_utils
 from mathutils import Vector
 
 from .viewport_draw import draw_polygons, draw_segments, restore_3d_state
+from Utils.hud import draw_mouse_hud_rows
 
 
 class OP_ModalFillMeshHole(Operator):
@@ -1777,12 +1777,6 @@ class OP_ModalFillMeshHole(Operator):
         restore_3d_state()
 
     def draw_text(self):
-        font_id = 0
-        blf.size(font_id, 16)
-
-        x = self.mouse_x + 20
-        y = self.mouse_y + 20
-
         active_hole = self._active_hole()
         queued_count = len(self.preview_hole_signatures)
 
@@ -1818,38 +1812,24 @@ class OP_ModalFillMeshHole(Operator):
             status_text = "封闭失败"
             status_color = (1.0, 0.28, 0.20, 1.0)
 
-        # 跟骨链工具保持同一套 HUD：阴影、黄色按键、白色说明。
-        blf.enable(font_id, blf.SHADOW)
-        blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
-        blf.shadow_offset(font_id, 1, -1)
-
-        def draw_key_value(key_text, value_text, offset_y, value_color=(1.0, 1.0, 1.0, 1.0)):
-            blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-            blf.position(font_id, x, y + offset_y, 0)
-            blf.draw(font_id, key_text)
-            key_width, _ = blf.dimensions(font_id, key_text)
-
-            blf.color(font_id, *value_color)
-            blf.position(font_id, x + key_width, y + offset_y, 0)
-            blf.draw(font_id, value_text)
-
         mode_names = {
             'SMOOTH_PATCH': "Smooth Patch",
             'QUAD_PATCH': "Quad Grid",
             'TRIANGLE': "Triangle Fill",
         }
 
-        draw_key_value("状态:", status_text, 0, status_color)
-        draw_key_value("左键:", "加入/取消预览", 24)
-        draw_key_value("右键:", "取消/退出", 46)
-        draw_key_value("Enter:", "提交", 68)
-        draw_key_value("A键:", "全部预览", 94)
-        draw_key_value("F键:", mode_names.get(self.fill_mode, self.fill_mode), 118)
-        draw_key_value("Shift+滚轮:", f"倍率 {self.patch_edge_factor:.2f}", 140)
-        draw_key_value("Ctrl+Shift滚轮:", f"吸附 {self.patch_surface_blend:.2f}", 162)
-        draw_key_value("R键:", "刷新", 184)
-
-        blf.disable(font_id, blf.SHADOW)
+        rows = [
+            (0, "状态:", status_text, status_color),
+            (24, "左键:", "加入/取消预览"),
+            (46, "右键:", "取消/退出"),
+            (68, "Enter:", "提交"),
+            (94, "A键:", "全部预览"),
+            (118, "F键:", mode_names.get(self.fill_mode, self.fill_mode)),
+            (140, "Shift+滚轮:", f"倍率 {self.patch_edge_factor:.2f}"),
+            (162, "Ctrl+Shift滚轮:", f"吸附 {self.patch_surface_blend:.2f}"),
+            (184, "R键:", "刷新"),
+        ]
+        draw_mouse_hud_rows((self.mouse_x, self.mouse_y), rows)
 
     def modal(self, context, event):
         if event.type in {'ESC', 'RIGHTMOUSE'}:

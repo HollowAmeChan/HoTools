@@ -1,11 +1,11 @@
 import bmesh
-import blf
 import bpy
 import gpu
 from bpy.props import BoolProperty, EnumProperty, IntProperty
 from bpy.types import Operator
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
+from Utils.hud import draw_mouse_hud
 
 
 class OP_CreatBoneChainByMeshFlow(Operator):
@@ -461,55 +461,13 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         gpu.state.blend_set('NONE')
 
     def draw_text(self):
-        font_id = 0
-        blf.size(font_id, 16)
-
-        x = self.mouse_x + 20
-        y = self.mouse_y + 20
-
-        # ===== 开启阴影 =====
-        blf.enable(font_id, blf.SHADOW)
-        blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
-        blf.shadow_offset(font_id, 1, -1)
-
-        key_text = "滚轮:"
-        blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-        blf.position(font_id, x, y, 0)
-        blf.draw(font_id, key_text)
-        key_width, _ = blf.dimensions(font_id, key_text)
-        blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-        blf.position(font_id, x + key_width, y, 0)
-        blf.draw(font_id, f"分段: {self.num_segments}")
-
-        key_text = "F键:"
-        blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-        blf.position(font_id, x, y + 22, 0)
-        blf.draw(font_id, key_text)
-        key_width, _ = blf.dimensions(font_id, key_text)
-        blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-        blf.position(font_id, x + key_width, y + 22, 0)
-        blf.draw(font_id, f"方向模式: {self.direction_mode}")
-
-        key_text = "R键:"
-        blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-        blf.position(font_id, x, y + 44, 0)
-        blf.draw(font_id, key_text)
-        key_width, _ = blf.dimensions(font_id, key_text)
-        blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-        blf.position(font_id, x + key_width, y + 44, 0)
-        blf.draw(font_id, f"联动重命名: {'开' if self.auto_rename else '关'}")
-
-        key_text = "N键:"
-        blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-        blf.position(font_id, x, y + 66, 0)
-        blf.draw(font_id, key_text)
-        key_width, _ = blf.dimensions(font_id, key_text)
-        blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-        blf.position(font_id, x + key_width, y + 66, 0)
-        blf.draw(
-            font_id,
-            f"扭转对齐法线: {'开' if self.align_roll_to_normal else '关'}"
-        )
+        lines = [
+            ("滚轮:", f"分段: {self.num_segments}"),
+            ("F键:", f"方向模式: {self.direction_mode}"),
+            ("R键:", f"联动重命名: {'开' if self.auto_rename else '关'}"),
+            ("N键:", f"扭转对齐法线: {'开' if self.align_roll_to_normal else '关'}"),
+        ]
+        draw_mouse_hud((self.mouse_x, self.mouse_y), lines)
 
     def modal(self, context, event):
 

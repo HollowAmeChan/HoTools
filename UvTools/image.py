@@ -8,6 +8,7 @@ import numpy as np
 from bpy.props import BoolProperty, FloatVectorProperty, IntProperty
 from bpy.types import Context, Operator, UILayout
 from gpu_extras.batch import batch_for_shader
+from Utils.hud import begin_hud, draw_hud_rows, end_hud
 
 
 DEFAULT_SELECTION_WIDTH = 2048
@@ -1206,83 +1207,77 @@ def _update_selection_show(self, context):
     SelectionOverlay.sync_visibility(context)
 
 
-def _draw_hud_line(font_id, x, y, key_text, value_text, value_color=(1.0, 1.0, 1.0, 1.0)):
-    blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-    blf.position(font_id, x, y, 0)
-    blf.draw(font_id, key_text)
-    key_width, _ = blf.dimensions(font_id, key_text)
-
-    blf.color(font_id, *value_color)
-    blf.position(font_id, x + key_width, y, 0)
-    blf.draw(font_id, value_text)
-
-
 def _draw_hud(operator):
-    font_id = 0
-    blf.size(font_id, 16)
-
     x, y = operator.mouse_region_xy
     x += 20
     y += 20
-
-    blf.enable(font_id, blf.SHADOW)
-    blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
-    blf.shadow_offset(font_id, 1, -1)
+    rows = []
 
     if operator.edit_mode == "BRUSH":
         if operator.brush_active:
             mode_label = "清空" if operator.brush_mode == "SUB" else "添加"
-            _draw_hud_line(font_id, x, y + 88, "状态:", "涂抹中", (0.35, 1.0, 0.35, 1.0))
-            _draw_hud_line(font_id, x, y + 66, "模式:", mode_label)
+            rows.extend([
+                (88, "状态:", "涂抹中", (0.35, 1.0, 0.35, 1.0)),
+                (66, "模式:", mode_label),
+            ])
         else:
-            _draw_hud_line(font_id, x, y + 88, "状态:", "画笔待命", (1.0, 0.65, 0.18, 1.0))
-            _draw_hud_line(font_id, x, y + 66, "左键/Shift+左键:", "添加 / 清空")
-
-        _draw_hud_line(font_id, x, y + 44, "大小:", str(int(operator.brush_radius)))
-        _draw_hud_line(font_id, x, y + 22, "Shift+滚轮:", "调整大小")
-        _draw_hud_line(font_id, x, y, "E:", "切到套索")
+            rows.extend([
+                (88, "状态:", "画笔待命", (1.0, 0.65, 0.18, 1.0)),
+                (66, "左键/Shift+左键:", "添加 / 清空"),
+            ])
+        rows.extend([
+            (44, "大小:", str(int(operator.brush_radius))),
+            (22, "Shift+滚轮:", "调整大小"),
+            (0, "E:", "切到套索"),
+        ])
     elif operator.edit_mode == "LASSO":
         if operator.lasso_active:
             mode_label = MODE_LABELS.get(operator.lasso_mode, operator.lasso_mode)
-            _draw_hud_line(font_id, x, y + 88, "状态:", "套索中", (0.35, 1.0, 0.35, 1.0))
-            _draw_hud_line(font_id, x, y + 66, "模式:", mode_label)
+            rows.extend([
+                (88, "状态:", "套索中", (0.35, 1.0, 0.35, 1.0)),
+                (66, "模式:", mode_label),
+            ])
         else:
-            _draw_hud_line(font_id, x, y + 88, "状态:", "套索待命", (1.0, 0.65, 0.18, 1.0))
-            _draw_hud_line(font_id, x, y + 66, "左键:", "拖拽闭合区域")
-
-        _draw_hud_line(font_id, x, y + 44, "Shift/Alt:", "加选 / 减选")
-        _draw_hud_line(font_id, x, y + 22, "Ctrl+I:", "反选")
-        _draw_hud_line(font_id, x, y, "E:", "切到框选")
+            rows.extend([
+                (88, "状态:", "套索待命", (1.0, 0.65, 0.18, 1.0)),
+                (66, "左键:", "拖拽闭合区域"),
+            ])
+        rows.extend([
+            (44, "Shift/Alt:", "加选 / 减选"),
+            (22, "Ctrl+I:", "反选"),
+            (0, "E:", "切到框选"),
+        ])
     else:
         if operator.waiting_start:
-            _draw_hud_line(font_id, x, y + 88, "状态:", "等待框选", (1.0, 0.65, 0.18, 1.0))
-            _draw_hud_line(font_id, x, y + 66, "左键:", "拖拽创建区域")
+            rows.extend([
+                (88, "状态:", "等待框选", (1.0, 0.65, 0.18, 1.0)),
+                (66, "左键:", "拖拽创建区域"),
+            ])
         else:
             mode_label = MODE_LABELS.get(operator.select_mode, operator.select_mode)
-            _draw_hud_line(font_id, x, y + 88, "状态:", "拖拽中", (0.35, 1.0, 0.35, 1.0))
-            _draw_hud_line(font_id, x, y + 66, "模式:", mode_label)
+            rows.extend([
+                (88, "状态:", "拖拽中", (0.35, 1.0, 0.35, 1.0)),
+                (66, "模式:", mode_label),
+            ])
+        rows.extend([
+            (44, "Shift/Alt:", "加选 / 减选"),
+            (22, "Ctrl+I:", "反选"),
+            (0, "E:", "切到画笔"),
+        ])
 
-        _draw_hud_line(font_id, x, y + 44, "Shift/Alt:", "加选 / 减选")
-        _draw_hud_line(font_id, x, y + 22, "Ctrl+I:", "反选")
-        _draw_hud_line(font_id, x, y, "E:", "切到画笔")
-
-    _draw_hud_line(font_id, x, y - 22, "X:", "清空遮罩")
-    _draw_hud_line(font_id, x, y - 44, "Esc/右键:", "退出")
-
-    blf.disable(font_id, blf.SHADOW)
+    rows.extend([
+        (-22, "X:", "清空遮罩"),
+        (-44, "Esc/右键:", "退出"),
+    ])
+    font_id = begin_hud()
+    draw_hud_rows(font_id, x, y, rows)
+    end_hud(font_id)
 
 
 def _draw_transform_hud(operator):
-    font_id = 0
-    blf.size(font_id, 16)
-
     x, y = operator.mouse_region_xy
     x += 20
     y += 20
-
-    blf.enable(font_id, blf.SHADOW)
-    blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
-    blf.shadow_offset(font_id, 1, -1)
 
     if operator.interaction == "MOVE":
         state = "移动中"
@@ -1293,15 +1288,18 @@ def _draw_transform_hud(operator):
     else:
         state = "等待变换"
 
-    _draw_hud_line(font_id, x, y + 110, "状态:", state, (1.0, 0.65, 0.18, 1.0))
-    _draw_hud_line(font_id, x, y + 88, "框内:", "移动")
-    _draw_hud_line(font_id, x, y + 66, "角点/边线:", "缩放 / 旋转")
-    _draw_hud_line(font_id, x, y + 44, "Shift/Alt:", "等比 / 中心")
-    _draw_hud_line(font_id, x, y + 22, "Shift旋转:", "22.5°吸附")
-    _draw_hud_line(font_id, x, y, "Enter:", "应用")
-    _draw_hud_line(font_id, x, y - 22, "Esc/右键:", "取消")
-
-    blf.disable(font_id, blf.SHADOW)
+    rows = [
+        (110, "状态:", state, (1.0, 0.65, 0.18, 1.0)),
+        (88, "框内:", "移动"),
+        (66, "角点/边线:", "缩放 / 旋转"),
+        (44, "Shift/Alt:", "等比 / 中心"),
+        (22, "Shift旋转:", "22.5°吸附"),
+        (0, "Enter:", "应用"),
+        (-22, "Esc/右键:", "取消"),
+    ]
+    font_id = begin_hud()
+    draw_hud_rows(font_id, x, y, rows)
+    end_hud(font_id)
 
 
 class OP_UVTools_ImageBoxSelect(Operator):
