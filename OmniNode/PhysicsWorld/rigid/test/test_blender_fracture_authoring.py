@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Blender 5.2 explicit rigid-fracture authoring acceptance."""
+"""Blender 4.5/5.2 explicit rigid-fracture authoring acceptance."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ def main():
         bpy.ops.object.select_all(action="SELECT")
         bpy.ops.object.delete(use_global=False)
         source_mesh = bpy.data.meshes.new("FractureSourceMesh")
-        _set_boxes(source_mesh, ((-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)))
+        _set_boxes(source_mesh, ((0.0, 0.0, 0.0),))
         source = bpy.data.objects.new("FractureSource", source_mesh)
         bpy.context.scene.collection.objects.link(source)
         bpy.context.view_layer.objects.active = source
@@ -105,6 +105,7 @@ def main():
         props.enabled = True
         modifier = fracture.ensure_default_fracture_modifier(source)
         modifier.show_viewport = False
+        _set_boxes(source_mesh, ((-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)))
         source.hotools_rigid_body.mass = 6.0
         source.hotools_rigid_body.friction = 0.35
         source.hotools_rigid_body.body_type = "DYNAMIC"

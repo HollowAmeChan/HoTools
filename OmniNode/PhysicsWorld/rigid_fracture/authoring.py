@@ -6,14 +6,17 @@ import hashlib
 import json
 import math
 import random
+import struct
 import uuid
 
+import bmesh
 import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix, Vector
 
 from ..rigid.schema import RIGID_BODY_RNA_FIELDS
 from .geometry_nodes import (
+    FRACTURE_GENERATOR_VERSION,
     FRACTURE_METHOD_VORONOI_UNIFORM,
     FRACTURE_PIECE_ID_ATTRIBUTE,
     is_current_fracture_group,
@@ -182,6 +185,18 @@ def _source_local_bounds(source) -> tuple[Vector, Vector]:
     return minimum, maximum
 
 
+def _source_local_signed_volume(source) -> float:
+    mesh = getattr(source, "data", None)
+    if mesh is None:
+        return 0.0
+    mesh.calc_loop_triangles()
+    signed = 0.0
+    for triangle in mesh.loop_triangles:
+        a, b, c = (mesh.vertices[index].co for index in triangle.vertices)
+        signed += a.dot(b.cross(c)) / 6.0
+    return float(signed)
+
+
 def _uniform_voronoi_seeds(
     minimum: Vector,
     maximum: Vector,
@@ -314,15 +329,98 @@ def _clip_convex_polygons(
     return clipped
 
 
-def _build_voronoi_cutter_geometry(
+def _convex_cell_from_points(points) -> tuple[tuple, tuple]:
+    mesh = bmesh.new()
+    try:
+        vertices = [mesh.verts.new(point) for point in points]
+        bmesh.ops.convex_hull(mesh, input=vertices, use_existing_faces=False)
+        if not mesh.faces:
+            raise FractureAssetError("Voronoi 单元凸包没有生成有效面")
+        bmesh.ops.recalc_face_normals(mesh, faces=tuple(mesh.faces))
+        mesh.verts.ensure_lookup_table()
+        mesh.verts.index_update()
+        output_vertices = tuple(
+            tuple(float(value) for value in vertex.co)
+            for vertex in mesh.verts
+        )
+        output_faces = tuple(
+            tuple(int(vertex.index) for vertex in face.verts)
+            for face in mesh.faces
+        )
+        return output_vertices, output_faces
+    finally:
+        mesh.free()
+
+
+def _source_convex_clip_planes(source) -> tuple[tuple[Vector, Vector], ...]:
+    mesh = bmesh.new()
+    try:
+        vertices = [mesh.verts.new(vertex.co) for vertex in source.data.vertices]
+        bmesh.ops.convex_hull(mesh, input=vertices, use_existing_faces=False)
+        if not mesh.faces:
+            raise FractureAssetError("本体凸包没有生成有效面")
+        bmesh.ops.recalc_face_normals(mesh, faces=tuple(mesh.faces))
+        hull_volume = abs(float(mesh.calc_volume(signed=True)))
+        source_volume = abs(_source_local_signed_volume(source))
+        scale = max(hull_volume, source_volume, 1.0)
+        if source_volume <= scale * 1.0e-9:
+            raise FractureAssetError("本体必须是有体积的封闭 Mesh")
+        if abs(hull_volume - source_volume) > scale * 1.0e-5:
+            raise FractureAssetError(
+                "当前均匀 Voronoi 预览只支持闭合凸体；本体存在凹面，不能用凸包替代"
+            )
+        source_points = tuple(vertex.co.copy() for vertex in source.data.vertices)
+        normal_clusters: list[list[Vector]] = []
+        for face in mesh.faces:
+            normal = face.normal.normalized()
+            point = face.calc_center_median()
+            distances = tuple((vertex - point).dot(normal) for vertex in source_points)
+            if max(distances) > -min(distances):
+                normal.negate()
+            cluster = next(
+                (
+                    item for item in normal_clusters
+                    if normal.dot(item[0]) >= 0.999999
+                ),
+                None,
+            )
+            if cluster is None:
+                normal_clusters.append([normal.copy()])
+            else:
+                cluster.append(normal.copy())
+
+        planes = []
+        for cluster in normal_clusters:
+            normal = sum(cluster, Vector()).normalized()
+            distance = max(normal.dot(point) for point in source_points)
+            planes.append((normal * distance, normal))
+        return tuple(planes)
+    finally:
+        mesh.free()
+
+
+def _combine_cells(cells) -> tuple[list[tuple], list[tuple]]:
+    vertices = []
+    faces = []
+    for cell_vertices, cell_faces in cells:
+        offset = len(vertices)
+        vertices.extend(cell_vertices)
+        faces.extend(
+            tuple(offset + int(vertex_index) for vertex_index in face)
+            for face in cell_faces
+        )
+    return vertices, faces
+
+
+def _build_voronoi_cells(
     source,
     *,
     density: int,
     seed: int,
     randomness: float,
-    gap: float,
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]], tuple[int, int, int]]:
+) -> tuple[list[tuple[tuple, tuple]], tuple[int, int, int]]:
     minimum, maximum = _source_local_bounds(source)
+    source_planes = _source_convex_clip_planes(source)
     seeds, counts, spacing = _uniform_voronoi_seeds(
         minimum,
         maximum,
@@ -333,14 +431,11 @@ def _build_voronoi_cutter_geometry(
     longest = max(float(value) for value in maximum - minimum)
     tolerance = max(longest * 1.0e-8, 1.0e-9)
     positive_spacing = [float(value) for value in spacing if float(value) > tolerance]
-    average_cell_size = sum(positive_spacing) / len(positive_spacing)
-    world_gap = max(0.0, min(float(gap), 0.25)) * average_cell_size
     margin = max(positive_spacing) * 1.25
     start_minimum = minimum - Vector((margin, margin, margin))
     start_maximum = maximum + Vector((margin, margin, margin))
 
-    vertices: list[tuple[float, float, float]] = []
-    faces: list[tuple[int, ...]] = []
+    cells = []
     for index, center in enumerate(seeds):
         polygons = _box_polygons(start_minimum, start_maximum)
         for other_index, other in enumerate(seeds):
@@ -351,7 +446,7 @@ def _build_voronoi_cutter_geometry(
             if distance <= tolerance:
                 continue
             normal = delta / distance
-            plane_point = (center + other) * 0.5 - normal * (world_gap * 0.5)
+            plane_point = (center + other) * 0.5
             polygons = _clip_convex_polygons(
                 polygons,
                 plane_point=plane_point,
@@ -360,33 +455,52 @@ def _build_voronoi_cutter_geometry(
             )
             if not polygons:
                 break
+        for plane_point, plane_normal in source_planes:
+            if not polygons:
+                break
+            polygons = _clip_convex_polygons(
+                polygons,
+                plane_point=plane_point,
+                plane_normal=plane_normal,
+                tolerance=tolerance,
+            )
         if not polygons:
             continue
 
         local_vertices = []
         local_lookup = {}
-        local_faces = []
         quantization = 1.0 / tolerance
         for polygon in polygons:
-            face = []
             for point in polygon:
                 key = tuple(int(round(float(value) * quantization)) for value in point)
-                vertex_index = local_lookup.get(key)
-                if vertex_index is None:
-                    vertex_index = len(local_vertices)
-                    local_lookup[key] = vertex_index
+                if key not in local_lookup:
+                    local_lookup[key] = len(local_vertices)
                     local_vertices.append(tuple(float(value) for value in point))
-                face.append(vertex_index)
-            if len(set(face)) >= 3:
-                local_faces.append(tuple(face))
-        if not local_faces:
+        if len(local_vertices) < 4:
             continue
-        offset = len(vertices)
-        vertices.extend(local_vertices)
-        faces.extend(tuple(offset + vertex_index for vertex_index in face) for face in local_faces)
-    if not faces:
+        for plane_index, (plane_point, plane_normal) in enumerate(source_planes):
+            violation = max(
+                (Vector(point) - plane_point).dot(plane_normal)
+                for point in local_vertices
+            )
+            if violation > tolerance * 16.0:
+                raise FractureAssetError(
+                    f"Voronoi 单元 {index} 裁剪违反本体平面 {plane_index}: {violation:.8g}"
+                )
+        cell = _convex_cell_from_points(local_vertices)
+        for plane_index, (plane_point, plane_normal) in enumerate(source_planes):
+            violation = max(
+                (Vector(point) - plane_point).dot(plane_normal)
+                for point in cell[0]
+            )
+            if violation > tolerance * 16.0:
+                raise FractureAssetError(
+                    f"Voronoi 单元 {index} 凸包违反本体平面 {plane_index}: {violation:.8g}"
+                )
+        cells.append(cell)
+    if not cells:
         raise FractureAssetError("Voronoi 切割器没有生成有效单元")
-    return vertices, faces, counts
+    return cells, counts
 
 
 def _helper_collection(scene=None):
@@ -420,7 +534,17 @@ def _ensure_cutter_object(source):
 
 def _preview_signature(source, values: dict) -> str:
     minimum, maximum = _source_local_bounds(source)
+    mesh_digest = hashlib.sha256()
+    mesh_digest.update(struct.pack("<III", len(source.data.vertices), len(source.data.edges), len(source.data.polygons)))
+    for vertex in source.data.vertices:
+        mesh_digest.update(struct.pack("<3d", *(float(value) for value in vertex.co)))
+    for polygon in source.data.polygons:
+        indices = tuple(int(index) for index in polygon.vertices)
+        mesh_digest.update(struct.pack("<I", len(indices)))
+        mesh_digest.update(struct.pack(f"<{len(indices)}I", *indices))
     payload = {
+        "generator_version": FRACTURE_GENERATOR_VERSION,
+        "source_mesh": mesh_digest.hexdigest(),
         "bounds": [tuple(round(float(value), 8) for value in minimum),
                    tuple(round(float(value), 8) for value in maximum)],
         "matrix_world": [
@@ -431,7 +555,6 @@ def _preview_signature(source, values: dict) -> str:
         "density": int(values.get("碎块密度", 6)),
         "seed": int(values.get("随机种子", 0)),
         "randomness": round(float(values.get("随机度", 0.72)), 8),
-        "gap": round(float(values.get("裂缝宽度", 0.045)), 8),
     }
     return hashlib.sha256(
         json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -449,13 +572,13 @@ def rebuild_fracture_preview(source, modifier=None, *, force: bool = False):
     signature = _preview_signature(source, values)
     changed = force or str(cutter.get("hotools_preview_signature", "")) != signature
     if changed:
-        vertices, faces, counts = _build_voronoi_cutter_geometry(
+        cells, counts = _build_voronoi_cells(
             source,
             density=int(values.get("碎块密度", 6)),
             seed=int(values.get("随机种子", 0)),
             randomness=float(values.get("随机度", 0.72)),
-            gap=float(values.get("裂缝宽度", 0.045)),
         )
+        vertices, faces = _combine_cells(cells)
         mesh = cutter.data
         mesh.clear_geometry()
         mesh.from_pydata(vertices, [], faces)
@@ -826,7 +949,8 @@ def refresh_fracture_products(source, *, depsgraph=None) -> tuple:
     try:
         asset_id = ensure_asset_id(source)
         modifier = _target_modifier(source, props)
-        rebuild_fracture_preview(source, modifier)
+        if bool(getattr(modifier, "show_viewport", True)):
+            rebuild_fracture_preview(source, modifier)
         bpy.context.view_layer.update()
         collection = ensure_product_collection(source)
         depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()

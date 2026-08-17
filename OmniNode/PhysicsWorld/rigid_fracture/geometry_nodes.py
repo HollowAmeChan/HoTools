@@ -5,7 +5,7 @@ from __future__ import annotations
 import bpy
 
 
-FRACTURE_GENERATOR_VERSION = 4
+FRACTURE_GENERATOR_VERSION = 5
 FRACTURE_PIECE_ID_ATTRIBUTE = "hotools_piece_id"
 FRACTURE_METHOD_VORONOI_UNIFORM = "VORONOI_UNIFORM"
 FRACTURE_METHOD_ITEMS = (
@@ -19,7 +19,7 @@ FRACTURE_METHOD_ITEMS = (
 DEFAULT_VORONOI_DENSITY = 6
 DEFAULT_VORONOI_SEED = 0
 DEFAULT_VORONOI_RANDOMNESS = 0.72
-DEFAULT_VORONOI_GAP = 0.045
+DEFAULT_VORONOI_GAP = 0.0
 
 _GENERATOR_ID_BY_METHOD = {
     FRACTURE_METHOD_VORONOI_UNIFORM: "rigid_fracture_voronoi_uniform",
@@ -85,15 +85,6 @@ def _add_voronoi_interface(group) -> None:
         maximum=1.0,
         description="0 为均匀晶格，1 为单元中心的最大安全扰动",
     )
-    _add_interface_socket(
-        group,
-        name="裂缝宽度",
-        socket_type="NodeSocketFloat",
-        default=DEFAULT_VORONOI_GAP,
-        minimum=0.0,
-        maximum=0.25,
-        description="相对于平均单元尺寸的碎块间隙",
-    )
     group.interface.new_socket(
         name="Geometry",
         in_out="OUTPUT",
@@ -102,7 +93,9 @@ def _add_voronoi_interface(group) -> None:
 
 
 def build_voronoi_uniform_group(group, cutter_object=None) -> None:
-    """Build the GN boolean stage for a baked, closed Voronoi cell cutter."""
+    """Build the GN display stage for a managed, closed Voronoi preview mesh."""
+    if hasattr(group, "is_modifier"):
+        group.is_modifier = True
     group.nodes.clear()
     group.interface.clear()
     _add_voronoi_interface(group)
@@ -122,16 +115,6 @@ def build_voronoi_uniform_group(group, cutter_object=None) -> None:
     cutter.inputs["Object"].default_value = cutter_object
     cutter.inputs["As Instance"].default_value = False
 
-    boolean = nodes.new("GeometryNodeMeshBoolean")
-    boolean.location = (-180.0, 120.0)
-    boolean.operation = "INTERSECT"
-    if hasattr(boolean, "solver"):
-        boolean.solver = "EXACT"
-    boolean.inputs[2].default_value = False
-    boolean.inputs[3].default_value = False
-    links.new(group_input.outputs["Geometry"], boolean.inputs[0])
-    links.new(cutter.outputs["Geometry"], boolean.inputs[1])
-
     island = nodes.new("GeometryNodeInputMeshIsland")
     island.location = (-80.0, -80.0)
     store_id = nodes.new("GeometryNodeStoreNamedAttribute")
@@ -139,7 +122,7 @@ def build_voronoi_uniform_group(group, cutter_object=None) -> None:
     store_id.data_type = "INT"
     store_id.domain = "FACE"
     store_id.inputs["Name"].default_value = FRACTURE_PIECE_ID_ATTRIBUTE
-    links.new(boolean.outputs["Mesh"], store_id.inputs["Geometry"])
+    links.new(cutter.outputs["Geometry"], store_id.inputs["Geometry"])
     links.new(island.outputs["Island Index"], store_id.inputs["Value"])
     links.new(store_id.outputs["Geometry"], group_output.inputs["Geometry"])
 
@@ -275,7 +258,7 @@ def set_voronoi_modifier_inputs(
     gap=None,
     resolution=None,
 ) -> None:
-    """Set preview controls; ``resolution`` remains accepted for v3 callers."""
+    """Set preview controls; ``gap``/``resolution`` remain accepted for old callers."""
     group = getattr(modifier, "node_group", None)
     if fracture_method_from_group(group) != FRACTURE_METHOD_VORONOI_UNIFORM:
         raise ValueError("修改器不是 HoTools 均匀 Voronoi 碎块预览")
@@ -283,7 +266,6 @@ def set_voronoi_modifier_inputs(
         "碎块密度": density,
         "随机种子": seed,
         "随机度": randomness,
-        "裂缝宽度": gap,
     }
     set_modifier_input_values(modifier, values)
 

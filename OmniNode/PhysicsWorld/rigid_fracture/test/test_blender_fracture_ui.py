@@ -74,13 +74,12 @@ def main():
             density=3,
             seed=7,
             randomness=0.4,
-            gap=0.03,
         )
         values = fracture_gn.modifier_input_values(modifier)
         assert values["碎块密度"] == 3
         assert values["随机种子"] == 7
         assert abs(values["随机度"] - 0.4) < 1.0e-6
-        assert abs(values["裂缝宽度"] - 0.03) < 1.0e-6
+        assert "裂缝宽度" not in values
         old_group_name = modifier.node_group.name
         modifier.node_group["hotools_generator_version"] = 0
         assert bpy.ops.ho.rigid_fracture_add_preview() == {"FINISHED"}
@@ -90,7 +89,7 @@ def main():
         values = fracture_gn.modifier_input_values(modifier)
         assert values["碎块密度"] == 3 and values["随机种子"] == 7
         assert abs(values["随机度"] - 0.4) < 1.0e-6
-        assert abs(values["裂缝宽度"] - 0.03) < 1.0e-6
+        assert "裂缝宽度" not in values
         assert bpy.ops.ho.rigid_fracture_refresh() == {"FINISHED"}
         pieces = fracture.validate_fracture_manifest(source)
         assert len(pieces) == 27

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Blender 5.2 acceptance for the managed uniform Voronoi fracture preview."""
+"""Blender 4.5/5.2 acceptance for the uniform Voronoi fracture preview."""
 
 from __future__ import annotations
 
@@ -80,7 +80,6 @@ def main():
             density=3,
             seed=7,
             randomness=0.72,
-            gap=0.055,
         )
         fracture.ensure_product_collection(source)
 
@@ -92,11 +91,20 @@ def main():
 
         pieces = fracture.refresh_fracture_products(source)
         assert len(pieces) == 27, len(pieces)
+        world_vertices = [
+            piece.matrix_world @ vertex.co
+            for piece in pieces
+            for vertex in piece.data.vertices
+        ]
+        outer_minimum = tuple(min(point[axis] for point in world_vertices) for axis in range(3))
+        outer_maximum = tuple(max(point[axis] for point in world_vertices) for axis in range(3))
+        assert all(abs(value + 1.0) < 1.0e-5 for value in outer_minimum), outer_minimum
+        assert all(abs(value - 1.0) < 1.0e-5 for value in outer_maximum), outer_maximum
         assert props.fracture_method == fracture_gn.FRACTURE_METHOD_VORONOI_UNIFORM
         assert props.piece_id_attribute == fracture_gn.FRACTURE_PIECE_ID_ATTRIBUTE
         assert fracture_gn.fracture_method_from_group(modifier.node_group) == props.fracture_method
         assert any(node.bl_idname == "GeometryNodeObjectInfo" for node in modifier.node_group.nodes)
-        assert any(node.bl_idname == "GeometryNodeMeshBoolean" for node in modifier.node_group.nodes)
+        assert not any(node.bl_idname == "GeometryNodeMeshBoolean" for node in modifier.node_group.nodes)
         assert props.cutter_object is not None
         assert tuple(props.cutter_object["hotools_voronoi_counts"]) == (3, 3, 3)
         assert any(
@@ -108,6 +116,11 @@ def main():
         ids = {piece.hotools_rigid_fracture_piece.piece_id for piece in pieces}
         assert len(ids) == len(pieces)
         assert all(piece.hotools_rigid_fracture_piece.volume > 0.0 for piece in pieces)
+        total_volume = sum(
+            piece.hotools_rigid_fracture_piece.volume
+            for piece in pieces
+        )
+        assert abs(total_volume - 8.0) < 1.0e-5, total_volume
         assert all(piece.hotools_rigid_fracture_piece.mass_fraction > 0.0 for piece in pieces)
         authored_masses = tuple(piece.hotools_rigid_body.mass for piece in pieces)
         assert abs(sum(authored_masses) - 24.0) < 1.0e-4, (

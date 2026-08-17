@@ -152,7 +152,7 @@ Object 物理大面板增加“刚体破碎”开关和子面板。用户流程�
 
 1. 在 Source 上启用刚体破碎。
 2. 在“切割算法”下拉框选择生成器；当前只有“均匀 Voronoi”。
-3. 点击“添加碎块预览”，调节 GN 中的碎块密度、随机种子、随机度和裂缝宽度。
+3. 点击“添加碎块预览”，调节 GN 中的碎块密度、随机种子和随机度。
 4. 点击“创建碎块集合”。
 5. 点击“刷新碎块集合”，将当前预览固定为独立 Mesh Objects，并一次性写入本体刚体模板和体积质量。
 6. 在普通 Outliner/视图中检查或隐藏 Source；运行现有 Physics World 图时 resolver 会显式排除 Source。
@@ -170,16 +170,18 @@ Object 物理大面板增加“刚体破碎”开关和子面板。用户流程�
 
 ### 均匀 Voronoi 预览
 
-当前唯一内置算法是均匀三维 Voronoi。`碎块密度` 定义最长轴的种子数，其他轴按 Source 包围盒比例换算；每个格心生成一个种子，`随机度` 在格内做有界扰动，`随机种子` 保证结果可重复。每个单元从扩展包围盒开始，用所有种子对的垂直平分面做凸多面体裁剪；分割面两侧各退让半个 `裂缝宽度`，因此得到真正分离的封闭单元。
+当前唯一内置算法是均匀三维 Voronoi。`碎块密度` 定义最长轴的种子数，其他轴按 Source 包围盒比例换算；每个格心生成一个种子，`随机度` 在格内做有界扰动，`随机种子` 保证结果可重复。作者层从 Source 顶点重建凸外壳，将近共面的支持平面聚类后，用这些平面和种子垂直平分面直接裁出每个封闭 Cell。相邻 Cell 共用同一切面坐标，不提供裂缝宽度，也不靠可见间隙维持分离；GN 只读取受管预览 Mesh 并写固定 Piece ID，因此开关预览不能改变外轮廓。
 
-Blender 5.2 没有可直接输出三维 Voronoi cell mesh 的 Geometry Node。已验证的 Volume Cube + Distance to Edge 路线会产生数百个体素碎屑，不能进入产品。因此作者层生成受管的隐藏 cutter mesh，GN 使用 Object Info + Exact Mesh Boolean 与 Source 相交，并在输出端用 Mesh Island Index 将固定 FACE/INT 属性 `hotools_piece_id` 写入结果。depsgraph 钩子在 GN 输入变化后重建 cutter，使修改器仍可作为实时预览入口；`预览精度` 已删除，因为它只会提高体素成本而不能修复拓扑。
+当前实现只接受有体积的闭合凸体。Source 体积与其凸包体积不一致时显式拒绝；在凹体 Full Mesh 切割算法完成前，不允许静默用凸包或包围盒替代。Blender 的 Quick Explode 仅按粒子分配原始面并添加 Explode modifier，不生成刚体碎块所需的封闭内表面，因此不作为产物算法。
+
+Blender 5.2 没有可直接输出三维 Voronoi cell mesh 的 Geometry Node。已验证的 Volume Cube + Distance to Edge 路线会产生数百个体素碎屑，不能进入产品；把全部 Cell 合成单 Mesh 后再做一次 Mesh Boolean 也会因共面岛和多输入语义出现外壳膨胀或错误合并。因此作者层直接用凸半空间裁剪生成受管的隐藏预览 Mesh，GN 使用 Object Info 读取该 Mesh，并用 Mesh Island Index 将固定 FACE/INT 属性 `hotools_piece_id` 写入结果。depsgraph 钩子在 GN 输入或 Source Mesh 指纹变化后重建预览，使修改器仍是实时参数入口。
 
 ## 显式刷新事务
 
 第一版刷新只在 Blender 主线程、用户显式 Operator 和非模拟步骤内执行：
 
 1. 校验 Source、modifier、Product Collection 和当前模式，按当前 GN 输入重建封闭 Voronoi cutter。
-2. 读取 GN Boolean 后的 evaluated mesh；默认 GN 输出已经是 Realize 的普通面几何。
+2. 读取 GN 中受管预览 Mesh 的 evaluated 结果；默认输出是已 Realize 的普通面几何。
 3. 按 `CONNECTED_COMPONENT` 拆分；为将来的 `REALIZED_INSTANCE` 保留 enum，但未实现时不得伪装成功。
 4. 只读取固定 FACE/INT 属性 `hotools_piece_id` 作为 piece ID；自定义 GN 未输出该属性时按确定性的连通块顺序生成后备 ID。
 5. 在临时 Collection 创建独立 Mesh/Object，复制正确 world transform。
@@ -257,7 +259,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 ### F1：资产属性与显式刷新（已完成）
 
 - 新增 Source/Piece PropertyGroup、面板和 Operators。
-- 实现均匀 Voronoi 封闭单元、GN Boolean 预览、evaluated mesh snapshot、连通块拆分、manifest 和原子替换。
+- 实现均匀 Voronoi 封闭凸单元、无缝半空间裁剪、GN 预览、evaluated mesh snapshot、连通块拆分、manifest 和原子替换。
 - 实现参数变化预览重建、生成时物理快照和 cache 失效；面板只保留算法、预览和集合三操作。
 
 出口：不运行 solver 也能反复刷新同一资产；失败不污染场景；save/reopen 后身份和状态仍成立。
@@ -302,7 +304,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 | 纯 Python/schema | 字段默认值、enum、manifest 校验、duplicate ID、状态转换 |
 | Native | `DontActivate`、重力静止、碰撞唤醒、reset、active/sleeping readback |
 | Adapter | Blender 5.2 / py313 下的 spec 映射、批注册混合 Active/Inactive、slot identity、事件映射 |
-| Blender authoring | 均匀 Voronoi 封闭单元、GN Boolean、固定 ID、刷新、拆岛、体积质量、生成时模板快照、失败回滚、save/reopen |
+| Blender authoring | 均匀 Voronoi 封闭凸单元、无缝边界、外轮廓/体积守恒、固定 ID、刷新、拆岛、体积质量、失败回滚、save/reopen |
 | Blender pipeline | Source 排除、Piece 展开、Scene 根 Scope 复用、独立 Product Collection batch、writeback |
 | Acceptance | 球撞墙局部破碎、外圈静止、finite、repeat/reset |
 | 性能 | Piece 数、body sync、contact publish、writeback、depsgraph 和内存 |

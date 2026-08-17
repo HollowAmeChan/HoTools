@@ -53,6 +53,7 @@ def _parse_args():
     parser.add_argument("--baseline-manual", action="store_true")
     parser.add_argument("--baseline-auto", action="store_true")
     parser.add_argument("--authoring-flow", action="store_true")
+    parser.add_argument("--geometry-probe", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -145,7 +146,6 @@ def _configure_project():
         density=8,
         seed=17,
         randomness=0.35,
-        gap=0.055,
     )
     fracture.ensure_product_collection(source, scene)
     pieces = list(fracture.refresh_fracture_products(source))
@@ -397,7 +397,6 @@ def _run_original_authoring_flow():
         density=5,
         seed=11,
         randomness=0.55,
-        gap=0.04,
     )
     fracture.ensure_product_collection(source, scene)
     pieces = tuple(fracture.refresh_fracture_products(source))
@@ -417,6 +416,78 @@ def _run_original_authoring_flow():
     )
 
 
+def _evaluated_local_bounds(source):
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = source.evaluated_get(depsgraph)
+    mesh = evaluated.to_mesh(preserve_all_data_layers=True, depsgraph=depsgraph)
+    try:
+        coordinates = [vertex.co.copy() for vertex in mesh.vertices]
+        assert coordinates
+        return (
+            tuple(min(point[axis] for point in coordinates) for axis in range(3)),
+            tuple(max(point[axis] for point in coordinates) for axis in range(3)),
+            len(mesh.vertices),
+            len(mesh.polygons),
+        )
+    finally:
+        evaluated.to_mesh_clear()
+
+
+def _run_original_geometry_probe():
+    scene = bpy.context.scene
+    source = next(
+        obj for obj in scene.objects
+        if bool(getattr(getattr(obj, "hotools_rigid_fracture", None), "enabled", False))
+    )
+    modifier = fracture.ensure_fracture_preview_modifier(source)
+    cutter = source.hotools_rigid_fracture.cutter_object
+    cutter_mesh = cutter.data
+    cutter_mesh.calc_loop_triangles()
+    cutter_signed_volume = sum(
+        cutter_mesh.vertices[a].co.dot(
+            cutter_mesh.vertices[b].co.cross(cutter_mesh.vertices[c].co)
+        ) / 6.0
+        for triangle in cutter_mesh.loop_triangles
+        for a, b, c in (triangle.vertices,)
+    )
+    matrix_before = tuple(float(value) for row in source.matrix_world for value in row)
+    modifier.show_viewport = False
+    bpy.context.view_layer.update()
+    disabled_before = _evaluated_local_bounds(source)
+    modifier.show_viewport = True
+    bpy.context.view_layer.update()
+    enabled = _evaluated_local_bounds(source)
+    modifier.show_viewport = False
+    bpy.context.view_layer.update()
+    disabled_after = _evaluated_local_bounds(source)
+    matrix_after = tuple(float(value) for row in source.matrix_world for value in row)
+    bound_tolerance = max(
+        maximum - minimum
+        for minimum, maximum in zip(disabled_before[0], disabled_before[1])
+    ) * 1.0e-6
+    bound_error = max(
+        abs(float(disabled_value) - float(enabled_value))
+        for disabled_values, enabled_values in zip(disabled_before[:2], enabled[:2])
+        for disabled_value, enabled_value in zip(disabled_values, enabled_values)
+    )
+    source_volume = abs(fracture._source_local_signed_volume(source))
+    volume_error = abs(abs(cutter_signed_volume) - source_volume) / source_volume
+    piece_count = len(fracture._union_find_components(cutter_mesh))
+    print(
+        "GEOMETRY_PROBE",
+        f"Blender={bpy.app.version_string}",
+        f"source={source.name_full}",
+        f"pieces={piece_count}",
+        f"bound_error={bound_error:.8f}",
+        f"volume_error={volume_error:.8g}",
+    )
+    assert matrix_after == matrix_before
+    assert disabled_after == disabled_before
+    assert bound_error <= bound_tolerance, (disabled_before, enabled, bound_tolerance)
+    assert volume_error <= 1.0e-5, volume_error
+    assert piece_count > 1
+
+
 def main():
     args = _parse_args()
     project = os.path.abspath(args.project)
@@ -433,6 +504,9 @@ def main():
         return
     if args.authoring_flow:
         _run_original_authoring_flow()
+        return
+    if args.geometry_probe:
+        _run_original_geometry_probe()
         return
     if args.verify_file:
         tree, source, ball, pieces = _loaded_acceptance_asset()
