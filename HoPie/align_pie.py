@@ -89,13 +89,13 @@ class AlignEditMesh(bpy.types.Operator):
     bl_label = 'HoTools：对齐编辑网格'
     bl_options = {'REGISTER', 'UNDO'}
 
-    mode: EnumProperty(items=(('VIEW', '视图', ''), ('AXES', '坐标轴', '')), default='VIEW')
-    type: EnumProperty(items=ALIGN_TYPE_ITEMS, default='MIN')
-    axis: EnumProperty(items=ALIGN_AXIS_ITEMS, default='X')
-    direction: EnumProperty(items=ALIGN_DIRECTION_ITEMS, default='LEFT')
-    space: EnumProperty(items=ALIGN_SPACE_ITEMS, default='LOCAL')
-    align_each: BoolProperty(name='分别对齐每个选区', default=False)
-    draw_each: BoolProperty(default=False)
+    mode: EnumProperty(items=(('VIEW', '视图', ''), ('AXES', '坐标轴', '')), default='VIEW') # type: ignore
+    type: EnumProperty(items=ALIGN_TYPE_ITEMS, default='MIN') # type: ignore
+    axis: EnumProperty(items=ALIGN_AXIS_ITEMS, default='X') # type: ignore
+    direction: EnumProperty(items=ALIGN_DIRECTION_ITEMS, default='LEFT') # type: ignore
+    space: EnumProperty(items=ALIGN_SPACE_ITEMS, default='LOCAL') # type: ignore
+    align_each: BoolProperty(name='分别对齐每个选区', default=False) # type: ignore
+    draw_each: BoolProperty(default=False) # type: ignore
 
     def draw(self, context):
         column = self.layout.column(align=True)
@@ -174,9 +174,9 @@ class CenterEditMesh(bpy.types.Operator):
     bl_label = 'HoTools：居中编辑网格'
     bl_options = {'REGISTER', 'UNDO'}
 
-    axis: EnumProperty(items=ALIGN_AXIS_ITEMS, default='X')
-    direction: EnumProperty(items=ALIGN_DIRECTION_ITEMS, default='HORIZONTAL')
-    space: EnumProperty(items=ALIGN_SPACE_ITEMS, default='LOCAL')
+    axis: EnumProperty(items=ALIGN_AXIS_ITEMS, default='X') # type: ignore
+    direction: EnumProperty(items=ALIGN_DIRECTION_ITEMS, default='HORIZONTAL') # type: ignore
+    space: EnumProperty(items=ALIGN_SPACE_ITEMS, default='LOCAL') # type: ignore
 
     def draw(self, context):
         self.layout.prop(self, 'space', expand=True)
@@ -312,8 +312,8 @@ class AlignUV(bpy.types.Operator):
     bl_idname = 'ho.align_uv'
     bl_label = 'HoTools：对齐 UV'
     bl_options = {'REGISTER', 'UNDO'}
-    type: EnumProperty(items=ALIGN_TYPE_ITEMS, default='MIN')
-    axis: EnumProperty(items=(('U', 'U', ''), ('V', 'V', '')), default='U')
+    type: EnumProperty(items=ALIGN_TYPE_ITEMS, default='MIN') # type: ignore
+    axis: EnumProperty(items=(('U', 'U', ''), ('V', 'V', '')), default='U') # type: ignore
 
     @classmethod
     def poll(cls, context):

@@ -235,7 +235,7 @@ class OriginToBottomBounds(bpy.types.Operator):
     bl_idname = 'ho.origin_to_bottom_bounds'
     bl_label = '原点->底部'
     bl_options = {'REGISTER', 'UNDO'}
-    evaluated: BoolProperty(name='使用求值后的包围盒', default=False)
+    evaluated: BoolProperty(name='使用求值后的包围盒', default=False) # type: ignore
 
     def draw(self, context):
         self.layout.prop(self, 'evaluated', toggle=True)

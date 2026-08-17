@@ -23,9 +23,6 @@ from .placement import (
 )
 from .view import OP_AlignViewToAvgNormal
 
-TransformEdgeConstrained = OP_TransformEdgeConstrained
-
-
 def reg_props():
     return
 
