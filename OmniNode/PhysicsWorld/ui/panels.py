@@ -390,6 +390,8 @@ class PT_Hotools_Physics_RigidBody(Panel):
             layout.label(text="局部XY为平面，局部Z为法线；PLANE按STATIC处理", icon="INFO")
         elif stype == "BOX":
             layout.prop(props, "shape_half_extents")
+        elif stype == "MESH":
+            layout.label(text="使用对象网格；动态/运动学物体使用同几何凸包", icon="INFO")
         layout.prop(props, "shape_offset")
         layout.prop(props, "shape_rotation")
 

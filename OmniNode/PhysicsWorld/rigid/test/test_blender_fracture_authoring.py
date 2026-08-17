@@ -132,7 +132,7 @@ def main():
         assert len(pieces1) == 2
         assert props.product_status == "READY" and props.product_revision == 1
         assert all(piece.hotools_rigid_body.enabled for piece in pieces1)
-        assert all(piece.hotools_rigid_body.shape_type == "BOX" for piece in pieces1)
+        assert all(piece.hotools_rigid_body.shape_type == "MESH" for piece in pieces1)
         assert all(piece.hotools_rigid_body.start_deactivated for piece in pieces1)
         assert all(abs(piece.hotools_rigid_body.mass - 3.0) < 1.0e-6 for piece in pieces1)
         assert all(abs(piece.hotools_rigid_body.friction - 0.35) < 1.0e-6 for piece in pieces1)

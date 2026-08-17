@@ -129,7 +129,7 @@ EXPECTED_PROPERTY_CONTRACTS = {
         ),
     },
     "PG_Hotools_RigidBody": {
-        "sha256": "726dc0e0b3dbc19536c833287f314a4c37a5179edeaf99dc711fce1c021931c8",
+        "sha256": "de2842aa885ad0b4245c1ffef382632759ce92b24db15381c85eb761a3d43e88",
         "fields": (
             "enabled", "body_type", "mass", "friction", "restitution",
             "rigid_collision_group", "rigid_collides_with_groups", "shape_type",

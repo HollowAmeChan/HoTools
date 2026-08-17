@@ -174,6 +174,7 @@ def _rigid_body_sync_signature(spec) -> tuple:
         _round_float(getattr(spec, "shape_convex_radius", 0.05)),
         _round_tuple(getattr(spec, "shape_offset", (0.0, 0.0, 0.0))),
         _round_tuple(getattr(spec, "shape_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
+        str(getattr(spec, "shape_geometry_signature", "") or ""),
         _round_tuple(getattr(spec, "linear_velocity", (0.0, 0.0, 0.0))),
         _round_tuple(getattr(spec, "angular_velocity", (0.0, 0.0, 0.0))),
         _round_float(getattr(spec, "linear_damping", 0.05)),

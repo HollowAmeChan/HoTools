@@ -91,12 +91,12 @@ Source Object.hotools_rigid_fracture + GN / modifier
 
 | 缺口 | 直接后果 |
 |---|---|
-| 不规则 Voronoi Piece 仍使用 BOX collision proxy | 视觉网格与碰撞边界不一致；高随机度时必须缩小代理或使用静态锚定，Dynamic Convex Hull 尚未接入 |
+| 不规则 Voronoi Piece 仍使用 BOX collision proxy | 已由 `MESH` shape 替代；静态使用精确 MeshShape，动态/运动学凸 Piece 使用同几何 ConvexHullShape |
 | 没有 glue/邻接/cluster 结构层 | 休眠只能表达初始不积分，不能表达材料强度；全部动态碎块会沿接触岛传播唤醒 |
 | Piece ID 只在单次刷新结果内稳定 | 改变种子或密度后不能自动把旧逐块编辑、约束或选择映射到新拓扑 |
 | 稳定帧仍有 Object body 同步与 Blender 写回成本 | Jolt step 很快，但大规模场景仍受 Python/Blender 对象层限制 |
 | 属性与生成约束节点是弱类型大参数面 | 连接错误晚发现，约束节点过宽，难以复用和批量生成 |
-| 没有 mesh/convex shape 资源协议 | 复杂 Object 仍需基础 shape 代理；GN 生成的凸几何当前只是 authoring mesh，不自动成为 Jolt convex shape |
+| 没有 mesh/convex shape 资源协议 | 当前 Object 流程已传递 MESH 的局部顶点/三角面；大规模共享 shape resource/cache 仍待后续优化 |
 | 世界设置只覆盖第一批开关 | 接触容差、CCD、睡眠阈值和 cache 容差仍使用 Jolt 默认值 |
 | 查询只接 closest-hit RayCast | ShapeCast、overlap、多命中和 query filter 尚未形成产品链 |
 
@@ -132,7 +132,7 @@ Source Object.hotools_rigid_fracture + GN / modifier
 6. 可选批量写入 `Object.hotools_rigid_body` 的属性模板；物理 shape 第一版只能选当前已支持的基础类型。
 7. 原子提交到目标 Collection。失败时不留下部分 Objects；重新生成按 manifest 替换上一版受管结果。
 
-GN 生成了凸外观，不等于当前 Jolt 已经使用 convex shape。凸包 shape 接入前，生成的 Objects 仍使用 Sphere/Box/Capsule/Cylinder 等已支持代理；这个限制必须在 UI 和 diagnostics 中显式显示，不能静默把 mesh 当成 Box 或 ConvexHull。
+GN 生成的 Voronoi 凸块现在会显式使用 `MESH` shape。Jolt 对动态/运动学 MeshShape 有约束，因此 adapter 对凸 Piece 使用同一顶点集创建 ConvexHullShape；静态 Object 才创建 MeshShape。该转换在 UI 和 diagnostics 中明确显示，不能静默退回 Box。
 
 ### 稳定身份与重建
 
@@ -180,10 +180,11 @@ Shape 扩展晚于 GN 对象化和 Object 批路径。两个概念必须分开�
 
 | 公共语义 | Jolt shape | 合法 body | 计划 |
 |---|---|---|---|
-| `FULL_MESH_STATIC` | `MeshShape` | Static | 精确三角面，适合场景障碍；Jolt 5.2.0 `MeshShape::MustBeStatic()` 明确要求 static |
-| `CONVEX_HULL` | `ConvexHullShape` | Static / Dynamic / Kinematic | 动态凸 Object；作者先用 Blender/GN 生成凸 mesh，HoTools 不做自动凸分解 |
+| `MESH` | `MeshShape`（Static）/`ConvexHullShape`（Dynamic/Kinematic） | Static / Dynamic / Kinematic | Object 局部三角 snapshot；动态路径要求输入几何为凸体，当前 Voronoi Piece 满足 |
+| `FULL_MESH_STATIC` | `MeshShape` | Static | `MESH` 静态路径的明确语义别名；Jolt 5.2.0 `MeshShape::MustBeStatic()` 明确要求 static |
+| `CONVEX_HULL` | `ConvexHullShape` | Static / Dynamic / Kinematic | 后续可单独暴露的作者凸包语义；当前 MESH 动态路径已复用同一实现 |
 
-因此不存在“Dynamic Full Mesh 先顶上”的合法捷径。动态的 GN 凸块最终需要 `CONVEX_HULL` shape，但这是后续独立纵向切片，不纳入近期 Object 基础设施里程碑。
+因此不存在“Dynamic Full Mesh 先顶上”的合法捷径。当前 `MESH` 对动态/运动学对象使用 ConvexHullShape；非凸动态 Mesh 仍需后续自动凸分解或 Compound Shape，不能静默接受。
 
 未来 shape 资源仍遵守：
 
@@ -216,7 +217,7 @@ Shape 扩展晚于 GN 对象化和 Object 批路径。两个概念必须分开�
 | 类型 | 职责 |
 |---|---|
 | `RigidBodyPropertiesV1` | body type、质量策略、材质响应、阻尼、重力、睡眠、CCD、轴锁、过滤和传感器 |
-| `RigidShapeSpecV1` | 当前 Primitive shape；未来可增加 shape resource ref，不改变 body property socket |
+| `RigidShapeSpecV1` | Primitive 与 Object `MESH` shape；未来可增加共享 shape resource ref，不改变 body property socket |
 | `RigidObjectSetV1` | 一组已验证的 Blender Objects、稳定顺序、source owner 和属性/shape 绑定 |
 | `RigidConstraintSpecV1` | 类型、A/B Object stable ref、A/B frame、公共设置和类型 payload |
 | `RigidSimulationRequestV1` | 已去重并完整验证的 Object/constraint manifest、world policy 和 writeback policy |
@@ -349,7 +350,7 @@ Shape 扩展晚于 GN 对象化和 Object 批路径。两个概念必须分开�
 ### M1：刚体破碎资产刷新（已完成）
 
 - 增加 `Object.hotools_rigid_fracture`、Piece metadata、物理大面板和显式 Operators。
-- 已落地均匀三维 Voronoi 封闭单元、GN Boolean 预览、固定 `hotools_piece_id`、evaluated mesh snapshot、连通块拆分、按体积质量、暂存提交、manifest 和诊断；后续切块算法复用同一输出契约。
+- 已落地均匀三维 Voronoi 封闭单元、无缝 GN 预览、固定 `hotools_piece_id`、evaluated mesh snapshot、连通块拆分、按体积质量、暂存提交、manifest 和诊断；后续切块算法复用同一输出契约。
 - 本体刚体模板只在刷新生成时固定写入 Piece；刷新成功后失效旧模拟 cache。
 
 出口：同一 Source 可反复刷新为受管普通 Objects；失败不留半批，不误删 Product Collection 中的用户对象。
@@ -382,8 +383,8 @@ Shape 扩展晚于 GN 对象化和 Object 批路径。两个概念必须分开�
 
 ### M5：Full Mesh Static 与 Convex Hull
 
-- 先接 `FULL_MESH_STATIC` 的三角 snapshot、shape cache、静态接触/查询/debug。
-- 再接作者提供 mesh 的 `CONVEX_HULL`，不做自动生成或凸分解；Blender/GN 负责预先生成凸几何。
+- 已接 Object `MESH` 的三角 snapshot、静态 MeshShape、动态凸 Hull、接触和 debug 线框；当前每个 body 传递局部几何，shape cache 仍待优化。
+- 后续接作者提供 mesh 的独立 `CONVEX_HULL` 语义及非凸 Compound/自动凸分解；不在本阶段偷偷改变 MESH 的语义。
 - 覆盖 shape sharing、结构 dirty、modifier/GN source、mass/inertia、CCD 和失败回滚。
 
 出口：Static 精确 mesh 与 Dynamic convex Object 各自使用合法 Jolt shape；稳定帧不复制或 recook mesh。

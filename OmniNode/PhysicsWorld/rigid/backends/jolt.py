@@ -57,7 +57,7 @@ def _shape_params_from_spec(spec: "RigidBodySpec") -> dict:
     Jolt adapter 只消费 spec 快照，不回读 Blender 对象属性或包围盒。
     """
     stype = getattr(spec, "shape_type", None)
-    if stype not in {"SPHERE", "CAPSULE", "CYLINDER", "TAPERED_CAPSULE", "TAPERED_CYLINDER", "PLANE", "BOX"}:
+    if stype not in {"SPHERE", "CAPSULE", "CYLINDER", "TAPERED_CAPSULE", "TAPERED_CYLINDER", "PLANE", "BOX", "MESH"}:
         slot_id = getattr(spec, "slot_id", "<unknown>")
         raise ValueError(f"RigidBodySpec {slot_id} has unsupported shape_type {stype!r}")
     return {
@@ -71,6 +71,8 @@ def _shape_params_from_spec(spec: "RigidBodySpec") -> dict:
         "shape_convex_radius": max(float(getattr(spec, "shape_convex_radius")), 0.0),
         "shape_offset": tuple(getattr(spec, "shape_offset")),
         "shape_rotation_wxyz": tuple(getattr(spec, "shape_rotation_wxyz")),
+        "shape_vertices": tuple(getattr(spec, "shape_vertices", ())),
+        "shape_triangles": tuple(getattr(spec, "shape_triangles", ())),
     }
 
 
@@ -367,6 +369,8 @@ class JoltAdapter:
             collided_by_groups=int(getattr(spec, "rigid_collides_with_groups", 0xFFFF)),
             shape_offset=tuple(shape.get("shape_offset", (0.0, 0.0, 0.0))),
             shape_rotation_wxyz=tuple(shape.get("shape_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
+            shape_vertices=tuple(shape.get("shape_vertices", ())),
+            shape_triangles=tuple(shape.get("shape_triangles", ())),
             linear_velocity=tuple(getattr(spec, "linear_velocity", (0.0, 0.0, 0.0))),
             angular_velocity=tuple(getattr(spec, "angular_velocity", (0.0, 0.0, 0.0))),
             linear_damping=float(getattr(spec, "linear_damping", 0.05)),

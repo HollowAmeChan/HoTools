@@ -885,7 +885,7 @@ def apply_piece_defaults(source, pieces=None) -> int:
         rigid = obj.hotools_rigid_body
         _restore_rigid_body(obj, template)
         rigid.enabled = True
-        rigid.shape_type = "BOX"
+        rigid.shape_type = "MESH"
         dimensions = tuple(max(float(value) * 0.5, 0.001) for value in obj.dimensions)
         rigid.shape_half_extents = dimensions
         volume = volumes.get(int(obj.as_pointer()), _object_world_volume(obj))

@@ -116,11 +116,11 @@ def _look_at(obj, target):
     obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
 
 
-def _configure_rigid_box(obj, *, body_type, half_extents, start_deactivated=False):
+def _configure_rigid_box(obj, *, body_type, half_extents, start_deactivated=False, shape_type="BOX"):
     props = obj.hotools_rigid_body
     props.enabled = True
     props.body_type = body_type
-    props.shape_type = "BOX"
+    props.shape_type = shape_type
     props.shape_half_extents = tuple(max(float(value), 0.001) for value in half_extents)
     props.mass = 1.0
     props.friction = 0.58
@@ -167,6 +167,7 @@ def build_asset(path=ASSET_PATH):
     fracture.ensure_product_collection(source, scene)
     pieces = fracture.refresh_fracture_products(source)
     assert len(pieces) == 35
+    assert all(piece.hotools_rigid_body.shape_type == "MESH" for piece in pieces)
 
     static_material = _new_material("Wall Static Frame", (0.19, 0.24, 0.28), metallic=0.08)
     breakable_material = _new_material("Wall Breakable Core", (0.66, 0.22, 0.08), metallic=0.03)
@@ -181,6 +182,7 @@ def build_asset(path=ASSET_PATH):
             body_type="DYNAMIC" if is_dynamic else "STATIC",
             half_extents=half_extents,
             start_deactivated=is_dynamic,
+            shape_type="MESH",
         )
         piece["hotools_acceptance_role"] = "breakable" if is_dynamic else "anchor"
         piece.data.materials.clear()

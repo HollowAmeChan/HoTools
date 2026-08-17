@@ -38,6 +38,8 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/PlaneShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/CollisionGroup.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
@@ -713,7 +715,9 @@ public:
         float                     shape_top_radius,
         float                     shape_bottom_radius,
         float                     shape_convex_radius,
-        bool                      start_deactivated
+        bool                      start_deactivated,
+        const std::vector<std::array<float,3>>& shape_vertices,
+        const std::vector<std::array<uint32_t,3>>& shape_triangles
     )
     {
         // 形状
@@ -750,6 +754,40 @@ public:
             Shape::ShapeResult result = settings.Create();
             if (result.HasError())
                 throw std::runtime_error(std::string("Jolt TaperedCylinderShape failed: ") + result.GetError().c_str());
+            shape = result.Get();
+        } else if (shape_type_str == "MESH") {
+            if (shape_vertices.size() < 4 || shape_triangles.empty())
+                throw std::runtime_error("Jolt MESH shape requires at least four vertices and one triangle");
+            VertexList mesh_vertices;
+            Array<Vec3> convex_vertices;
+            mesh_vertices.reserve(shape_vertices.size());
+            convex_vertices.reserve(shape_vertices.size());
+            for (const auto& vertex : shape_vertices) {
+                mesh_vertices.emplace_back(vertex[0], vertex[1], vertex[2]);
+                convex_vertices.emplace_back(vertex[0], vertex[1], vertex[2]);
+            }
+
+            IndexedTriangleList triangles;
+            triangles.reserve(shape_triangles.size());
+            for (const auto& triangle : shape_triangles) {
+                if (triangle[0] >= mesh_vertices.size() || triangle[1] >= mesh_vertices.size() || triangle[2] >= mesh_vertices.size())
+                    throw std::runtime_error("Jolt MESH shape contains an out-of-range triangle index");
+                triangles.emplace_back(triangle[0], triangle[1], triangle[2], 0);
+            }
+
+            Shape::ShapeResult result;
+            if (body_type_str == "STATIC") {
+                MeshShapeSettings settings(mesh_vertices, triangles);
+                result = settings.Create();
+            } else {
+                ConvexHullShapeSettings settings(
+                    convex_vertices,
+                    std::clamp(shape_convex_radius, 0.0f, cDefaultConvexRadius)
+                );
+                result = settings.Create();
+            }
+            if (result.HasError())
+                throw std::runtime_error(std::string("Jolt MESH shape failed: ") + result.GetError().c_str());
             shape = result.Get();
         } else if (is_plane) {
             float half_extent = (std::max)(std::abs(shape_plane_half_extent), 1.0f);
@@ -2089,6 +2127,8 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("shape_bottom_radius") = 0.3f,
              nb::arg("shape_convex_radius") = 0.05f,
              nb::arg("start_deactivated") = false,
+             nb::arg("shape_vertices") = std::vector<std::array<float,3>>{},
+             nb::arg("shape_triangles") = std::vector<std::array<uint32_t,3>>{},
              "注册刚体，返回 handle（uint32）。")
 
         .def("remove_body", &JoltWorld::remove_body,

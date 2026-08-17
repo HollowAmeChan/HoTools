@@ -4,7 +4,7 @@ test_jolt_rigid_native.py — hotools_jolt JoltWorld 单元测试
 测试覆盖：
 - 模块加载与常量
 - STATIC / DYNAMIC / KINEMATIC 刚体注册与变换读取
-- 形状：SPHERE / BOX / CAPSULE / CYLINDER / TAPERED_CAPSULE / TAPERED_CYLINDER / PLANE
+- 形状：SPHERE / BOX / CAPSULE / CYLINDER / TAPERED_CAPSULE / TAPERED_CYLINDER / PLANE / MESH
 - 模拟步：DYNAMIC 刚体受重力下落（Z-down）
 - KINEMATIC 刚体位置跟随
 - remove_body / clear()
@@ -110,6 +110,32 @@ def _add_box(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0),
         shape_type="BOX",
         shape_half_extents=half_extents,
         is_sensor=is_sensor,
+    )
+
+
+_CUBE_VERTICES = (
+    (-1.0, -1.0, -1.0), (1.0, -1.0, -1.0), (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0),
+    (-1.0, -1.0, 1.0), (1.0, -1.0, 1.0), (1.0, 1.0, 1.0), (-1.0, 1.0, 1.0),
+)
+_CUBE_TRIANGLES = (
+    (0, 3, 2), (0, 2, 1), (4, 5, 6), (4, 6, 7),
+    (0, 1, 5), (0, 5, 4), (1, 2, 6), (1, 6, 5),
+    (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7),
+)
+
+
+def _add_mesh(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0), scale=1.0):
+    vertices = tuple(tuple(float(value) * scale for value in vertex) for vertex in _CUBE_VERTICES)
+    return jw.add_body(
+        body_type=body_type,
+        mass=1.0,
+        friction=0.5,
+        restitution=0.0,
+        position=pos,
+        rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
+        shape_type="MESH",
+        shape_vertices=vertices,
+        shape_triangles=_CUBE_TRIANGLES,
     )
 
 
@@ -232,6 +258,17 @@ def test_add_box_body():
     assert abs(pos[0] - 1.0) < 1e-3, f"BOX X 应为 1.0，得 {pos[0]}"
     assert abs(pos[1] - 2.0) < 1e-3
     assert abs(pos[2] - 3.0) < 1e-3
+    jw.clear()
+
+
+def test_add_mesh_body():
+    jw = _make_world()
+    _add_mesh(jw, body_type="STATIC", pos=(0.0, 0.0, -1.1), scale=2.0)
+    handle = _add_mesh(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 3.0), scale=0.25)
+    for _ in range(120):
+        jw.step(1.0 / 60.0, 1)
+    position, _rotation = jw.get_body_transform(handle)
+    assert position[2] > -0.5, f"MESH/convex-hull body fell through mesh: z={position[2]}"
     jw.clear()
 
 

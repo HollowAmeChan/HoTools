@@ -410,6 +410,35 @@ def _append_body_shape_lines(lines: list, spec, result: dict | None) -> None:
     elif shape_type == "PLANE":
         extent = max(float_value(getattr(spec, "shape_plane_half_extent", 10.0), 10.0), 1.0)
         add_plane_lines(lines, center, axis_x * extent, axis_y * extent, axis_z)
+    elif shape_type == "MESH":
+        vertices = tuple(getattr(spec, "shape_vertices", ()) or ())
+        triangles = tuple(getattr(spec, "shape_triangles", ()) or ())
+        seen_edges = set()
+        edge_count = 0
+        for triangle in triangles:
+            if len(triangle) != 3:
+                continue
+            for first, second in (
+                (int(triangle[0]), int(triangle[1])),
+                (int(triangle[1]), int(triangle[2])),
+                (int(triangle[2]), int(triangle[0])),
+            ):
+                if first == second or first < 0 or second < 0:
+                    continue
+                if first >= len(vertices) or second >= len(vertices):
+                    continue
+                edge = (min(first, second), max(first, second))
+                if edge in seen_edges:
+                    continue
+                seen_edges.add(edge)
+                add_line(
+                    lines,
+                    mat @ mathutils.Vector(vertices[first]),
+                    mat @ mathutils.Vector(vertices[second]),
+                )
+                edge_count += 1
+                if edge_count >= 4096:
+                    return
     else:
         radius = max(float_value(getattr(spec, "shape_radius", 0.5), 0.5), 0.0)
         add_sphere_lines(lines, center, axis_x, axis_y, axis_z, radius)

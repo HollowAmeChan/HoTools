@@ -41,7 +41,7 @@
 
 - 近期先验证 GN 应用/拆分后的 Blender Objects、稳定 Object manifest、批同步和公共 Object 写回；所有物理参与者仍是 Objects。
 - 约束扩展只补当前十一种类型的参数、命令、诊断和节点协议；长期不增加 Path、Vehicle、Soft Body 或 Ragdoll。
-- `FULL_MESH_STATIC` 和作者提供 mesh 的 `CONVEX_HULL` 进入后续独立 fixture；直接 GN runtime instances 不属于当前 matrix。
+- Object `MESH` 已进入当前 fixture：静态验证 MeshShape，动态/运动学凸 Piece 验证同几何 ConvexHullShape；非凸 Compound 和直接 GN runtime instances 仍属于后续 matrix。
 - 每项新能力继续复用本目录 schema、canonical trace 和 assertions。旧式手工后台测试只作链路 smoke，不替代 S3。
 
 ## 验收边界
@@ -467,8 +467,8 @@ python OmniNode\PhysicsWorld\rigid\test\run_native_semantics.py `
 
 ### 后续 Shape
 
-- `FULL_MESH_STATIC` 单独覆盖确定三角化、winding、active edge、缓存、RayCast/contact/debug 和拒绝动态 body；
-- `CONVEX_HULL` 单独覆盖作者 mesh snapshot、finite/退化/共面输入、质量属性和 static/dynamic/kinematic；
+- `MESH` 覆盖确定三角化、winding、MeshShape static 接触、ConvexHull dynamic/kinematic、几何签名、RayCast/contact/debug 和无效输入拒绝；
+- 后续独立 `CONVEX_HULL`/Compound fixture 覆盖非凸输入、finite/退化/共面策略、共享 shape cache 和多凸块质量属性；
 - 两种 shape 都不得复用 GN runtime instance 身份协议；直接实例模拟以后另立合同和性能基线。
 
 完成标准：shape 从公共 spec 到 native、结果、debug、错误诊断和 S1/S2/S3 验收形成独立纵向切片。

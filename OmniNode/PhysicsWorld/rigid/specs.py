@@ -13,7 +13,45 @@ Phase 4 先只收集和调试，不要求 Jolt step 和写回。
 
 from __future__ import annotations
 
+import hashlib
+import struct
+
 from ..utils.values import matrix_from_16
+
+
+def _mesh_shape_snapshot(obj, world_matrix_values=None):
+    """Return local mesh geometry and a stable digest for MESH body shapes."""
+    mesh = getattr(obj, "data", None)
+    if mesh is None or getattr(obj, "type", "") != "MESH":
+        return (), (), ""
+    mesh.calc_loop_triangles()
+    try:
+        matrix = (
+            matrix_from_16(world_matrix_values)
+            if world_matrix_values is not None
+            else obj.matrix_world.copy()
+        )
+        _location, rotation, _scale = matrix.decompose()
+        local_basis = rotation.to_matrix().transposed() @ matrix.to_3x3()
+    except Exception:
+        local_basis = None
+    vertices = tuple(
+        tuple(float(value) for value in (
+            local_basis @ vertex.co if local_basis is not None else vertex.co
+        ))
+        for vertex in mesh.vertices
+    )
+    triangles = tuple(
+        tuple(int(index) for index in triangle.vertices)
+        for triangle in mesh.loop_triangles
+    )
+    digest = hashlib.sha256()
+    digest.update(struct.pack("<II", len(vertices), len(triangles)))
+    for vertex in vertices:
+        digest.update(struct.pack("<3f", *vertex))
+    for triangle in triangles:
+        digest.update(struct.pack("<3I", *triangle))
+    return vertices, triangles, digest.hexdigest()
 
 
 def _normalized_simulation_order_key(value) -> tuple[str, ...]:
@@ -96,6 +134,9 @@ class RigidBodySpec:
         "shape_convex_radius",
         "shape_offset",
         "shape_rotation_wxyz",
+        "shape_vertices",
+        "shape_triangles",
+        "shape_geometry_signature",
         "linear_velocity",
         "angular_velocity",
         "linear_damping",
@@ -135,6 +176,9 @@ class RigidBodySpec:
         shape_convex_radius: float = 0.05,
         shape_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
         shape_rotation_wxyz: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
+        shape_vertices: tuple[tuple[float, float, float], ...] = (),
+        shape_triangles: tuple[tuple[int, int, int], ...] = (),
+        shape_geometry_signature: str = "",
         linear_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
         angular_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
         linear_damping: float = 0.05,
@@ -175,6 +219,9 @@ class RigidBodySpec:
         self.shape_convex_radius: float = shape_convex_radius
         self.shape_offset: tuple[float, float, float] = shape_offset
         self.shape_rotation_wxyz: tuple[float, float, float, float] = shape_rotation_wxyz
+        self.shape_vertices = tuple(shape_vertices)
+        self.shape_triangles = tuple(shape_triangles)
+        self.shape_geometry_signature = str(shape_geometry_signature)
         self.linear_velocity: tuple[float, float, float] = linear_velocity
         self.angular_velocity: tuple[float, float, float] = angular_velocity
         self.linear_damping: float = linear_damping
@@ -211,6 +258,9 @@ class RigidBodySpec:
             "shape_convex_radius": self.shape_convex_radius,
             "shape_offset": self.shape_offset,
             "shape_rotation_wxyz": self.shape_rotation_wxyz,
+            "shape_vertex_count": len(self.shape_vertices),
+            "shape_triangle_count": len(self.shape_triangles),
+            "shape_geometry_signature": self.shape_geometry_signature,
             "linear_velocity": self.linear_velocity,
             "angular_velocity": self.angular_velocity,
             "linear_damping": self.linear_damping,
@@ -780,6 +830,7 @@ def build_rigid_body_spec(
         "TAPERED_CYLINDER",
         "PLANE",
         "BOX",
+        "MESH",
     }:
         shape_type = "SPHERE"
     if shape_type == "PLANE":
@@ -793,6 +844,16 @@ def build_rigid_body_spec(
     shape_convex_radius = max(float(getattr(props, "shape_convex_radius", 0.05)), 0.0)
     shape_offset = _float3(getattr(props, "shape_offset", (0.0, 0.0, 0.0)))
     shape_rotation_wxyz = _rotation_wxyz_from_euler(getattr(props, "shape_rotation", (0.0, 0.0, 0.0)))
+    mesh_matrix_values = (
+        None
+        if use_authored_transform and body_type == "DYNAMIC"
+        else world_matrix_values
+    )
+    shape_vertices, shape_triangles, shape_geometry_signature = (
+        _mesh_shape_snapshot(obj, mesh_matrix_values) if shape_type == "MESH" else ((), (), "")
+    )
+    if shape_type == "MESH" and (len(shape_vertices) < 4 or not shape_triangles):
+        raise ValueError(f"RigidBodySpec {obj.name_full} 的 MESH 碰撞体没有有效三角网格")
 
     linear_velocity = _float3(getattr(props, "linear_velocity", (0.0, 0.0, 0.0)))
     angular_velocity = _float3(getattr(props, "angular_velocity", (0.0, 0.0, 0.0)))
@@ -832,6 +893,9 @@ def build_rigid_body_spec(
         shape_convex_radius=shape_convex_radius,
         shape_offset=shape_offset,
         shape_rotation_wxyz=shape_rotation_wxyz,
+        shape_vertices=shape_vertices,
+        shape_triangles=shape_triangles,
+        shape_geometry_signature=shape_geometry_signature,
         linear_velocity=linear_velocity,
         angular_velocity=angular_velocity,
         linear_damping=linear_damping,

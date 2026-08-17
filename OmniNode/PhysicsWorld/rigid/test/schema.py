@@ -145,7 +145,7 @@ class ShapeSpec:
         shape_type = _string(data.get("type", "SPHERE"), f"{path}.type").upper()
         supported = {
             "SPHERE", "BOX", "CAPSULE", "CYLINDER", "TAPERED_CAPSULE",
-            "TAPERED_CYLINDER", "PLANE",
+            "TAPERED_CYLINDER", "PLANE", "MESH",
         }
         if shape_type not in supported:
             raise FixtureError(f"{path}.type is unsupported: {shape_type}")

@@ -150,6 +150,7 @@ def _configure_project():
     fracture.ensure_product_collection(source, scene)
     pieces = list(fracture.refresh_fracture_products(source))
     assert 32 <= len(pieces) <= 48, len(pieces)
+    assert all(piece.hotools_rigid_body.shape_type == "MESH" for piece in pieces)
     dynamic_pieces = []
     static_pieces = []
     for piece in pieces:
@@ -161,9 +162,7 @@ def _configure_project():
             and abs(float(position.z) - float(ball.matrix_world.translation.z)) < 12.0
         )
         rigid.body_type = "DYNAMIC" if is_impact_island else "STATIC"
-        rigid.shape_type = "BOX"
-        # Until convex-hull bodies land, use a conservative proxy so adjacent
-        # irregular Voronoi AABBs do not overlap before the impact.
+        rigid.shape_type = "MESH"
         rigid.shape_half_extents = tuple(
             max(float(value) * 0.36, 0.01) for value in piece.dimensions
         )

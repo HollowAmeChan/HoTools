@@ -66,7 +66,7 @@ Source 是资产 owner，不是破碎后的物理 body。Piece 是普通 Blender
 | Object 级刚体属性 | `rigid/schema.py`、`properties.py`、统一物理面板 | 可为碎块写入普通 `hotools_rigid_body` |
 | Collection 批范围 | `scope.py` 冻结 `Collection.all_objects`、Object/Data 指针和 transform 列 | 可复用碎块批读取与写回顺序 |
 | Rigid spec/slot | `build_rigid_body_spec()`、稳定 solver slot、结构脏重建 | Piece 不需要第二套 Jolt spec |
-| Jolt body/constraint | 7 种基础 shape、11 种约束、批结果和命令 | 第一测试可用 BOX 碎块，不依赖 convex |
+| Jolt body/constraint | 8 种 shape（含 MESH）、11 种约束、批结果和命令 | 碎块按网格碰撞；动态/运动学凸块由 Jolt 使用同几何 Convex Hull |
 | 激活命令 | adapter/native 已有 `set_body_active` / `activate_body` | 可在安全步边界显式激活已有 body |
 | 接触事件 | native 记录 add/persist/remove、body slot、normal、penetration 和 points | 足够做无冲量阈值的首次命中和范围选择 |
 | 生命周期 | restart、same-frame、dispose、scope prune、统一 delta writeback | 可复用，不建立破碎私有写回 |
@@ -284,7 +284,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 
 ### F4：碰撞表示与结构
 
-- 优先补齐作者 Mesh 的 `CONVEX_HULL`，让不规则 Voronoi Piece 不再依赖缩小的 BOX proxy；
+- 已补齐碎块 `MESH` shape：静态 Piece 使用精确三角 Mesh，动态/运动学凸 Voronoi Piece 使用同几何 Convex Hull；
 - 生成相邻图、Static 锚点和可断 glue/Fixed constraints，替代验收文件中手工固定外围 Piece；
 - contact point 半径、邻接岛、每步最大激活数和安全步边界 activation queue；
 - 有明确 oracle 后再增加 impulse threshold；
@@ -292,7 +292,7 @@ Resolver 必须在普通 rigid body collector 之前完成。它输出稳定顺�
 
 ### F5：后续表示
 
-- `CONVEX_HULL` 和 `FULL_MESH_STATIC` 独立 shape 切片；
+- 非凸动态 Mesh 的自动凸分解，以及多凸块 Compound Shape 仍是后续 shape 切片；
 - intact compound/cluster 与 Piece island split；
 - GN instances result carrier；
 - 接触位置驱动的预烘焙 variant，最后才是运行时 GN 拓扑生成。

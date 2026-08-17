@@ -212,6 +212,7 @@ get_rigid_solver_stats_result = _pw("rigid.results").get_rigid_solver_stats_resu
 iter_rigid_contact_event_results = _pw("rigid.results").iter_rigid_contact_event_results
 publish_rigid_contact_event_result = _pw("rigid.results").publish_rigid_contact_event_result
 build_rigid_debug_draw_snapshot = _pw("rigid.debug_draw").build_rigid_debug_draw_snapshot
+append_rigid_body_shape_lines = _pw("rigid.debug_draw")._append_body_shape_lines
 build_constraint_debug_lines = _pw("rigid.constraint_debug").build_constraint_debug_lines
 rigid_backend_debug_snapshot = _pw("rigid.debug").rigid_backend_debug_snapshot
 iter_rigid_query_results = _pw("rigid.queries").iter_rigid_query_results
@@ -2357,6 +2358,34 @@ def test_constraint_target_dirty_resyncs_jolt_constraint_without_generation_rest
     _del(a, b, c, empty)
 
 
+def test_mesh_debug_renderer_draws_geometry_edges():
+    spec = _types.SimpleNamespace(
+        shape_type="MESH",
+        shape_vertices=(
+            (-1.0, -1.0, -1.0), (1.0, -1.0, -1.0),
+            (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0),
+            (-1.0, -1.0, 1.0), (1.0, -1.0, 1.0),
+            (1.0, 1.0, 1.0), (-1.0, 1.0, 1.0),
+        ),
+        shape_triangles=(
+            (0, 3, 2), (0, 2, 1), (4, 5, 6), (4, 6, 7),
+            (0, 1, 5), (0, 5, 4), (1, 2, 6), (1, 6, 5),
+            (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7),
+        ),
+        shape_offset=(0.0, 0.0, 0.0),
+        shape_rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
+        shape_radius=0.5,
+    )
+    lines = []
+    append_rigid_body_shape_lines(
+        lines,
+        spec,
+        {"position": (2.0, 3.0, 4.0), "rotation_wxyz": (1.0, 0.0, 0.0, 0.0)},
+    )
+    assert len(lines) == 36, len(lines)
+    assert all(isinstance(point, tuple) and len(point) == 3 for point in lines)
+
+
 def test_constraint_debug_renderer_registry_and_semantics():
     common = {
         "anchor_position": (0.0, 0.0, 0.0),
@@ -2639,6 +2668,7 @@ if __name__ == "__main__":
     check("kinematic transform dirty update", test_kinematic_transform_dirty_updates_jolt_body_without_resync_generation)
     check("shape parameter dirty resync", test_shape_parameter_dirty_resyncs_jolt_body_without_generation_restart)
     check("constraint target dirty resync", test_constraint_target_dirty_resyncs_jolt_constraint_without_generation_restart)
+    check("MESH debug renderer geometry edges", test_mesh_debug_renderer_draws_geometry_edges)
     check("constraint debug renderer semantics", test_constraint_debug_renderer_registry_and_semantics)
     check("DET-003 scope enumeration determinism", test_scope_enumeration_order_is_simulation_stable)
     check("simulation order key collision rejection", test_simulation_order_key_collision_is_rejected)
