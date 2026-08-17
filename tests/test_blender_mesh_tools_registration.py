@@ -139,6 +139,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.create_bone_chain_by_meshflow",
                 "ho.modal_fill_mesh_hole",
                 "ho.transform_edge_constrained",
+                "ho.symmetrize",
                 "ho.visual_boolean_cut",
             })
             self.assertIsNotNone(
@@ -203,6 +204,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.transform_edge_constrained",
                 menu_layout.operator_ids,
             )
+            self.assertNotIn("ho.symmetrize", menu_layout.operator_ids)
             object_menu_layout = RecordingLayout()
             mesh_tools.draw_in_VIEW3D_MT_object_context_menu(
                 SimpleNamespace(layout=object_menu_layout),
@@ -226,6 +228,15 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             self.assertEqual(len(keymap_items), 1)
             self.assertEqual(keymap_items[0].type, 'R')
             self.assertTrue(keymap_items[0].alt)
+            symmetrize_keymaps = [
+                (keymap, keymap_item)
+                for keymap, keymap_item in mesh_tools.addon_keymaps
+                if keymap_item.idname == "ho.symmetrize"
+            ]
+            self.assertEqual(len(symmetrize_keymaps), 1)
+            self.assertEqual(symmetrize_keymaps[0][0].name, "Mesh")
+            self.assertEqual(symmetrize_keymaps[0][1].type, 'X')
+            self.assertTrue(symmetrize_keymaps[0][1].alt)
             align_keymaps = {
                 keymap.name: keymap_item
                 for keymap, keymap_item in mesh_tools.addon_keymaps

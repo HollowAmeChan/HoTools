@@ -2,6 +2,7 @@ import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
+from math import cos, pi, sin
 
 
 _FOREGROUND_COLOR_SHADER = None
@@ -235,6 +236,26 @@ def draw_lines(
 def draw_vector(vector, origin=None, mx=None, **kwargs):
     start = origin or Vector()
     return draw_line([start, start + vector], mx=mx, **kwargs)
+
+
+def draw_circle(center, radius, color=(1.0, 1.0, 1.0), width=2.0,
+                alpha=1.0, segments=64, screen=True, modal=True):
+    """Draw a circle in region or world coordinates using the shared line path."""
+    center = Vector(center)
+    coords = [
+        Vector((center.x + cos(2 * pi * index / segments) * radius,
+                center.y + sin(2 * pi * index / segments) * radius,
+                center.z if len(center) > 2 else 0.0))
+        for index in range(segments + 1)
+    ]
+    return draw_line(
+        coords,
+        color=color,
+        width=width,
+        alpha=alpha,
+        screen=screen,
+        modal=modal,
+    )
 
 
 def draw_mesh_wire(

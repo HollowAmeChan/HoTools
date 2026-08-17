@@ -5,6 +5,7 @@ from .align import Align, AlignRelative
 from .bone_chain import OP_CreatBoneChainByMeshFlow
 from .hole_fill import OP_ModalFillMeshHole
 from .edge_constraint import TransformEdgeConstrained
+from .symmetrize import Symmetrize
 from .visual_boolean import OP_VisualBooleanCut
 from .placement import (
     OP_AutoPlaceObjectBottom,
@@ -53,7 +54,6 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname, icon='ADD')
         layout.operator(OP_ModalFillMeshHole.bl_idname, icon='FACESEL')
 
-
 def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
     self.layout.menu(VIEW3D_MT_edit_mesh_hotools.bl_idname)
 
@@ -69,6 +69,7 @@ cls = [
     OP_CreatBoneChainByMeshFlow,
     OP_ModalFillMeshHole,
     TransformEdgeConstrained,
+    Symmetrize,
     OP_VisualBooleanCut,
     VIEW3D_MT_edit_mesh_hotools,
 ]
@@ -98,6 +99,16 @@ def register():
             alt=True,
         )
         keymap_item.properties.transform_mode = 'ROTATE'
+        keymap_item.properties.objmode = False
+        addon_keymaps.append((keymap, keymap_item))
+
+        keymap_item = keymap.keymap_items.new(
+            Symmetrize.bl_idname,
+            type='X',
+            value='PRESS',
+            alt=True,
+        )
+        keymap_item.properties.flick = True
         keymap_item.properties.objmode = False
         addon_keymaps.append((keymap, keymap_item))
 
