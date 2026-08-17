@@ -25,7 +25,7 @@ sys.path.append(py_lib_dir)
 sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
 
 
-from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools
+from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,HoPie
 from . import OmniNode
 from bpy.props import BoolProperty, FloatProperty
 
@@ -62,6 +62,14 @@ def updateOmniNodeFeaturesState(self, context):
         OmniNode.register()
     else:
         OmniNode.unregister()
+
+
+def updateAlignPieState(self, context):
+    HoPie.set_align_pie_enabled(self.hoTools_enableAlignPie)
+
+
+def updateCursorPieState(self, context):
+    HoPie.set_cursor_pie_enabled(self.hoTools_enableCursorPie)
 
 
 # 插件内置资源路径相关函数
@@ -111,6 +119,8 @@ class AddonPreference(bpy.types.AddonPreferences):
                                        default=False, update=updateExIconState)  # type: ignore
     hoTools_OmniNodeFeatures_enable: BoolProperty(name="OmniNode",
                                           default=False,update=updateOmniNodeFeaturesState)  # type: ignore
+    hoTools_enableAlignPie: BoolProperty(name="对齐饼菜单", default=False, update=updateAlignPieState)  # type: ignore
+    hoTools_enableCursorPie: BoolProperty(name="光标与原点饼菜单", default=False, update=updateCursorPieState)  # type: ignore
 
     hoTools_ExIconSize: FloatProperty(name="图标大小", default=0.5)  # type: ignore
     hoTools_ExiconAlpha: FloatProperty(
@@ -128,6 +138,9 @@ class AddonPreference(bpy.types.AddonPreferences):
         row.prop(self, "hoTools_ExiconAlpha")
         row = layout.row(align=True)
         row.prop(self, "hoTools_OmniNodeFeatures_enable", toggle=True)
+        row = layout.row(align=True)
+        row.prop(self, "hoTools_enableAlignPie", toggle=True)
+        row.prop(self, "hoTools_enableCursorPie", toggle=True)
 
         # 获取 KeyMap
         wm = context.window_manager
@@ -150,9 +163,9 @@ class AddonPreference(bpy.types.AddonPreferences):
                     col.context_pointer_set("keymap", km)
                     rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
 
-        if MeshTools.addon_keymaps:
+        if MeshTools.addon_keymaps or HoPie.preference_keymaps():
             col = layout.column()
-            for km, kmi in MeshTools.addon_keymaps:
+            for km, kmi in [*MeshTools.addon_keymaps, *HoPie.preference_keymaps()]:
                 col.context_pointer_set("keymap", km)
                 rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
 
@@ -180,8 +193,13 @@ def register():
     Checker.register()
     Rbf.register()
     ModTools.register()
+    HoPie.register()
 
     prefs = bpy.context.preferences.addons[__name__].preferences
+    if prefs.hoTools_enableAlignPie:
+        HoPie.set_align_pie_enabled(True)
+    if prefs.hoTools_enableCursorPie:
+        HoPie.set_cursor_pie_enabled(True)
     if prefs.hoTools_OmniNodeFeatures_enable:
         OmniNode.register()
 
@@ -203,6 +221,7 @@ def unregister():
     exIcon.unregister()
     UvTools.unregister()
     MeshTools.unregister()
+    HoPie.unregister()
     Checker.unregister()
     Rbf.unregister()
     OmniNode.unregister()
