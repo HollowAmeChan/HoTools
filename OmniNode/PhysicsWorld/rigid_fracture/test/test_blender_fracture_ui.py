@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Blender 5.2 registration and operator smoke test for rigid fracture UI."""
+"""Blender 4.5/5.2 operator smoke test for the complete fracture UI flow."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ registry = importlib.import_module("HoTools.OmniNode.PhysicsWorld.registry")
 ui = importlib.import_module("HoTools.OmniNode.PhysicsWorld.ui")
 panels = importlib.import_module("HoTools.OmniNode.PhysicsWorld.ui.panels")
 fracture_gn = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid_fracture.geometry_nodes")
+fracture = importlib.import_module("HoTools.OmniNode.PhysicsWorld.rigid_fracture.authoring")
 
 
 def main():
@@ -68,9 +69,62 @@ def main():
         assert fracture_gn.is_managed_fracture_group(modifier.node_group)
         assert fracture_gn.fracture_method_from_group(modifier.node_group) == props.fracture_method
         assert props.piece_id_attribute == fracture_gn.FRACTURE_PIECE_ID_ATTRIBUTE
+        fracture_gn.set_voronoi_modifier_inputs(
+            modifier,
+            density=3,
+            seed=7,
+            randomness=0.4,
+            gap=0.03,
+        )
+        values = fracture_gn.modifier_input_values(modifier)
+        assert values["碎块密度"] == 3
+        assert values["随机种子"] == 7
+        assert abs(values["随机度"] - 0.4) < 1.0e-6
+        assert abs(values["裂缝宽度"] - 0.03) < 1.0e-6
+        old_group_name = modifier.node_group.name
+        modifier.node_group["hotools_generator_version"] = 0
+        assert bpy.ops.ho.rigid_fracture_add_preview() == {"FINISHED"}
+        modifier = source.modifiers[props.modifier_name]
+        assert modifier.node_group.name != old_group_name
+        assert old_group_name not in bpy.data.node_groups
+        values = fracture_gn.modifier_input_values(modifier)
+        assert values["碎块密度"] == 3 and values["随机种子"] == 7
+        assert abs(values["随机度"] - 0.4) < 1.0e-6
+        assert abs(values["裂缝宽度"] - 0.03) < 1.0e-6
+        assert bpy.ops.ho.rigid_fracture_refresh() == {"FINISHED"}
+        pieces = fracture.validate_fracture_manifest(source)
+        assert len(pieces) == 27
+        assert props.product_status == "READY" and props.product_revision == 1
+        piece_names = tuple(piece.name for piece in pieces)
         assert bpy.ops.ho.rigid_fracture_delete_collection() == {"FINISHED"}
         assert props.product_collection is None
-        print("[PASS] rigid fracture UI registered; preview/create/delete operators ready")
+        assert not any(name in bpy.data.objects for name in piece_names)
+
+        source.select_set(False)
+        invalid_mesh = bpy.data.meshes.new("InvalidFractureMesh")
+        invalid_mesh.from_pydata([(0.0, 0.0, 0.0)], [], [])
+        invalid = bpy.data.objects.new("InvalidFractureSource", invalid_mesh)
+        bpy.context.scene.collection.objects.link(invalid)
+        bpy.context.view_layer.objects.active = invalid
+        invalid.select_set(True)
+        invalid.hotools_rigid_fracture.enabled = True
+        group_names = set(bpy.data.node_groups.keys())
+        try:
+            invalid_result = bpy.ops.ho.rigid_fracture_add_preview()
+        except RuntimeError as exc:
+            assert "添加碎块预览失败" in str(exc)
+            invalid_result = {"CANCELLED"}
+        assert invalid_result == {"CANCELLED"}
+        invalid_props = invalid.hotools_rigid_fracture
+        assert len(invalid.modifiers) == 0
+        assert invalid_props.modifier_name == ""
+        assert invalid_props.cutter_object is None
+        assert set(bpy.data.node_groups.keys()) == group_names
+        assert invalid_props.last_error.startswith("添加碎块预览失败:")
+        print(
+            "[PASS] rigid fracture UI flow: "
+            f"Blender={bpy.app.version_string}, pieces={len(pieces)}"
+        )
     finally:
         ui.unregister()
         registry.unregister_physics_world_blender_properties()

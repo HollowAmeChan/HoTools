@@ -203,22 +203,67 @@ def build_fracture_group(group, method: str, cutter_object=None) -> None:
 
 def new_fracture_group(name: str, method: str, cutter_object=None):
     group = bpy.data.node_groups.new(name, "GeometryNodeTree")
-    build_fracture_group(group, method, cutter_object)
+    try:
+        build_fracture_group(group, method, cutter_object)
+    except Exception:
+        bpy.data.node_groups.remove(group)
+        raise
     return group
 
 
-def modifier_input_values(modifier) -> dict:
-    """Read managed preview values by interface name, independent of identifiers."""
+def _managed_input_sockets(modifier):
     group = getattr(modifier, "node_group", None)
-    values = {}
-    for item in getattr(group.interface, "items_tree", ()):
+    interface = getattr(group, "interface", None)
+    for item in getattr(interface, "items_tree", ()):
         if (
             getattr(item, "item_type", "") == "SOCKET"
             and getattr(item, "in_out", "") == "INPUT"
             and item.name != "Geometry"
         ):
-            values[item.name] = getattr(modifier.properties.inputs, item.identifier).value
-    return values
+            yield item
+
+
+def _modifier_input_get(modifier, item):
+    """Read a GN modifier socket across Blender 4.5 and 5.2 APIs."""
+    properties = getattr(modifier, "properties", None)
+    inputs = getattr(properties, "inputs", None)
+    if inputs is not None:
+        try:
+            return getattr(inputs, item.identifier).value
+        except (AttributeError, KeyError, TypeError):
+            pass
+    try:
+        return modifier[item.identifier]
+    except (KeyError, TypeError):
+        return item.default_value
+
+
+def _modifier_input_set(modifier, item, value) -> None:
+    """Write a GN modifier socket across Blender 4.5 and 5.2 APIs."""
+    properties = getattr(modifier, "properties", None)
+    inputs = getattr(properties, "inputs", None)
+    if inputs is not None:
+        try:
+            getattr(inputs, item.identifier).value = value
+            return
+        except (AttributeError, KeyError, TypeError):
+            pass
+    modifier[item.identifier] = value
+
+
+def modifier_input_values(modifier) -> dict:
+    """Read managed preview values by interface name, independent of identifiers."""
+    return {
+        item.name: _modifier_input_get(modifier, item)
+        for item in _managed_input_sockets(modifier)
+    }
+
+
+def set_modifier_input_values(modifier, values: dict) -> None:
+    """Set managed preview inputs by stable interface names."""
+    for item in _managed_input_sockets(modifier):
+        if item.name in values and values[item.name] is not None:
+            _modifier_input_set(modifier, item, values[item.name])
 
 
 def set_voronoi_modifier_inputs(
@@ -240,13 +285,7 @@ def set_voronoi_modifier_inputs(
         "随机度": randomness,
         "裂缝宽度": gap,
     }
-    for item in group.interface.items_tree:
-        if (
-            getattr(item, "item_type", "") == "SOCKET"
-            and getattr(item, "in_out", "") == "INPUT"
-            and values.get(item.name) is not None
-        ):
-            getattr(modifier.properties.inputs, item.identifier).value = values[item.name]
+    set_modifier_input_values(modifier, values)
 
 
 __all__ = [
@@ -267,5 +306,6 @@ __all__ = [
     "modifier_input_values",
     "new_fracture_group",
     "set_fracture_cutter_object",
+    "set_modifier_input_values",
     "set_voronoi_modifier_inputs",
 ]

@@ -52,6 +52,7 @@ def _parse_args():
     parser.add_argument("--verify-file", action="store_true")
     parser.add_argument("--baseline-manual", action="store_true")
     parser.add_argument("--baseline-auto", action="store_true")
+    parser.add_argument("--authoring-flow", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -381,6 +382,41 @@ def _run_original_baseline(*, manual: bool):
     assert distance > 1.0, distance
 
 
+def _run_original_authoring_flow():
+    scene = bpy.context.scene
+    source = next(
+        obj for obj in scene.objects
+        if bool(getattr(getattr(obj, "hotools_rigid_fracture", None), "enabled", False))
+    )
+    bpy.ops.object.select_all(action="DESELECT")
+    source.select_set(True)
+    bpy.context.view_layer.objects.active = source
+    modifier = fracture.ensure_fracture_preview_modifier(source)
+    fracture_gn.set_voronoi_modifier_inputs(
+        modifier,
+        density=5,
+        seed=11,
+        randomness=0.55,
+        gap=0.04,
+    )
+    fracture.ensure_product_collection(source, scene)
+    pieces = tuple(fracture.refresh_fracture_products(source))
+    assert len(pieces) > 1
+    manifest = fracture.validate_fracture_manifest(source)
+    assert {
+        piece.hotools_rigid_fracture_piece.piece_id for piece in manifest
+    } == {
+        piece.hotools_rigid_fracture_piece.piece_id for piece in pieces
+    }
+    count = fracture.delete_fracture_products(source)
+    assert count == len(pieces)
+    assert source.hotools_rigid_fracture.product_collection is None
+    print(
+        "[PASS] original project fracture authoring flow: "
+        f"Blender={bpy.app.version_string}, source={source.name_full}, pieces={len(pieces)}"
+    )
+
+
 def main():
     args = _parse_args()
     project = os.path.abspath(args.project)
@@ -394,6 +430,9 @@ def main():
         return
     if args.baseline_manual or args.baseline_auto:
         _run_original_baseline(manual=bool(args.baseline_manual))
+        return
+    if args.authoring_flow:
+        _run_original_authoring_flow()
         return
     if args.verify_file:
         tree, source, ball, pieces = _loaded_acceptance_asset()

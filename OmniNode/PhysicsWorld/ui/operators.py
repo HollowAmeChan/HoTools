@@ -25,7 +25,6 @@ from .utils import (
 )
 from ..simple_cloth.base_pose import ensure_base_pose_proxy
 from ..rigid_fracture.authoring import (
-    FractureAssetError,
     delete_fracture_products,
     ensure_asset_id,
     ensure_fracture_preview_modifier,
@@ -356,6 +355,16 @@ def _active_fracture_source(context):
     return obj if props is not None else None
 
 
+def _cancel_fracture_operator(operator, source, action: str, exc: Exception):
+    message = str(exc) or exc.__class__.__name__
+    props = getattr(source, "hotools_rigid_fracture", None) if source is not None else None
+    if props is not None:
+        props.last_error = f"{action}失败: {message}"
+        message = props.last_error
+    operator.report({"ERROR"}, message)
+    return {"CANCELLED"}
+
+
 class OP_Hotools_RigidFracture_AddPreview(Operator):
     bl_idname = "ho.rigid_fracture_add_preview"
     bl_label = "添加碎块预览"
@@ -371,9 +380,9 @@ class OP_Hotools_RigidFracture_AddPreview(Operator):
         try:
             ensure_asset_id(source)
             modifier = ensure_fracture_preview_modifier(source)
-        except FractureAssetError as exc:
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
+        except Exception as exc:
+            return _cancel_fracture_operator(self, source, "添加碎块预览", exc)
+        source.hotools_rigid_fracture.last_error = ""
         self.report({"INFO"}, f"碎块预览: {modifier.name}")
         return {"FINISHED"}
 
@@ -393,9 +402,9 @@ class OP_Hotools_RigidFracture_CreateCollection(Operator):
         try:
             ensure_asset_id(source)
             collection = ensure_product_collection(source, context.scene)
-        except FractureAssetError as exc:
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
+        except Exception as exc:
+            return _cancel_fracture_operator(self, source, "创建碎块集合", exc)
+        source.hotools_rigid_fracture.last_error = ""
         self.report({"INFO"}, f"产物集合: {collection.name}")
         return {"FINISHED"}
 
@@ -418,11 +427,12 @@ class OP_Hotools_RigidFracture_DeleteCollection(Operator):
         return context.window_manager.invoke_confirm(self, _event)
 
     def execute(self, context):
+        source = _active_fracture_source(context)
         try:
-            count = delete_fracture_products(_active_fracture_source(context))
-        except FractureAssetError as exc:
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
+            count = delete_fracture_products(source)
+        except Exception as exc:
+            return _cancel_fracture_operator(self, source, "删除碎块集合", exc)
+        source.hotools_rigid_fracture.last_error = ""
         self.report({"INFO"}, f"已删除碎块集合和 {count} 个碎块")
         return {"FINISHED"}
 
@@ -442,9 +452,9 @@ class OP_Hotools_RigidFracture_Refresh(Operator):
         source = _active_fracture_source(context)
         try:
             pieces = refresh_fracture_products(source)
-        except FractureAssetError as exc:
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
+        except Exception as exc:
+            return _cancel_fracture_operator(self, source, "刷新碎块集合", exc)
+        source.hotools_rigid_fracture.last_error = ""
         self.report({"INFO"}, f"已刷新 {len(pieces)} 个碎块")
         return {"FINISHED"}
 

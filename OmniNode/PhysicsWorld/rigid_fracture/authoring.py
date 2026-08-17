@@ -22,6 +22,7 @@ from .geometry_nodes import (
     modifier_input_values,
     new_fracture_group,
     set_fracture_cutter_object,
+    set_modifier_input_values,
 )
 
 
@@ -70,24 +71,15 @@ def _fracture_method(props) -> str:
     )
 
 
-def _replace_preview_group(source, modifier, method: str):
-    old_group = getattr(modifier, "node_group", None)
-    old_values = modifier_input_values(modifier) if old_group is not None else {}
-    modifier.node_group = new_fracture_group(
-        f"{source.name}_FracturePreview_{method}",
-        method,
-        getattr(source.hotools_rigid_fracture, "cutter_object", None),
-    )
-    for item in modifier.node_group.interface.items_tree:
-        if (
-            getattr(item, "item_type", "") == "SOCKET"
-            and getattr(item, "in_out", "") == "INPUT"
-            and item.name in old_values
-        ):
-            getattr(modifier.properties.inputs, item.identifier).value = old_values[item.name]
-    if old_group is not None and old_group.users == 0:
-        bpy.data.node_groups.remove(old_group)
-    return modifier
+def _rollback_created_cutter(props, previous_cutter) -> None:
+    cutter = getattr(props, "cutter_object", None)
+    if cutter is None or cutter == previous_cutter:
+        return
+    mesh = getattr(cutter, "data", None)
+    props.cutter_object = previous_cutter
+    bpy.data.objects.remove(cutter, do_unlink=True)
+    if mesh is not None and mesh.users == 0:
+        bpy.data.meshes.remove(mesh)
 
 
 def switch_fracture_preview_modifier(source, method: str):
@@ -103,11 +95,36 @@ def switch_fracture_preview_modifier(source, method: str):
     group = modifier.node_group
     if not (is_managed_fracture_group(group) or is_legacy_passthrough_group(group)):
         raise FractureAssetError("只能切换 HoTools 管理的碎块预览")
-    if not is_current_fracture_group(group, method):
-        _replace_preview_group(source, modifier, method)
-        props.product_status = "OUTDATED" if props.product_revision else "EMPTY"
-    props.piece_id_attribute = FRACTURE_PIECE_ID_ATTRIBUTE
-    rebuild_fracture_preview(source, modifier)
+    previous_status = str(props.product_status)
+    previous_piece_id_attribute = str(props.piece_id_attribute)
+    previous_cutter = getattr(props, "cutter_object", None)
+    replacement = None
+    try:
+        if not is_current_fracture_group(group, method):
+            old_values = modifier_input_values(modifier) if group is not None else {}
+            replacement = new_fracture_group(
+                f"{source.name}_FracturePreview_{method}",
+                method,
+                getattr(props, "cutter_object", None),
+            )
+            modifier.node_group = replacement
+            set_modifier_input_values(modifier, old_values)
+            props.product_status = "OUTDATED" if props.product_revision else "EMPTY"
+        props.piece_id_attribute = FRACTURE_PIECE_ID_ATTRIBUTE
+        rebuild_fracture_preview(source, modifier)
+    except Exception as exc:
+        if replacement is not None:
+            modifier.node_group = group
+            if replacement.users == 0:
+                bpy.data.node_groups.remove(replacement)
+        _rollback_created_cutter(props, previous_cutter)
+        props.product_status = previous_status
+        props.piece_id_attribute = previous_piece_id_attribute
+        if isinstance(exc, FractureAssetError):
+            raise
+        raise FractureAssetError(str(exc)) from exc
+    if replacement is not None and group is not None and group.users == 0:
+        bpy.data.node_groups.remove(group)
     return modifier
 
 
@@ -122,15 +139,30 @@ def ensure_fracture_preview_modifier(source):
         if is_managed_fracture_group(group) or is_legacy_passthrough_group(group):
             return switch_fracture_preview_modifier(source, method)
 
+    previous_modifier_name = str(props.modifier_name)
+    previous_piece_id_attribute = str(props.piece_id_attribute)
+    previous_status = str(props.product_status)
+    previous_cutter = getattr(props, "cutter_object", None)
     modifier = source.modifiers.new(DEFAULT_FRACTURE_MODIFIER_NAME, "NODES")
-    modifier.node_group = new_fracture_group(
-        f"{source.name}_FracturePreview_{method}",
-        method,
-    )
-    props.modifier_name = modifier.name
-    props.piece_id_attribute = FRACTURE_PIECE_ID_ATTRIBUTE
-    props.product_status = "OUTDATED" if props.product_revision else "EMPTY"
-    rebuild_fracture_preview(source, modifier)
+    group = None
+    try:
+        group = new_fracture_group(f"{source.name}_FracturePreview_{method}", method)
+        modifier.node_group = group
+        props.modifier_name = modifier.name
+        props.piece_id_attribute = FRACTURE_PIECE_ID_ATTRIBUTE
+        props.product_status = "OUTDATED" if props.product_revision else "EMPTY"
+        rebuild_fracture_preview(source, modifier)
+    except Exception as exc:
+        source.modifiers.remove(modifier)
+        if group is not None and group.users == 0:
+            bpy.data.node_groups.remove(group)
+        _rollback_created_cutter(props, previous_cutter)
+        props.modifier_name = previous_modifier_name
+        props.piece_id_attribute = previous_piece_id_attribute
+        props.product_status = previous_status
+        if isinstance(exc, FractureAssetError):
+            raise
+        raise FractureAssetError(str(exc)) from exc
     return modifier
 
 
