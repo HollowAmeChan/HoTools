@@ -129,6 +129,8 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 if issubclass(cls, bpy.types.Operator)
             }
             self.assertEqual(registered_ids, {
+                "ho.align",
+                "ho.align_relative",
                 "ho.auto_place_object_bottom",
                 "ho.auto_snap_face_orthogonal",
                 "ho.placeobjectbottom",
@@ -162,6 +164,9 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 def operator(self, operator_id, **kwargs):
                     self.operator_ids.append(operator_id)
                     return SimpleNamespace()
+
+                def separator(self):
+                    return None
 
             callback_layout = RecordingLayout()
             mesh_tools.draw_in_VIEW3D_MT_edit_mesh_context_menu(
@@ -198,6 +203,21 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.transform_edge_constrained",
                 menu_layout.operator_ids,
             )
+            object_menu_layout = RecordingLayout()
+            mesh_tools.draw_in_VIEW3D_MT_object_context_menu(
+                SimpleNamespace(layout=object_menu_layout),
+                bpy.context,
+            )
+            self.assertEqual(
+                object_menu_layout.operator_ids,
+                ["ho.align", "ho.align_relative"],
+            )
+            pose_menu_layout = RecordingLayout()
+            mesh_tools.draw_in_VIEW3D_MT_pose_context_menu(
+                SimpleNamespace(layout=pose_menu_layout),
+                bpy.context,
+            )
+            self.assertEqual(pose_menu_layout.operator_ids, ["ho.align"])
             keymap_items = [
                 keymap_item
                 for _, keymap_item in mesh_tools.addon_keymaps
@@ -206,6 +226,15 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             self.assertEqual(len(keymap_items), 1)
             self.assertEqual(keymap_items[0].type, 'R')
             self.assertTrue(keymap_items[0].alt)
+            align_keymaps = {
+                keymap.name: keymap_item
+                for keymap, keymap_item in mesh_tools.addon_keymaps
+                if keymap_item.idname == "ho.align"
+            }
+            self.assertEqual(set(align_keymaps), {"Object Mode", "Pose"})
+            for keymap_item in align_keymaps.values():
+                self.assertEqual(keymap_item.type, 'A')
+                self.assertTrue(keymap_item.alt)
             segment = (Vector((0.0, 0.0, 0.0)), Vector((2.0, 0.0, 0.0)))
             clamped = mesh_tools.edge_constraint.clamp_point_to_segment(
                 Vector((5.0, 0.0, 0.0)),

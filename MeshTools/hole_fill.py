@@ -10,7 +10,7 @@ from bpy.types import Operator
 from bpy_extras import view3d_utils
 from mathutils import Vector
 
-from .viewport_draw import draw_polygons, draw_segments, restore_3d_state
+from Utils.viewport_draw import draw_polygons, draw_segments, restore_3d_state
 from Utils.hud import draw_mouse_hud_rows
 
 

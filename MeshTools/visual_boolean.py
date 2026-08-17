@@ -7,7 +7,7 @@ from mathutils import Vector
 from bpy_extras import view3d_utils
 
 from . import boolean as boolean_tools
-from .viewport_draw import draw_polygons, draw_segments, restore_3d_state
+from Utils.viewport_draw import draw_polygons, draw_segments, restore_3d_state
 from Utils.hud import begin_hud, draw_hud_lines, end_hud, measure_hud_lines
 
 

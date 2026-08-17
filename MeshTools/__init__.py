@@ -1,6 +1,7 @@
 import bpy
 
 from . import boolean
+from .align import Align, AlignRelative
 from .bone_chain import OP_CreatBoneChainByMeshFlow
 from .hole_fill import OP_ModalFillMeshHole
 from .edge_constraint import TransformEdgeConstrained
@@ -58,7 +59,20 @@ def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
     self.layout.menu(VIEW3D_MT_edit_mesh_hotools.bl_idname)
 
 
+def draw_in_VIEW3D_MT_object_context_menu(self, context):
+    layout = self.layout
+    layout.separator()
+    layout.operator(Align.bl_idname, icon='ORIENTATION_GLOBAL')
+    layout.operator(AlignRelative.bl_idname, icon='DUPLICATE')
+
+
+def draw_in_VIEW3D_MT_pose_context_menu(self, context):
+    self.layout.operator(Align.bl_idname, icon='ORIENTATION_GLOBAL')
+
+
 cls = [
+    Align,
+    AlignRelative,
     OP_AutoPlaceObjectBottom,
     OP_PlaceObjectBottom,
     OP_AutoSnapFaceOrthogonal,
@@ -82,6 +96,12 @@ def register():
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
     )
+    bpy.types.VIEW3D_MT_object_context_menu.append(
+        draw_in_VIEW3D_MT_object_context_menu
+    )
+    bpy.types.VIEW3D_MT_pose_context_menu.append(
+        draw_in_VIEW3D_MT_pose_context_menu
+    )
 
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if keyconfig:
@@ -99,6 +119,20 @@ def register():
         keymap_item.properties.transform_mode = 'ROTATE'
         keymap_item.properties.objmode = False
         addon_keymaps.append((keymap, keymap_item))
+
+        for keymap_name in ("Object Mode", "Pose"):
+            keymap = keyconfig.keymaps.new(
+                name=keymap_name,
+                space_type='EMPTY',
+                region_type='WINDOW',
+            )
+            keymap_item = keymap.keymap_items.new(
+                Align.bl_idname,
+                type='A',
+                value='PRESS',
+                alt=True,
+            )
+            addon_keymaps.append((keymap, keymap_item))
     reg_props()
 
 
@@ -109,6 +143,12 @@ def unregister():
 
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
+    )
+    bpy.types.VIEW3D_MT_object_context_menu.remove(
+        draw_in_VIEW3D_MT_object_context_menu
+    )
+    bpy.types.VIEW3D_MT_pose_context_menu.remove(
+        draw_in_VIEW3D_MT_pose_context_menu
     )
     for i in reversed(cls):
         bpy.utils.unregister_class(i)

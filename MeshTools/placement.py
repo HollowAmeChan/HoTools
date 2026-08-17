@@ -10,7 +10,7 @@ from bpy_extras import view3d_utils
 from mathutils import Matrix, Vector
 from mathutils.geometry import intersect_ray_tri
 
-from .viewport_draw import (
+from Utils.viewport_draw import (
     draw_polygons,
     foreground_uniform_color_shader,
     restore_3d_state,
