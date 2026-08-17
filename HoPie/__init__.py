@@ -1,11 +1,15 @@
 import bpy
-from . import align_pie, cursor_pie
+from . import align_pie, cursor_pie, delete_merge_pie, selection_mode_pie
 
 
 align_pie_keymaps = []
 cursor_pie_keymaps = []
+selection_mode_pie_keymaps = []
+delete_merge_pie_keymaps = []
 _align_pie_enabled = False
 _cursor_pie_enabled = False
+_selection_mode_pie_enabled = False
+_delete_merge_pie_enabled = False
 
 
 def reg_props():
@@ -102,8 +106,49 @@ def set_cursor_pie_enabled(enabled):
     _cursor_pie_enabled = enabled
 
 
+def set_selection_mode_pie_enabled(enabled):
+    global _selection_mode_pie_enabled
+    enabled = bool(enabled)
+    if enabled == _selection_mode_pie_enabled:
+        return
+    if enabled:
+        _register_classes(selection_mode_pie.SELECTION_MODE_PIE_CLASSES)
+        _register_keymap(
+            'Window', 'EMPTY', 'W',
+            menu_name='HO_MT_selection_mode_pie',
+            keymap_store=selection_mode_pie_keymaps,
+        )
+    else:
+        _remove_keymaps(selection_mode_pie_keymaps)
+        _unregister_classes(selection_mode_pie.SELECTION_MODE_PIE_CLASSES)
+    _selection_mode_pie_enabled = enabled
+
+
+def set_delete_merge_pie_enabled(enabled):
+    global _delete_merge_pie_enabled
+    enabled = bool(enabled)
+    if enabled == _delete_merge_pie_enabled:
+        return
+    if enabled:
+        _register_classes(delete_merge_pie.DELETE_MERGE_PIE_CLASSES)
+        _register_keymap(
+            'Window', 'EMPTY', 'X',
+            menu_name='HO_MT_delete_merge_pie',
+            keymap_store=delete_merge_pie_keymaps,
+        )
+    else:
+        _remove_keymaps(delete_merge_pie_keymaps)
+        _unregister_classes(delete_merge_pie.DELETE_MERGE_PIE_CLASSES)
+    _delete_merge_pie_enabled = enabled
+
+
 def preference_keymaps():
-    return [*align_pie_keymaps, *cursor_pie_keymaps]
+    return [
+        *align_pie_keymaps,
+        *cursor_pie_keymaps,
+        *selection_mode_pie_keymaps,
+        *delete_merge_pie_keymaps,
+    ]
 
 
 def register():
@@ -111,6 +156,8 @@ def register():
 
 
 def unregister():
+    set_delete_merge_pie_enabled(False)
+    set_selection_mode_pie_enabled(False)
     set_cursor_pie_enabled(False)
     set_align_pie_enabled(False)
     ureg_props()

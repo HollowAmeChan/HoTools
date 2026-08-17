@@ -35,7 +35,7 @@ def load_mesh_tools():
 class MeshToolsRegistrationTests(unittest.TestCase):
     def test_edge_constraint_clamps_real_topology_tracks(self):
         mesh_tools = load_mesh_tools()
-        operator_type = mesh_tools.TransformEdgeConstrained
+        operator_type = mesh_tools.OP_TransformEdgeConstrained
         bm = bmesh.new()
         try:
             bottom_left = bm.verts.new((0.0, 0.0, 0.0))
