@@ -150,6 +150,12 @@ class AddonPreference(bpy.types.AddonPreferences):
                     col.context_pointer_set("keymap", km)
                     rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
 
+        if MeshTools.addon_keymaps:
+            col = layout.column()
+            for km, kmi in MeshTools.addon_keymaps:
+                col.context_pointer_set("keymap", km)
+                rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
+
 
 cls = [OP_register_asset_library,AddonPreference,]
 

@@ -3,6 +3,7 @@ import bpy
 from . import boolean
 from .bone_chain import OP_CreatBoneChainByMeshFlow
 from .hole_fill import OP_ModalFillMeshHole
+from .edge_constraint import TransformEdgeConstrained
 from .visual_boolean import OP_VisualBooleanCut
 from .placement import (
     OP_AutoPlaceObjectBottom,
@@ -50,6 +51,7 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         )
         layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname, icon='ADD')
         layout.operator(OP_ModalFillMeshHole.bl_idname, icon='FACESEL')
+        layout.operator(TransformEdgeConstrained.bl_idname, icon='MOD_EDGESPLIT')
 
 
 def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
@@ -64,9 +66,13 @@ cls = [
     OP_AlignViewToAvgNormal,
     OP_CreatBoneChainByMeshFlow,
     OP_ModalFillMeshHole,
+    TransformEdgeConstrained,
     OP_VisualBooleanCut,
     VIEW3D_MT_edit_mesh_hotools,
 ]
+
+
+addon_keymaps = []
 
 
 def register():
@@ -76,10 +82,31 @@ def register():
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
     )
+
+    keyconfig = bpy.context.window_manager.keyconfigs.addon
+    if keyconfig:
+        keymap = keyconfig.keymaps.new(
+            name="Mesh",
+            space_type='EMPTY',
+            region_type='WINDOW',
+        )
+        keymap_item = keymap.keymap_items.new(
+            TransformEdgeConstrained.bl_idname,
+            type='R',
+            value='PRESS',
+            alt=True,
+        )
+        keymap_item.properties.transform_mode = 'ROTATE'
+        keymap_item.properties.objmode = False
+        addon_keymaps.append((keymap, keymap_item))
     reg_props()
 
 
 def unregister():
+    for keymap, keymap_item in addon_keymaps:
+        keymap.keymap_items.remove(keymap_item)
+    addon_keymaps.clear()
+
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
     )

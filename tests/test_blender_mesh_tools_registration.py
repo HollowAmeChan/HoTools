@@ -1,13 +1,20 @@
 import importlib.util
+from math import radians
 import sys
 from types import SimpleNamespace
 import unittest
 from pathlib import Path
 
+import bmesh
 import bpy
+from mathutils import Matrix, Quaternion, Vector
 
 
-MESH_TOOLS = Path(__file__).resolve().parents[1] / "MeshTools"
+ADDON_ROOT = Path(__file__).resolve().parents[1]
+if str(ADDON_ROOT) not in sys.path:
+    sys.path.insert(0, str(ADDON_ROOT))
+
+MESH_TOOLS = ADDON_ROOT / "MeshTools"
 PACKAGE_NAME = "hotools_mesh_tools_registration_test"
 
 
@@ -26,6 +33,92 @@ def load_mesh_tools():
 
 
 class MeshToolsRegistrationTests(unittest.TestCase):
+    def test_edge_constraint_clamps_real_topology_tracks(self):
+        mesh_tools = load_mesh_tools()
+        operator_type = mesh_tools.TransformEdgeConstrained
+        bm = bmesh.new()
+        try:
+            bottom_left = bm.verts.new((0.0, 0.0, 0.0))
+            bottom_right = bm.verts.new((1.0, 0.0, 0.0))
+            top_right = bm.verts.new((1.0, 1.0, 0.0))
+            top_left = bm.verts.new((0.0, 1.0, 0.0))
+            bm.faces.new((bottom_left, bottom_right, top_right, top_left))
+            bm.normal_update()
+
+            selected_edge = bm.edges.get((bottom_left, bottom_right))
+            selected_edge.select = True
+            bottom_left.select = True
+            bottom_right.select = True
+            sequences = mesh_tools.edge_constraint.get_selected_vert_sequences(
+                [bottom_left, bottom_right],
+                ensure_seq_len=True,
+            )
+
+            op = SimpleNamespace(
+                mx=Matrix.Identity(4),
+                original_edge_coords=[],
+                draw_face_align=False,
+            )
+            op.data = operator_type.get_data(op, bm, sequences)
+            op.rotation = Quaternion((0.0, 0.0, 1.0), radians(100.0))
+            op.origin = Vector((0.5, 0.0, 0.0))
+            op.origin_dir = Vector((0.0, 0.0, 1.0))
+            op.init_intersection = Vector((1.5, 0.0, 0.0))
+            op.scale = Vector((1.0, 0.0, 0.0))
+            op.transform_mode = 'ROTATE'
+            op.constrain_mode = 'DIRECT_PLANE_INTERSECTION'
+            op.is_zero_scaling = False
+            op.individual_origins = False
+            op.end_align = True
+            op.face_align = False
+            op.slide_coords = []
+            op.draw_end_align = False
+
+            bmesh.ops.rotate(
+                bm,
+                cent=op.origin,
+                matrix=op.rotation.to_matrix(),
+                verts=[bottom_left, bottom_right],
+            )
+            op.tdata = operator_type.get_transformed_data(op)
+
+            candidates_outside_tracks = 0
+            fallback_keys = (
+                'direct_plane_intersection_co',
+                'projected_plane_intersection_co',
+                'direct_co',
+                'proximity_co',
+            )
+            for selection in op.tdata.values():
+                for vert in selection['verts']:
+                    data = selection[vert]
+                    segment = data['edge_segment']
+                    self.assertIsNotNone(segment)
+                    candidate = next(
+                        data[key] for key in fallback_keys if data[key] is not None
+                    )
+                    direction = segment[1] - segment[0]
+                    factor = (
+                        (candidate - segment[0]).dot(direction)
+                        / direction.length_squared
+                    )
+                    if factor < 0.0 or factor > 1.0:
+                        candidates_outside_tracks += 1
+
+            self.assertGreater(candidates_outside_tracks, 0)
+            operator_type.constrain_verts_to_edges(op)
+
+            for selection in op.tdata.values():
+                for vert in selection['verts']:
+                    segment = selection[vert]['edge_segment']
+                    clamped = mesh_tools.edge_constraint.clamp_point_to_segment(
+                        vert.co,
+                        segment,
+                    )
+                    self.assertLess((vert.co - clamped).length, 1e-6)
+        finally:
+            bm.free()
+
     def test_registers_and_unregisters_all_edit_mesh_tools(self):
         mesh_tools = load_mesh_tools()
         mesh_tools.register()
@@ -43,6 +136,8 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.align_to_avg_normal",
                 "ho.create_bone_chain_by_meshflow",
                 "ho.modal_fill_mesh_hole",
+                "ho.transform_edge_constrained",
+                "ho.visual_boolean_cut",
             })
             self.assertIsNotNone(
                 getattr(
@@ -99,6 +194,29 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.snap_selected_face_orthogonal",
                 menu_layout.operator_ids,
             )
+            self.assertIn(
+                "ho.transform_edge_constrained",
+                menu_layout.operator_ids,
+            )
+            keymap_items = [
+                keymap_item
+                for _, keymap_item in mesh_tools.addon_keymaps
+                if keymap_item.idname == "ho.transform_edge_constrained"
+            ]
+            self.assertEqual(len(keymap_items), 1)
+            self.assertEqual(keymap_items[0].type, 'R')
+            self.assertTrue(keymap_items[0].alt)
+            segment = (Vector((0.0, 0.0, 0.0)), Vector((2.0, 0.0, 0.0)))
+            clamped = mesh_tools.edge_constraint.clamp_point_to_segment(
+                Vector((5.0, 0.0, 0.0)),
+                segment,
+            )
+            self.assertLess((clamped - segment[1]).length, 1e-6)
+            clamped = mesh_tools.edge_constraint.clamp_point_to_segment(
+                Vector((-3.0, 0.0, 0.0)),
+                segment,
+            )
+            self.assertLess((clamped - segment[0]).length, 1e-6)
             self.assertEqual(menu_layout.property_ids, [])
 
             operator_layout = RecordingLayout()
@@ -166,6 +284,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 None,
             )
         )
+        self.assertEqual(mesh_tools.addon_keymaps, [])
 
 
 if __name__ == '__main__':
