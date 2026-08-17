@@ -69,7 +69,7 @@ class OP_MergeToLast(bpy.types.Operator):
 
 class HO_MT_delete_merge_pie(bpy.types.Menu):
     bl_idname = 'HO_MT_delete_merge_pie'
-    bl_label = '饼：删除与合并'
+    bl_label = '饼:删除与合并'
 
     @classmethod
     def poll(cls, context):

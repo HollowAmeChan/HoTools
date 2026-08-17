@@ -8,7 +8,7 @@ def _tool_operator(pie, text, tool_id, icon):
 
 class HO_MT_selection_mode_pie(bpy.types.Menu):
     bl_idname = 'HO_MT_selection_mode_pie'
-    bl_label = '饼：选择模式'
+    bl_label = '饼:选择模式'
 
     def draw(self, context):
         pie = self.layout.menu_pie()
