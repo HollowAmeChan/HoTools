@@ -3,10 +3,6 @@ from bpy.types import Operator,Panel
 
 import os  # NOQA: E402
 import sys  # NOQA: E402
-"""
-bl安装插件时无法识别到内部写为模块的文件夹(仅安装阶段，安装完毕后使用正常),
-需要单独添加模块的路径才能找到
-"""
 plugin_dir = os.path.dirname(__file__)
 sys.path.append(plugin_dir)
 lib_dir = os.path.join(plugin_dir, "_Lib")
@@ -111,9 +107,11 @@ class OP_register_asset_library(Operator):
         return {'FINISHED'}
 
 
-def _draw_module_box(layout, prefs, expanded_prop, title, icon='PLUGIN', switch_prop=None, draw_content=None):
+def _draw_module_box(layout, prefs, expanded_prop, title, switch_prop=None, draw_content=None):
     box = layout.box()
     header = box.row(align=True)
+    if switch_prop:
+        header.prop(prefs, switch_prop, text='')
     header.prop(
         prefs,
         expanded_prop,
@@ -121,9 +119,7 @@ def _draw_module_box(layout, prefs, expanded_prop, title, icon='PLUGIN', switch_
         icon='TRIA_DOWN' if getattr(prefs, expanded_prop) else 'TRIA_RIGHT',
         emboss=False,
     )
-    header.label(text=title, icon=icon)
-    if switch_prop:
-        header.prop(prefs, switch_prop, text='启用', toggle=True)
+    header.label(text=title)
     if getattr(prefs, expanded_prop):
         content = box.column(align=True)
         if draw_content:
@@ -131,7 +127,7 @@ def _draw_module_box(layout, prefs, expanded_prop, title, icon='PLUGIN', switch_
         else:
             placeholder = content.row()
             placeholder.enabled = False
-            placeholder.label(text='暂无偏好参数，保留扩展位置')
+            placeholder.label(text='暂无')
     return box
 
 
@@ -146,31 +142,31 @@ class AddonPreference(bpy.types.AddonPreferences):
     hoTools_enableAlignPie: BoolProperty(name="对齐饼菜单", default=False, update=updateAlignPieState)  # type: ignore
     hoTools_enableCursorPie: BoolProperty(name="光标与原点饼菜单", default=False, update=updateCursorPieState)  # type: ignore
     hoTools_cursorShowToGrid: BoolProperty(name="光标饼菜单显示网格操作", default=False)  # type: ignore
-    hoTools_ui_exicon_expanded: BoolProperty(name='展开 ExIcon', default=True)  # type: ignore
+    hoTools_ui_exicon_expanded: BoolProperty(name='展开 ExIcon', default=False)  # type: ignore
     hoTools_ui_omninode_expanded: BoolProperty(name='展开 OmniNode', default=False)  # type: ignore
-    hoTools_ui_hopie_expanded: BoolProperty(name='展开 HoPie', default=True)  # type: ignore
-    hoTools_ui_keymaps_expanded: BoolProperty(name='展开快捷键', default=False)  # type: ignore
+    hoTools_ui_hopie_expanded: BoolProperty(name='展开 HoPie', default=False)  # type: ignore
+    hoTools_ui_keymaps_expanded: BoolProperty(name='展开快捷键', default=True)  # type: ignore
 
     hoTools_ExIconSize: FloatProperty(name="图标大小", default=0.5)  # type: ignore
     hoTools_ExiconAlpha: FloatProperty(
         name="图标不透明度", default=0.5, min=0.0, max=1.0)  # type: ignore
 
-    def draw(self, context):
+    def _draw_legacy_preferences(self, context):
         layout: bpy.types.UILayout = self.layout
         row = layout.row(align=True)
         row.alert = True
         row.operator("ho.register_asset_library", text="注册内置资源库")
         row.alert = False
         row = layout.row(align=True)
-        row.prop(self, "hoTools_enableExIcon", toggle=True)
+        row.prop(self, "hoTools_enableExIcon")
         row.prop(self, "hoTools_ExIconSize")
         row.prop(self, "hoTools_ExiconAlpha")
         row = layout.row(align=True)
-        row.prop(self, "hoTools_OmniNodeFeatures_enable", toggle=True)
+        row.prop(self, "hoTools_OmniNodeFeatures_enable")
         row = layout.row(align=True)
-        row.prop(self, "hoTools_enableAlignPie", toggle=True)
-        row.prop(self, "hoTools_enableCursorPie", toggle=True)
-        row.prop(self, "hoTools_cursorShowToGrid", toggle=True)
+        row.prop(self, "hoTools_enableAlignPie")
+        row.prop(self, "hoTools_enableCursorPie")
+        row.prop(self, "hoTools_cursorShowToGrid")
 
         # 获取 KeyMap
         wm = context.window_manager
@@ -205,10 +201,10 @@ class AddonPreference(bpy.types.AddonPreferences):
         kc = wm.keyconfigs.user
 
         intro = layout.box()
-        intro.label(text='HoTools 模块设置', icon='PREFERENCES')
+        intro.label(text='HoTools 模块设置')
         row = intro.row(align=True)
         row.alert = True
-        row.operator('ho.register_asset_library', text='注册内置资源库', icon='ASSET_MANAGER')
+        row.operator('ho.register_asset_library', text='注册内置资源库')
 
         def draw_exicon(content):
             row = content.row(align=True)
@@ -216,14 +212,21 @@ class AddonPreference(bpy.types.AddonPreferences):
             row.prop(self, 'hoTools_ExiconAlpha')
 
         def draw_hopie(content):
-            row = content.row(align=True)
-            row.prop(self, 'hoTools_enableAlignPie', text='对齐饼菜单', toggle=True)
-            row.prop(self, 'hoTools_enableCursorPie', text='光标与原点饼菜单', toggle=True)
-            content.prop(self, 'hoTools_cursorShowToGrid', text='显示网格操作')
+            align_box = content.box()
+            row = align_box.row(align=True)
+            row.prop(self, 'hoTools_enableAlignPie', text='')
+            row.label(text='对齐饼菜单')
+            align_box.prop(context.scene, 'ho_align_pie_mode', text='模式', expand=True)
 
-        _draw_module_box(layout, self, 'hoTools_ui_exicon_expanded', 'ExIcon', 'IMAGE_DATA', 'hoTools_enableExIcon', draw_exicon)
-        _draw_module_box(layout, self, 'hoTools_ui_omninode_expanded', 'OmniNode', 'NODETREE', 'hoTools_OmniNodeFeatures_enable')
-        _draw_module_box(layout, self, 'hoTools_ui_hopie_expanded', 'HoPie', 'MESH_CIRCLE', draw_content=draw_hopie)
+            cursor_box = content.box()
+            row = cursor_box.row(align=True)
+            row.prop(self, 'hoTools_enableCursorPie', text='')
+            row.label(text='光标与原点饼菜单')
+            cursor_box.prop(self, 'hoTools_cursorShowToGrid', text='显示网格操作')
+
+        _draw_module_box(layout, self, 'hoTools_ui_exicon_expanded', 'ExIcon', 'hoTools_enableExIcon', draw_exicon)
+        _draw_module_box(layout, self, 'hoTools_ui_omninode_expanded', 'OmniNode', 'hoTools_OmniNodeFeatures_enable')
+        _draw_module_box(layout, self, 'hoTools_ui_hopie_expanded', 'HoPie', draw_content=draw_hopie)
 
         def draw_keymaps(content):
             for keymap, keymap_item in [*MeshTools.addon_keymaps, *HoPie.preference_keymaps()]:
@@ -231,7 +234,7 @@ class AddonPreference(bpy.types.AddonPreferences):
                 rna_keymap_ui.draw_kmi([], kc, keymap, keymap_item, content, 0)
 
         if MeshTools.addon_keymaps or HoPie.preference_keymaps():
-            _draw_module_box(layout, self, 'hoTools_ui_keymaps_expanded', '快捷键', 'KEYINGSET', draw_content=draw_keymaps)
+            _draw_module_box(layout, self, 'hoTools_ui_keymaps_expanded', '快捷键', draw_content=draw_keymaps)
 
 
 cls = [OP_register_asset_library,AddonPreference,]
