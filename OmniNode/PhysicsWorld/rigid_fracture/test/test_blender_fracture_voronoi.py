@@ -130,6 +130,18 @@ def main():
         assert all(abs(piece.hotools_rigid_body.restitution - 0.12) < 1.0e-6 for piece in pieces)
         assert all(piece.hotools_rigid_body.start_deactivated for piece in pieces)
 
+        # A committed collection remains valid runtime input while the preview
+        # is stale; strict authoring validation still requires an explicit refresh.
+        props.product_status = "OUTDATED"
+        try:
+            fracture.validate_fracture_manifest(source)
+        except fracture.FractureAssetError:
+            pass
+        else:
+            raise AssertionError("strict fracture validation accepted OUTDATED products")
+        assert len(fracture.validate_fracture_manifest(source, allow_outdated=True)) == len(pieces)
+        props.product_status = "READY"
+
         rigid.mass = 120.0
         rigid.friction = 0.9
         assert tuple(piece.hotools_rigid_body.mass for piece in pieces) == authored_masses

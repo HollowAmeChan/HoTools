@@ -398,6 +398,10 @@ def physicsWorldBegin(
     world.clear_write_lock()
     world.clear_exchange()
     world.clear_results()
+    # Hook failures are frame diagnostics.  Do not leave a stale error visible
+    # after a later frame has collected successfully.
+    world.runtime_caches.pop("solver_registry_errors", None)
+    world.backend_resources["physics_diagnostics"] = []
 
     fc = world.frame_context
     current_frame = int(getattr(scene, "frame_current", 0) or 0)
@@ -542,6 +546,20 @@ def physicsWorldBegin(
     # collector 自行区分低频注册和必要的逐帧输入同步。
     _collect_scope_physics_specs(world, object_scope)
     world.registration_refresh_requested = False
+
+    registry_errors = list(world.runtime_cache("solver_registry_errors") or [])
+    fracture_warnings = list(world.runtime_cache("rigid_fracture_warnings") or [])
+    diagnostics = registry_errors + fracture_warnings
+    if diagnostics:
+        message = str(diagnostics[0].get("message") or diagnostics[0].get("error") or "物理世界收集失败")
+        if len(diagnostics) > 1:
+            message += f"（另有 {len(diagnostics) - 1} 条诊断）"
+        scene["hotools_physics_diagnostics"] = message[:1024]
+    else:
+        try:
+            del scene["hotools_physics_diagnostics"]
+        except KeyError:
+            pass
 
     if debug_output:
         print(

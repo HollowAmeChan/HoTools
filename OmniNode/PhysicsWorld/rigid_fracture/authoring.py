@@ -681,14 +681,24 @@ def managed_pieces(source, *, current_revision_only: bool = False) -> list:
     return result
 
 
-def validate_fracture_manifest(source) -> tuple:
+def validate_fracture_manifest(source, *, allow_outdated: bool = False) -> tuple:
+    """Validate the committed product collection used by the rigid solver.
+
+    ``OUTDATED`` means the preview changed after the last explicit refresh.  The
+    committed collection is still a valid, deterministic simulation asset, so
+    runtime scope expansion may opt into using it until the user refreshes it.
+    Authoring callers keep the strict default.
+    """
     props = getattr(source, "hotools_rigid_fracture", None)
     if props is None or not bool(getattr(props, "enabled", False)):
         return ()
     asset_id = str(getattr(props, "asset_id", "") or "").strip()
     if not asset_id:
         raise FractureAssetError(f"{source.name_full}: 破碎资产缺少 asset_id，请刷新产物")
-    if str(getattr(props, "product_status", "EMPTY")) != "READY":
+    product_status = str(getattr(props, "product_status", "EMPTY"))
+    if product_status != "READY" and not (
+        bool(allow_outdated) and product_status == "OUTDATED"
+    ):
         raise FractureAssetError(f"{source.name_full}: 破碎产物尚未 READY，请刷新产物")
     collection = getattr(props, "product_collection", None)
     if collection is None:

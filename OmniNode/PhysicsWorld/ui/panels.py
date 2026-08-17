@@ -143,6 +143,17 @@ class PT_Hotools_PhysicsPanel(Panel):
         constraint = getattr(obj, "hotools_rigid_constraint", None)
         field_props = getattr(obj, "hotools_field", None)
 
+        physics_diagnostic = str(
+            getattr(context.scene, "get", lambda _key, _default=None: _default)(
+                "hotools_physics_diagnostics", ""
+            )
+            or ""
+        ).strip()
+        if physics_diagnostic:
+            diagnostic_row = layout.row()
+            diagnostic_row.alert = True
+            diagnostic_row.label(text=physics_diagnostic, icon="ERROR")
+
         grid = layout.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
 
         if obj_col is not None:

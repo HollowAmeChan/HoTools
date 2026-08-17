@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import inspect
+import traceback
 import importlib.util
 from importlib import import_module
 from copy import deepcopy
@@ -835,12 +836,21 @@ def _record_hook_error(world, domain: str, hook_key: str, exc: Exception) -> Non
         return
     try:
         errors = list(world.runtime_cache("solver_registry_errors") or [])
-        errors.append({
+        error = {
             "domain": str(domain),
             "hook": str(hook_key),
             "error": str(exc),
-        })
+            "traceback": traceback.format_exc(),
+        }
+        errors.append(error)
         world.set_runtime_cache("solver_registry_errors", errors[-32:])
+        diagnostics = list(world.backend_resources.get("physics_diagnostics", ()) or ())
+        diagnostics.append(error)
+        world.backend_resources["physics_diagnostics"] = diagnostics[-32:]
+        print(
+            f"[HoTools PhysicsWorld] {domain}.{hook_key} failed: {exc}\n"
+            f"{error['traceback']}"
+        )
     except Exception:
         pass
 

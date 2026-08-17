@@ -468,6 +468,26 @@ def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjec
     rigid_objects, piece_metadata, fracture_signature = resolve_fracture_scope_objects(
         getattr(scope, "objects", ()),
     )
+    outdated_fracture_sources = []
+    for source in getattr(scope, "objects", ()):
+        props = getattr(source, "hotools_rigid_fracture", None)
+        if props is None or not bool(getattr(props, "enabled", False)):
+            continue
+        if str(getattr(props, "product_status", "EMPTY")) == "OUTDATED":
+            outdated_fracture_sources.append(str(getattr(source, "name_full", source)))
+    if outdated_fracture_sources:
+        world.set_runtime_cache(
+            "rigid_fracture_warnings",
+            [
+                {
+                    "object": name,
+                    "message": "破碎预览已过期，运行时继续使用上次已提交的碎块；刷新产物后生效",
+                }
+                for name in outdated_fracture_sources
+            ],
+        )
+    else:
+        world.set_runtime_cache("rigid_fracture_warnings", [])
     previous_fracture_signature = world.backend_resources.get(
         FRACTURE_SCOPE_SIGNATURE_RESOURCE_KEY,
     )

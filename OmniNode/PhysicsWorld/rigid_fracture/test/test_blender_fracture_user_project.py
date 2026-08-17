@@ -54,6 +54,7 @@ def _parse_args():
     parser.add_argument("--baseline-auto", action="store_true")
     parser.add_argument("--authoring-flow", action="store_true")
     parser.add_argument("--geometry-probe", action="store_true")
+    parser.add_argument("--diagnostics", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -381,6 +382,98 @@ def _run_original_baseline(*, manual: bool):
     assert distance > 1.0, distance
 
 
+def _run_project_diagnostics():
+    """Run the saved project without assumptions about its authoring state."""
+    runtime_state = importlib.import_module("HoTools.OmniNode.OmniRuntimeState")
+    scene = bpy.context.scene
+    tree = next(
+        tree for tree in bpy.data.node_groups
+        if getattr(tree, "bl_idname", "") == "OmniNodeTree"
+    )
+    rigid_objects = [
+        obj for obj in scene.objects
+        if bool(getattr(getattr(obj, "hotools_rigid_body", None), "enabled", False))
+    ]
+    print("DIAG_PROJECT", scene.name, "frame", scene.frame_current)
+    print("DIAG_RIGID_OBJECTS", len(rigid_objects))
+    for obj in scene.objects:
+        fracture_props = getattr(obj, "hotools_rigid_fracture", None)
+        if fracture_props is not None and bool(getattr(fracture_props, "enabled", False)):
+            collection = getattr(fracture_props, "product_collection", None)
+            print(
+                "DIAG_FRACTURE_SOURCE",
+                obj.name_full,
+                "status", getattr(fracture_props, "product_status", ""),
+                "revision", getattr(fracture_props, "product_revision", 0),
+                "collection", getattr(collection, "name_full", None),
+                "collection_objects", len(collection.all_objects) if collection else 0,
+            )
+    for obj in rigid_objects:
+        rigid = obj.hotools_rigid_body
+        mesh = getattr(obj, "data", None)
+        print(
+            "DIAG_RIGID",
+            obj.name_full,
+            "type", obj.type,
+            "body", getattr(rigid, "body_type", ""),
+            "shape", getattr(rigid, "shape_type", ""),
+            "verts", len(getattr(mesh, "vertices", ())) if mesh else 0,
+            "polys", len(getattr(mesh, "polygons", ())) if mesh else 0,
+        )
+    runtime_state.clear_all()
+    tree.is_execution_enabled = True
+    tree.is_frame_run_enabled = False
+    tree.compile_cached(force=True)
+    try:
+        result = tree.run_frame_cached()
+        worlds = list(result.values())
+    except Exception as exc:
+        print("DIAG_EXEC_EXCEPTION", type(exc).__name__, str(exc))
+        raise
+    print("DIAG_RESULT_KEYS", list(result.keys()))
+    ball = bpy.data.objects.get("撞击球")
+    initial_ball = ball.matrix_world.translation.copy() if ball is not None else None
+    for frame in range(2, min(int(scene.frame_end), 30) + 1):
+        scene.frame_set(frame)
+        tree.run_frame_cached()
+    if ball is not None and initial_ball is not None:
+        ball_distance = float((ball.matrix_world.translation - initial_ball).length)
+        print(
+            "DIAG_MOTION",
+            "ball_distance",
+            round(ball_distance, 6),
+            "ball_location",
+            tuple(round(float(value), 6) for value in ball.matrix_world.translation),
+        )
+        assert ball_distance > 1.0, ball_distance
+    for world in worlds:
+        assert len(world.solver_slots) >= len(rigid_objects) - 1
+        assert not world.runtime_cache("solver_registry_errors")
+        assert scene.get("hotools_physics_diagnostics")
+        print(
+            "DIAG_WORLD",
+            "slots", len(world.solver_slots),
+            "generation", world.generation,
+            "valid", world.valid,
+            "replace", world.replace_required,
+            "runtime", world.runtime_caches,
+            "backend", sorted(world.backend_resources.keys()),
+        )
+        print("DIAG_COLLECTION_ERRORS", world.backend_resources.get("rigid_collection_errors"))
+        print("DIAG_COLLECTION_TRACE", world.backend_resources.get("rigid_collection_traceback"))
+        print("DIAG_RESULT_STREAMS", {
+            channel: len(items) for channel, items in world.result_streams.items()
+        })
+        print("DIAG_SLOT_ERRORS", {
+            slot_id: {
+                key: value for key, value in slot.data.items()
+                if key in {"_jolt_error", "_result_error"}
+            }
+            for slot_id, slot in world.solver_slots.items()
+            if any(key in slot.data for key in ("_jolt_error", "_result_error"))
+        })
+
+
 def _run_original_authoring_flow():
     scene = bpy.context.scene
     source = next(
@@ -506,6 +599,9 @@ def main():
         return
     if args.geometry_probe:
         _run_original_geometry_probe()
+        return
+    if args.diagnostics:
+        _run_project_diagnostics()
         return
     if args.verify_file:
         tree, source, ball, pieces = _loaded_acceptance_asset()

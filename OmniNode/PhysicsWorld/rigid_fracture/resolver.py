@@ -50,7 +50,10 @@ def resolve_fracture_scope_objects(objects) -> tuple[tuple, dict[int, dict], tup
             raise FractureAssetError(
                 f"破碎 asset_id 重复: {other.name_full} / {obj.name_full}"
             )
-        pieces = validate_fracture_manifest(obj)
+        # A committed collection remains a usable simulation asset while its
+        # preview is OUTDATED.  Refreshing is still explicit in the authoring
+        # UI; runtime must not silently drop the entire world in the meantime.
+        pieces = validate_fracture_manifest(obj, allow_outdated=True)
         owner_sources[asset_id] = obj
         sources.append((obj, props, pieces))
 
