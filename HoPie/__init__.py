@@ -106,6 +106,10 @@ def set_align_pie_enabled(enabled):
             'UV Editor', 'EMPTY', 'A', alt=True,
             menu_name='HO_MT_uv_align_pie', keymap_store=align_pie_keymaps,
         )
+        _register_keymap(
+            'Curve', 'EMPTY', 'A', alt=True,
+            menu_name='HO_MT_align_pie', keymap_store=align_pie_keymaps,
+        )
     else:
         _remove_keymaps(
             align_pie_keymaps,

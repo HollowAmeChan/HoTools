@@ -37,7 +37,10 @@ class PieRegistrationTests(unittest.TestCase):
         self.assertIsNotNone(getattr(bpy.types, 'HO_MT_align_pie', None))
         self.assertIsNotNone(getattr(bpy.types, 'HO_MT_uv_align_pie', None))
         ids = [item.idname for _, item in HoPie.align_pie_keymaps]
-        self.assertEqual(ids, ['wm.call_menu_pie', 'wm.call_menu_pie'])
+        self.assertEqual(
+            ids,
+            ['wm.call_menu_pie', 'wm.call_menu_pie', 'wm.call_menu_pie'],
+        )
         self.assertEqual({item.properties.name for _, item in HoPie.align_pie_keymaps}, {'HO_MT_align_pie', 'HO_MT_uv_align_pie'})
         uv_keymap = next(
             keymap
@@ -46,6 +49,13 @@ class PieRegistrationTests(unittest.TestCase):
         )
         self.assertEqual(uv_keymap.name, 'UV Editor')
         self.assertEqual(uv_keymap.space_type, 'EMPTY')
+        curve_keymap = next(
+            keymap
+            for keymap, item in HoPie.align_pie_keymaps
+            if keymap.name == 'Curve'
+            and item.properties.name == 'HO_MT_align_pie'
+        )
+        self.assertEqual(curve_keymap.space_type, 'EMPTY')
         for keymap, item in HoPie.align_pie_keymaps:
             self.assertEqual(keymap.keymap_items[0].id, item.id)
         HoPie.set_align_pie_enabled(False)
@@ -108,6 +118,76 @@ class PieRegistrationTests(unittest.TestCase):
         self.assertEqual(result, {'FINISHED'})
         bpy.ops.object.mode_set(mode='OBJECT')
         self.assertTrue(all(abs(vertex.co.y - 3.0) < 1e-6 for vertex in mesh.vertices))
+
+    def test_curve_control_point_alignment_preserves_handles_and_weights(self):
+        HoPie.set_align_pie_enabled(True)
+        curve = bpy.data.curves.new('AlignCurve', 'CURVE')
+        curve.dimensions = '3D'
+
+        bezier = curve.splines.new('BEZIER')
+        bezier.bezier_points.add(2)
+        for point, coordinate in zip(
+                bezier.bezier_points,
+                ((0, 0, 0), (2, 2, 1), (4, 0, 2))):
+            point.co = coordinate
+            point.handle_left = Vector(coordinate) + Vector((-0.5, 0.25, 0))
+            point.handle_right = Vector(coordinate) + Vector((0.5, -0.25, 0))
+            point.select_control_point = True
+
+        poly = curve.splines.new('POLY')
+        poly.points.add(2)
+        weights = (0.5, 1.5, 2.5)
+        for point, coordinate, weight in zip(
+                poly.points,
+                ((10, 0, 3), (14, 2, 4), (12, 0, 5)),
+                weights):
+            point.co = (*coordinate, weight)
+            point.select = True
+
+        obj = bpy.data.objects.new('AlignCurveObject', curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        handle_offsets = [
+            (point.handle_left - point.co, point.handle_right - point.co)
+            for point in bezier.bezier_points
+        ]
+        try:
+            bpy.ops.object.mode_set(mode='EDIT')
+            bpy.context.scene.ho_align_pie_mode = 'AXES'
+            self.assertEqual(
+                bpy.ops.ho.center_editmesh(axis='Z'),
+                {'FINISHED'},
+            )
+            self.assertEqual(bpy.ops.ho.straighten(), {'FINISHED'})
+            result = bpy.ops.ho.align_editmesh(
+                mode='AXES',
+                type='AVERAGE',
+                axis='X',
+                align_each=True,
+            )
+            self.assertEqual(result, {'FINISHED'})
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+            bezier = curve.splines[0]
+            poly = curve.splines[1]
+            self.assertTrue(all(abs(point.co.x - 2.0) < 1e-6 for point in bezier.bezier_points))
+            poly_x = poly.points[0].co.x
+            self.assertTrue(all(abs(point.co.x - poly_x) < 1e-6 for point in poly.points))
+            self.assertGreater(abs(poly_x - 2.0), 1.0)
+            self.assertTrue(all(abs(point.co.z - 2.5) < 1e-6 for point in bezier.bezier_points))
+            self.assertTrue(all(abs(point.co.z - 2.5) < 1e-6 for point in poly.points))
+            self.assertLess(abs(bezier.bezier_points[1].co.y), 1e-6)
+            self.assertEqual(tuple(point.co.w for point in poly.points), weights)
+            for point, (left_offset, right_offset) in zip(
+                    bezier.bezier_points,
+                    handle_offsets):
+                self.assertLess((point.handle_left - point.co - left_offset).length, 1e-6)
+                self.assertLess((point.handle_right - point.co - right_offset).length, 1e-6)
+        finally:
+            if bpy.context.mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.data.objects.remove(obj, do_unlink=True)
 
     def test_bottom_origin_uses_local_bounds_for_rotated_object(self):
         HoPie.set_cursor_pie_enabled(True)

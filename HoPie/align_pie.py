@@ -84,9 +84,49 @@ def _selected_islands(bm):
     return islands
 
 
+def _selected_curve_point_groups(active):
+    groups = []
+    for spline in active.data.splines:
+        if spline.type == 'BEZIER':
+            points = [
+                point
+                for point in spline.bezier_points
+                if point.select_control_point
+            ]
+        else:
+            points = [point for point in spline.points if point.select]
+        if points:
+            groups.append(points)
+    return groups
+
+
+def _curve_point_coordinate(point):
+    return Vector(point.co[:3])
+
+
+def _set_curve_point_coordinate(point, coordinate):
+    old_coordinate = _curve_point_coordinate(point)
+    if hasattr(point, 'handle_left'):
+        delta = coordinate - old_coordinate
+        left = point.handle_left.copy() + delta
+        right = point.handle_right.copy() + delta
+        point.co = coordinate
+        point.handle_left = left
+        point.handle_right = right
+    else:
+        point.co = (*coordinate, point.co[3])
+
+
+def _update_edit_geometry(active, bm=None):
+    if bm is not None:
+        bmesh.update_edit_mesh(active.data)
+    else:
+        active.data.update_tag()
+
+
 class AlignEditMesh(bpy.types.Operator):
     bl_idname = 'ho.align_editmesh'
-    bl_label = 'HoTools：对齐编辑网格'
+    bl_label = 'HoTools：对齐编辑几何'
     bl_options = {'REGISTER', 'UNDO'}
 
     mode: EnumProperty(items=(('VIEW', '视图', ''), ('AXES', '坐标轴', '')), default='VIEW') # type: ignore
@@ -110,9 +150,14 @@ class AlignEditMesh(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if context.mode != 'EDIT_MESH' or not context.active_object:
+        active = context.active_object
+        if not active:
             return False
-        return bool(selected_verts(bmesh.from_edit_mesh(context.active_object.data)))
+        if context.mode == 'EDIT_MESH' and active.type == 'MESH':
+            return bool(selected_verts(bmesh.from_edit_mesh(active.data)))
+        if context.mode == 'EDIT_CURVE' and active.type == 'CURVE':
+            return bool(_selected_curve_point_groups(active))
+        return False
 
     def invoke(self, context, event):
         if event.alt and event.ctrl:
@@ -132,17 +177,29 @@ class AlignEditMesh(bpy.types.Operator):
         return self.execute(context)
 
     def execute(self, context):
-        active, bm = edit_bmesh(context)
-        verts = selected_verts(bm)
-        groups = [verts]
+        active = context.active_object
+        bm = None
         self.draw_each = False
-        selection_mode = tuple(context.scene.tool_settings.mesh_select_mode)
-        if self.align_each and selection_mode == (False, True, False):
-            groups = [sequence for sequence, _ in _selected_sequences(verts.copy()) if sequence]
-        elif self.align_each and selection_mode == (False, False, True):
-            groups = _selected_islands(bm) or groups
-        if selection_mode in {(False, True, False), (False, False, True)}:
-            self.draw_each = len(_selected_sequences(verts.copy())) > 1 if selection_mode == (False, True, False) else len(_selected_islands(bm)) > 1
+        if context.mode == 'EDIT_CURVE':
+            curve_groups = _selected_curve_point_groups(active)
+            points = [point for group in curve_groups for point in group]
+            groups = curve_groups if self.align_each else [points]
+            self.draw_each = len(curve_groups) > 1
+            coordinate_of = _curve_point_coordinate
+            set_coordinate = _set_curve_point_coordinate
+        else:
+            active, bm = edit_bmesh(context)
+            verts = selected_verts(bm)
+            groups = [verts]
+            selection_mode = tuple(context.scene.tool_settings.mesh_select_mode)
+            if self.align_each and selection_mode == (False, True, False):
+                groups = [sequence for sequence, _ in _selected_sequences(verts.copy()) if sequence]
+            elif self.align_each and selection_mode == (False, False, True):
+                groups = _selected_islands(bm) or groups
+            if selection_mode in {(False, True, False), (False, False, True)}:
+                self.draw_each = len(_selected_sequences(verts.copy())) > 1 if selection_mode == (False, True, False) else len(_selected_islands(bm)) > 1
+            coordinate_of = lambda vert: vert.co
+            set_coordinate = lambda vert, coordinate: setattr(vert, 'co', coordinate)
         axis = 'XYZ'.index(self.axis)
         matrix = active.matrix_world if self.space == 'LOCAL' else Matrix.Identity(4)
         if self.space == 'CURSOR':
@@ -150,7 +207,7 @@ class AlignEditMesh(bpy.types.Operator):
         inverse = matrix.inverted_safe()
         active_inverse = active.matrix_world.inverted_safe()
         for group in groups:
-            coordinates = [inverse @ active.matrix_world @ vert.co for vert in group]
+            coordinates = [inverse @ active.matrix_world @ coordinate_of(point) for point in group]
             values = [coordinate[axis] for coordinate in coordinates]
             if self.type == 'MIN':
                 target = min(values)
@@ -162,16 +219,16 @@ class AlignEditMesh(bpy.types.Operator):
                 target = 0.0
             else:
                 target = (inverse @ context.scene.cursor.location)[axis]
-            for vert, coordinate in zip(group, coordinates):
+            for point, coordinate in zip(group, coordinates):
                 coordinate[axis] = target
-                vert.co = active_inverse @ matrix @ coordinate
-        bmesh.update_edit_mesh(active.data)
+                set_coordinate(point, active_inverse @ matrix @ coordinate)
+        _update_edit_geometry(active, bm)
         return {'FINISHED'}
 
 
 class CenterEditMesh(bpy.types.Operator):
     bl_idname = 'ho.center_editmesh'
-    bl_label = 'HoTools：居中编辑网格'
+    bl_label = 'HoTools：居中编辑几何'
     bl_options = {'REGISTER', 'UNDO'}
 
     axis: EnumProperty(items=ALIGN_AXIS_ITEMS, default='X') # type: ignore
@@ -194,21 +251,34 @@ class CenterEditMesh(bpy.types.Operator):
         return self.execute(context)
 
     def execute(self, context):
-        active, bm = edit_bmesh(context)
-        verts = selected_verts(bm)
+        active = context.active_object
+        bm = None
+        if context.mode == 'EDIT_CURVE':
+            points = [
+                point
+                for group in _selected_curve_point_groups(active)
+                for point in group
+            ]
+            coordinate_of = _curve_point_coordinate
+            set_coordinate = _set_curve_point_coordinate
+        else:
+            active, bm = edit_bmesh(context)
+            points = selected_verts(bm)
+            coordinate_of = lambda vert: vert.co
+            set_coordinate = lambda vert, coordinate: setattr(vert, 'co', coordinate)
         axis = 'XYZ'.index(self.axis)
         matrix = active.matrix_world if self.space == 'LOCAL' else Matrix.Identity(4)
         if self.space == 'CURSOR':
             matrix = context.scene.cursor.matrix
-        coordinates = [matrix.inverted_safe() @ active.matrix_world @ vert.co for vert in verts]
+        coordinates = [matrix.inverted_safe() @ active.matrix_world @ coordinate_of(point) for point in points]
         if context.scene.ho_align_pie_mode == 'VIEW' and self.direction in {'HORIZONTAL', 'VERTICAL'}:
             right, up, _, _ = _view_axes(context, matrix)
             axis = right if self.direction == 'HORIZONTAL' else up
         target = sum(coordinate[axis] for coordinate in coordinates) / len(coordinates)
-        for vert, coordinate in zip(verts, coordinates):
+        for point, coordinate in zip(points, coordinates):
             coordinate[axis] = target
-            vert.co = active.matrix_world.inverted_safe() @ matrix @ coordinate
-        bmesh.update_edit_mesh(active.data)
+            set_coordinate(point, active.matrix_world.inverted_safe() @ matrix @ coordinate)
+        _update_edit_geometry(active, bm)
         return {'FINISHED'}
 
 
@@ -288,12 +358,45 @@ class Straighten(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if context.mode != 'EDIT_MESH' or not context.active_object:
+        active = context.active_object
+        if not active:
             return False
-        bm = bmesh.from_edit_mesh(context.active_object.data)
+        if context.mode == 'EDIT_CURVE' and active.type == 'CURVE':
+            return any(
+                len(group) > 2
+                for group in _selected_curve_point_groups(active)
+            )
+        if context.mode != 'EDIT_MESH' or active.type != 'MESH':
+            return False
+        bm = bmesh.from_edit_mesh(active.data)
         return len(selected_verts(bm)) > 2 and not any(face.select for face in bm.faces)
 
     def execute(self, context):
+        if context.mode == 'EDIT_CURVE':
+            active = context.active_object
+            for points in _selected_curve_point_groups(active):
+                if len(points) < 3:
+                    continue
+                start, end = max(
+                    (
+                        (_curve_point_coordinate(b) - _curve_point_coordinate(a)).length,
+                        (a, b),
+                    )
+                    for index, a in enumerate(points)
+                    for b in points[index + 1:]
+                )[1]
+                start_co = _curve_point_coordinate(start)
+                end_co = _curve_point_coordinate(end)
+                for point in points:
+                    if point not in {start, end}:
+                        coordinate = _curve_point_coordinate(point)
+                        _set_curve_point_coordinate(
+                            point,
+                            intersect_point_line(coordinate, start_co, end_co)[0],
+                        )
+            _update_edit_geometry(active)
+            return {'FINISHED'}
+
         active, bm = edit_bmesh(context)
         verts = selected_verts(bm)
         history = list(bm.select_history)
@@ -352,7 +455,13 @@ class HO_MT_align_pie(bpy.types.Menu):
 
     def draw(self, context):
         pie = self.layout.menu_pie()
-        selected = [obj for obj in context.selected_objects if obj != context.active_object]
+        selected = []
+        if context.mode == 'EDIT_MESH':
+            selected = [
+                obj
+                for obj in context.selected_objects
+                if obj != context.active_object
+            ]
         if getattr(context.scene, 'ho_align_pie_mode', 'AXES') == 'VIEW':
             self.draw_view(pie, context, selected)
         else:
