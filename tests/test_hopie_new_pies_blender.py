@@ -28,6 +28,17 @@ def load_hopie():
     return module
 
 
+def keymap_items_for_menu(menu_name):
+    keyconfig = bpy.context.window_manager.keyconfigs.addon
+    return [
+        item
+        for keymap in keyconfig.keymaps
+        for item in keymap.keymap_items
+        if item.idname == 'wm.call_menu_pie'
+        and getattr(item.properties, 'name', '') == menu_name
+    ]
+
+
 class NewPieRegistrationTests(unittest.TestCase):
     def test_registration_and_keymaps(self):
         hopie = load_hopie()
@@ -46,15 +57,18 @@ class NewPieRegistrationTests(unittest.TestCase):
 
             self.assertEqual(len(hopie.selection_mode_pie_keymaps), 1)
             selection_keymap, selection_item = hopie.selection_mode_pie_keymaps[0]
-            self.assertEqual(selection_keymap.name, 'Window')
+            self.assertEqual(selection_keymap.name, '3D View Generic')
+            self.assertEqual(selection_keymap.space_type, 'VIEW_3D')
             self.assertEqual(selection_item.type, 'W')
             self.assertEqual(selection_item.properties.name, 'HO_MT_selection_mode_pie')
+            self.assertEqual(selection_keymap.keymap_items[0].id, selection_item.id)
 
             self.assertEqual(len(hopie.delete_merge_pie_keymaps), 1)
             delete_keymap, delete_item = hopie.delete_merge_pie_keymaps[0]
-            self.assertEqual(delete_keymap.name, 'Window')
+            self.assertEqual(delete_keymap.name, 'Mesh')
             self.assertEqual(delete_item.type, 'X')
             self.assertEqual(delete_item.properties.name, 'HO_MT_delete_merge_pie')
+            self.assertEqual(delete_keymap.keymap_items[0].id, delete_item.id)
         finally:
             hopie.unregister()
 
@@ -82,6 +96,36 @@ class NewPieRegistrationTests(unittest.TestCase):
             if bpy.context.mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode='OBJECT')
             bpy.data.objects.remove(obj, do_unlink=True)
+            hopie.unregister()
+
+    def test_disable_purges_untracked_pie_keymaps(self):
+        hopie = load_hopie()
+        hopie.register()
+        try:
+            hopie.set_selection_mode_pie_enabled(True)
+            hopie.set_delete_merge_pie_enabled(True)
+            self.assertEqual(
+                len(keymap_items_for_menu('HO_MT_selection_mode_pie')),
+                1,
+            )
+            self.assertEqual(
+                len(keymap_items_for_menu('HO_MT_delete_merge_pie')),
+                1,
+            )
+
+            hopie.selection_mode_pie_keymaps.clear()
+            hopie.delete_merge_pie_keymaps.clear()
+            hopie.set_selection_mode_pie_enabled(False)
+            hopie.set_delete_merge_pie_enabled(False)
+            self.assertEqual(
+                keymap_items_for_menu('HO_MT_selection_mode_pie'),
+                [],
+            )
+            self.assertEqual(
+                keymap_items_for_menu('HO_MT_delete_merge_pie'),
+                [],
+            )
+        finally:
             hopie.unregister()
 
 if __name__ == '__main__':

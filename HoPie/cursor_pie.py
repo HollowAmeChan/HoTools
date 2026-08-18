@@ -268,8 +268,6 @@ class HO_MT_cursor_pie(bpy.types.Menu):
 
     def draw(self, context):
         pie = self.layout.menu_pie()
-        addon = context.preferences.addons.get('HoTools') if hasattr(context, 'preferences') else None
-        show_grid = bool(getattr(getattr(addon, 'preferences', None), 'hoTools_cursorShowToGrid', False))
 
         if context.mode == 'EDIT_MESH':
             selection = tuple(context.scene.tool_settings.mesh_select_mode)
@@ -286,9 +284,6 @@ class HO_MT_cursor_pie(bpy.types.Menu):
         if context.mode in {'OBJECT', 'EDIT_MESH'}:
             box = pie.split()
             column = box.column(align=True)
-            if show_grid:
-                column.separator()
-                column.separator()
             row = column.split(factor=0.25)
             row.separator()
             row.label(text='对象原点')
@@ -322,14 +317,6 @@ class HO_MT_cursor_pie(bpy.types.Menu):
         pie.separator()
         pie.operator(CursorToOrigin.bl_idname, icon='PIVOT_CURSOR')
         pie.operator('view3d.snap_selected_to_cursor', text='选中项->游标（偏移）', icon='RESTRICT_SELECT_OFF').use_offset = True
-        if show_grid:
-            pie.operator('view3d.snap_cursor_to_grid', text='游标->网格', icon='PIVOT_CURSOR')
-        else:
-            pie.separator()
-        if show_grid:
-            pie.operator('view3d.snap_selected_to_grid', text='选中项->网格', icon='RESTRICT_SELECT_OFF')
-        else:
-            pie.separator()
 
 
 CURSOR_PIE_CLASSES = (

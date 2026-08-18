@@ -2693,6 +2693,7 @@ def register():
         type='RIGHTMOUSE',
         value='PRESS',
         alt=True,
+        head=True,
     )
     addon_keymaps.append((km, kmi))
 

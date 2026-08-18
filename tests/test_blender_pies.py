@@ -39,6 +39,15 @@ class PieRegistrationTests(unittest.TestCase):
         ids = [item.idname for _, item in HoPie.align_pie_keymaps]
         self.assertEqual(ids, ['wm.call_menu_pie', 'wm.call_menu_pie'])
         self.assertEqual({item.properties.name for _, item in HoPie.align_pie_keymaps}, {'HO_MT_align_pie', 'HO_MT_uv_align_pie'})
+        uv_keymap = next(
+            keymap
+            for keymap, item in HoPie.align_pie_keymaps
+            if item.properties.name == 'HO_MT_uv_align_pie'
+        )
+        self.assertEqual(uv_keymap.name, 'UV Editor')
+        self.assertEqual(uv_keymap.space_type, 'EMPTY')
+        for keymap, item in HoPie.align_pie_keymaps:
+            self.assertEqual(keymap.keymap_items[0].id, item.id)
         HoPie.set_align_pie_enabled(False)
         self.assertIsNone(getattr(bpy.types, 'HO_MT_align_pie', None))
         self.assertEqual(HoPie.align_pie_keymaps, [])
@@ -57,6 +66,7 @@ class PieRegistrationTests(unittest.TestCase):
         keymap, item = HoPie.cursor_pie_keymaps[0]
         self.assertEqual(keymap.name, '3D View Generic')
         self.assertEqual((item.type, item.shift, item.properties.name), ('S', True, 'HO_MT_cursor_pie'))
+        self.assertEqual(keymap.keymap_items[0].id, item.id)
         HoPie.set_cursor_pie_enabled(False)
         self.assertIsNone(getattr(bpy.types, 'HO_MT_cursor_pie', None))
         self.assertEqual(HoPie.cursor_pie_keymaps, [])

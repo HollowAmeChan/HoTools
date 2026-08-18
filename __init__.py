@@ -160,7 +160,6 @@ class AddonPreference(bpy.types.AddonPreferences):
     hoTools_enableCursorPie: BoolProperty(name="光标与原点饼菜单", default=False, update=updateCursorPieState)  # type: ignore
     hoTools_enableSelectionModePie: BoolProperty(name="选择模式饼菜单", default=True, update=updateSelectionModePieState)  # type: ignore
     hoTools_enableDeleteMergePie: BoolProperty(name="删除与合并饼菜单", default=True, update=updateDeleteMergePieState)  # type: ignore
-    hoTools_cursorShowToGrid: BoolProperty(name="光标饼菜单显示网格操作", default=False)  # type: ignore
     hoTools_ui_exicon_expanded: BoolProperty(name='展开 ExIcon', default=False)  # type: ignore
     hoTools_ui_omninode_expanded: BoolProperty(name='展开 OmniNode', default=False)  # type: ignore
     hoTools_ui_hopie_expanded: BoolProperty(name='展开 HoPie', default=False)  # type: ignore
@@ -185,7 +184,6 @@ class AddonPreference(bpy.types.AddonPreferences):
         row = layout.row(align=True)
         row.prop(self, "hoTools_enableAlignPie")
         row.prop(self, "hoTools_enableCursorPie")
-        row.prop(self, "hoTools_cursorShowToGrid")
 
         # 获取 KeyMap
         wm = context.window_manager
@@ -244,11 +242,6 @@ class AddonPreference(bpy.types.AddonPreferences):
                     expand=True,
                 )
 
-            def draw_cursor_options(column):
-                row = column.row(align=True)
-                row.label(text='显示网格操作')
-                row.prop(self, 'hoTools_cursorShowToGrid', text='')
-
             def draw_empty_slot(box):
                 row = box.row()
                 row.scale_y = 0.35
@@ -264,7 +257,7 @@ class AddonPreference(bpy.types.AddonPreferences):
             row = cursor_box.row(align=True)
             row.prop(self, 'hoTools_enableCursorPie', text='')
             row.label(text='光标与原点饼')
-            draw_indented(cursor_box, draw_cursor_options)
+            draw_empty_slot(cursor_box)
 
             selection_box = content.box()
             row = selection_box.row(align=True)
@@ -317,14 +310,10 @@ def register():
     HoPie.register()
 
     prefs = bpy.context.preferences.addons[__name__].preferences
-    if prefs.hoTools_enableAlignPie:
-        HoPie.set_align_pie_enabled(True)
-    if prefs.hoTools_enableCursorPie:
-        HoPie.set_cursor_pie_enabled(True)
-    if prefs.hoTools_enableSelectionModePie:
-        HoPie.set_selection_mode_pie_enabled(True)
-    if prefs.hoTools_enableDeleteMergePie:
-        HoPie.set_delete_merge_pie_enabled(True)
+    HoPie.set_align_pie_enabled(prefs.hoTools_enableAlignPie)
+    HoPie.set_cursor_pie_enabled(prefs.hoTools_enableCursorPie)
+    HoPie.set_selection_mode_pie_enabled(prefs.hoTools_enableSelectionModePie)
+    HoPie.set_delete_merge_pie_enabled(prefs.hoTools_enableDeleteMergePie)
     if prefs.hoTools_OmniNodeFeatures_enable:
         OmniNode.register()
 

@@ -111,6 +111,7 @@ def register():
             type='R',
             value='PRESS',
             alt=True,
+            head=True,
         )
         keymap_item.properties.transform_mode = 'ROTATE'
         keymap_item.properties.objmode = False
@@ -121,6 +122,7 @@ def register():
             type='LEFTMOUSE',
             value='PRESS',
             alt=True,
+            head=True,
         )
         addon_keymaps.append((keymap, keymap_item))
 
@@ -136,6 +138,7 @@ def register():
             value='PRESS',
             ctrl=True,
             shift=True,
+            head=True,
         )
         addon_keymaps.append((keymap, keymap_item))
 
@@ -144,6 +147,7 @@ def register():
             type='NUMPAD_PLUS',
             value='PRESS',
             alt=True,
+            head=True,
         )
         addon_keymaps.append((keymap, keymap_item))
         keymap_item = keymap.keymap_items.new(
@@ -151,6 +155,7 @@ def register():
             type='NUMPAD_MINUS',
             value='PRESS',
             alt=True,
+            head=True,
         )
         addon_keymaps.append((keymap, keymap_item))
 
@@ -159,6 +164,7 @@ def register():
             type='X',
             value='PRESS',
             alt=True,
+            head=True,
         )
         keymap_item.properties.flick = True
         keymap_item.properties.objmode = False
@@ -175,6 +181,7 @@ def register():
                 type='A',
                 value='PRESS',
                 alt=True,
+                head=True,
             )
             addon_keymaps.append((keymap, keymap_item))
     reg_props()
