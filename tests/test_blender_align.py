@@ -187,7 +187,7 @@ class AlignTests(unittest.TestCase):
         )
         duplicate_data = {'map': {aligner: duplicate}, 'dups': [duplicate]}
 
-        MeshTools.AlignRelative.reparent(
+        MeshTools.OP_AlignRelative.reparent(
             op,
             duplicate_data,
             target,

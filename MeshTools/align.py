@@ -73,7 +73,7 @@ def _m3_flag(obj, name):
     props = getattr(obj, "M3", None)
     return bool(getattr(props, name, False)) if props else False
 
-class Align(bpy.types.Operator):
+class OP_Align(bpy.types.Operator):
     bl_idname = 'ho.align'
     bl_label = '对象对齐'
     bl_description = '按轴对齐对象的位置、旋转和缩放，或将对象放置到两目标之间'
@@ -380,7 +380,7 @@ class Align(bpy.types.Operator):
         if active.children and context.scene.tool_settings.use_transform_skip_children:
             compensate_children(active, oldmx, mx)
 
-class AlignRelative(bpy.types.Operator):
+class OP_AlignRelative(bpy.types.Operator):
     bl_idname = "ho.align_relative"
     bl_label = "相对对齐复制"
     bl_description = "把所选对象的相对布局复制或实例化到新的目标对象"

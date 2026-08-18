@@ -1,7 +1,7 @@
 import importlib.util
 from math import radians
 import sys
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 import unittest
 from pathlib import Path
 
@@ -148,6 +148,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.addselect_sideringloops",
                 "ho.removeselect_sideringloops",
                 "ho.visual_boolean_cut",
+                "ho.curve_bevel",
             })
             self.assertIsNotNone(
                 getattr(
@@ -270,6 +271,19 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             self.assertLess((clamped - segment[0]).length, 1e-6)
             self.assertEqual(menu_layout.property_ids, [])
 
+            curve_keymaps = [
+                (keymap, keymap_item)
+                for keymap, keymap_item in mesh_tools.preference_keymaps()
+                if keymap_item.idname == "ho.curve_bevel"
+            ]
+            self.assertEqual(len(curve_keymaps), 1)
+            curve_keymap, curve_keymap_item = curve_keymaps[0]
+            self.assertEqual(curve_keymap.name, "Curve")
+            self.assertEqual(curve_keymap.space_type, "EMPTY")
+            self.assertEqual(curve_keymap_item.type, "B")
+            self.assertTrue(curve_keymap_item.ctrl)
+            self.assertEqual(curve_keymap.keymap_items[0].id, curve_keymap_item.id)
+
             operator_layout = RecordingLayout()
             mesh_tools.OP_AutoPlaceObjectBottom.draw(
                 SimpleNamespace(layout=operator_layout),
@@ -336,6 +350,164 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             )
         )
         self.assertEqual(mesh_tools.addon_keymaps, [])
+
+    def test_curve_bevel_chamfers_selected_control_points(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("CurveBevelTest", "CURVE")
+        curve.dimensions = "3D"
+        spline = curve.splines.new("NURBS")
+        spline.points.add(2)
+        spline.order_u = 3
+        spline.use_endpoint_u = True
+        for point, coordinate in zip(
+                spline.points,
+                ((0.0, 0.0, 0.0), (2.0, 2.0, 0.0), (4.0, 0.0, 0.0))):
+            point.co = (*coordinate, 1.0)
+            point.select = coordinate == (2.0, 2.0, 0.0)
+        obj = bpy.data.objects.new("CurveBevelObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            self.assertEqual(
+                bpy.ops.ho.curve_bevel(width=1.0, segments=1),
+                {"FINISHED"},
+            )
+            bpy.ops.object.mode_set(mode="OBJECT")
+            self.assertEqual(len(curve.splines[0].points), 4)
+            coordinates = [point.co.xyz.copy() for point in curve.splines[0].points]
+            self.assertLess(
+                (coordinates[1] - Vector((1.2928932, 1.2928932, 0.0))).length,
+                1e-6,
+            )
+            self.assertLess(
+                (coordinates[2] - Vector((2.7071068, 1.2928932, 0.0))).length,
+                1e-6,
+            )
+            self.assertTrue(curve.splines[0].points[1].select)
+            self.assertTrue(curve.splines[0].points[2].select)
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
+
+    def test_curve_bevel_rounds_bezier_control_points(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("BezierBevelTest", "CURVE")
+        curve.dimensions = "3D"
+        spline = curve.splines.new("BEZIER")
+        spline.bezier_points.add(2)
+        for point, coordinate in zip(
+                spline.bezier_points,
+                ((0.0, 0.0, 0.0), (2.0, 2.0, 0.0), (4.0, 0.0, 0.0))):
+            point.co = coordinate
+            point.handle_left_type = "VECTOR"
+            point.handle_right_type = "VECTOR"
+            point.select_control_point = coordinate == (2.0, 2.0, 0.0)
+        obj = bpy.data.objects.new("BezierBevelObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            self.assertEqual(
+                bpy.ops.ho.curve_bevel(width=1.0, segments=3),
+                {"FINISHED"},
+            )
+            bpy.ops.object.mode_set(mode="OBJECT")
+            self.assertEqual(len(curve.splines[0].bezier_points), 6)
+            generated = curve.splines[0].bezier_points[1:-1]
+            self.assertTrue(all(point.select_control_point for point in generated))
+            self.assertTrue(all(point.handle_left_type == "AUTO" for point in generated))
+            self.assertTrue(all(point.handle_right_type == "AUTO" for point in generated))
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
+
+    def test_curve_bevel_modal_wheel_and_cancel_restore_original(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("CurveBevelModalTest", "CURVE")
+        curve.dimensions = "3D"
+        spline = curve.splines.new("NURBS")
+        spline.points.add(2)
+        spline.order_u = 3
+        spline.use_endpoint_u = True
+        for point, coordinate in zip(
+                spline.points,
+                ((0.0, 0.0, 0.0), (2.0, 2.0, 0.0), (4.0, 0.0, 0.0))):
+            point.co = (*coordinate, 1.0)
+            point.select = coordinate == (2.0, 2.0, 0.0)
+        obj = bpy.data.objects.new("CurveBevelModalObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+
+        class Area:
+            def __init__(self):
+                self.header = None
+
+            def header_text_set(self, text):
+                self.header = text
+
+            def tag_redraw(self):
+                return None
+
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            operator = SimpleNamespace(width=0.75, segments=1)
+            for method_name in (
+                    "_apply",
+                    "_update_preview",
+                    "_restore_original",
+                    "_update_header",
+                    "_finish"):
+                setattr(
+                    operator,
+                    method_name,
+                    MethodType(
+                        getattr(mesh_tools.OP_CurveBevel, method_name),
+                        operator,
+                    ),
+                )
+            operator._curve_snapshot = mesh_tools.curve_bevel._snapshot_curve(curve)
+            operator._preview_changed = False
+            context = SimpleNamespace(active_object=obj, area=Area())
+
+            result = mesh_tools.OP_CurveBevel.modal(
+                operator,
+                context,
+                SimpleNamespace(type="WHEELUPMOUSE", value="PRESS"),
+            )
+            self.assertEqual(result, {"RUNNING_MODAL"})
+            self.assertEqual(operator.segments, 2)
+            self.assertEqual(len(curve.splines[0].points), 5)
+            self.assertIn("段数: 2", context.area.header)
+
+            result = mesh_tools.OP_CurveBevel.modal(
+                operator,
+                context,
+                SimpleNamespace(type="ESC", value="PRESS"),
+            )
+            self.assertEqual(result, {"CANCELLED"})
+            self.assertEqual(len(curve.splines[0].points), 3)
+            self.assertEqual(context.area.header, None)
+            self.assertTrue(curve.splines[0].points[1].select)
+            self.assertEqual(curve.splines[0].type, "NURBS")
+            self.assertEqual(curve.splines[0].order_u, 3)
+            self.assertTrue(curve.splines[0].use_endpoint_u)
+            self.assertEqual(curve.splines.active, curve.splines[0])
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
 
 
 if __name__ == '__main__':

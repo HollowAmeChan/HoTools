@@ -1,7 +1,7 @@
 import bpy
 
 from . import boolean
-from .align import Align, AlignRelative
+from .align import OP_Align, OP_AlignRelative
 from .bone_chain import OP_CreatBoneChainByMeshFlow
 from .hole_fill import OP_ModalFillMeshHole
 from .edge_constraint import OP_TransformEdgeConstrained
@@ -22,6 +22,7 @@ from .placement import (
     OP_SnapSelectedFaceOrthogonal,
 )
 from .view import OP_AlignViewToAvgNormal
+from .curve_bevel import OP_CurveBevel
 
 def reg_props():
     return
@@ -66,8 +67,8 @@ def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
 
 
 cls = [
-    Align,
-    AlignRelative,
+    OP_Align,
+    OP_AlignRelative,
     OP_AutoPlaceObjectBottom,
     OP_PlaceObjectBottom,
     OP_AutoSnapFaceOrthogonal,
@@ -85,11 +86,16 @@ cls = [
     OP_AddSelectSideRingLoops,
     OP_RemoveSelectSideRingLoops,
     OP_VisualBooleanCut,
+    OP_CurveBevel,
     VIEW3D_MT_edit_mesh_hotools,
 ]
 
 
 addon_keymaps = []
+
+
+def preference_keymaps():
+    return addon_keymaps
 
 
 def register():
@@ -177,13 +183,27 @@ def register():
                 region_type='WINDOW',
             )
             keymap_item = keymap.keymap_items.new(
-                Align.bl_idname,
+                OP_Align.bl_idname,
                 type='A',
                 value='PRESS',
                 alt=True,
                 head=True,
             )
             addon_keymaps.append((keymap, keymap_item))
+
+        keymap = keyconfig.keymaps.new(
+            name='Curve',
+            space_type='EMPTY',
+            region_type='WINDOW',
+        )
+        keymap_item = keymap.keymap_items.new(
+            OP_CurveBevel.bl_idname,
+            type='B',
+            value='PRESS',
+            ctrl=True,
+            head=True,
+        )
+        addon_keymaps.append((keymap, keymap_item))
     reg_props()
 
 

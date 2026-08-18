@@ -33,7 +33,7 @@ def _preference_keymaps():
     return [
         *getattr(FastOperators, 'addon_keymaps', []),
         *getattr(VertexGroupTools.vertexGroupOperators, 'addon_keymaps', []),
-        *MeshTools.addon_keymaps,
+        *MeshTools.preference_keymaps(),
         *HoPie.preference_keymaps(),
     ]
 
