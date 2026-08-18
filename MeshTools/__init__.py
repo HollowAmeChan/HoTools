@@ -23,6 +23,11 @@ from .placement import (
 )
 from .view import OP_AlignViewToAvgNormal
 from .curve_bevel import OP_CurveBevel
+from .curve_repair import (
+    HO_MT_curve,
+    OP_RepairCurvePath,
+    draw_in_VIEW3D_MT_edit_curve_context_menu,
+)
 
 def reg_props():
     return
@@ -87,6 +92,8 @@ cls = [
     OP_RemoveSelectSideRingLoops,
     OP_VisualBooleanCut,
     OP_CurveBevel,
+    OP_RepairCurvePath,
+    HO_MT_curve,
     VIEW3D_MT_edit_mesh_hotools,
 ]
 
@@ -105,6 +112,10 @@ def register():
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
     )
+    if hasattr(bpy.types, 'VIEW3D_MT_edit_curve_context_menu'):
+        bpy.types.VIEW3D_MT_edit_curve_context_menu.append(
+            draw_in_VIEW3D_MT_edit_curve_context_menu
+        )
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if keyconfig:
         keymap = keyconfig.keymaps.new(
@@ -226,6 +237,10 @@ def unregister():
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
     )
+    if hasattr(bpy.types, 'VIEW3D_MT_edit_curve_context_menu'):
+        bpy.types.VIEW3D_MT_edit_curve_context_menu.remove(
+            draw_in_VIEW3D_MT_edit_curve_context_menu
+        )
     for i in reversed(cls):
         bpy.utils.unregister_class(i)
     boolean.unregister()

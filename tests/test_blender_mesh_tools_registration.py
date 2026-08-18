@@ -149,6 +149,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.removeselect_sideringloops",
                 "ho.visual_boolean_cut",
                 "ho.curve_bevel",
+                "ho.repair_curve_path",
             })
             self.assertIsNotNone(
                 getattr(
@@ -276,6 +277,22 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             self.assertLess((clamped - segment[0]).length, 1e-6)
             self.assertEqual(menu_layout.property_ids, [])
 
+            curve_menu_layout = RecordingLayout()
+            mesh_tools.HO_MT_curve.draw(
+                SimpleNamespace(layout=curve_menu_layout),
+                SimpleNamespace(active_object=SimpleNamespace(type='CURVE')),
+            )
+            self.assertEqual(
+                curve_menu_layout.operator_ids,
+                ["ho.repair_curve_path"],
+            )
+            curve_context_layout = RecordingLayout()
+            mesh_tools.draw_in_VIEW3D_MT_edit_curve_context_menu(
+                SimpleNamespace(layout=curve_context_layout),
+                SimpleNamespace(active_object=SimpleNamespace(type='CURVE')),
+            )
+            self.assertEqual(curve_context_layout.menu_ids, ["HO_MT_curve"])
+
             curve_keymaps = [
                 (keymap, keymap_item)
                 for keymap, keymap_item in mesh_tools.preference_keymaps()
@@ -355,6 +372,36 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             )
         )
         self.assertEqual(mesh_tools.addon_keymaps, [])
+
+    def test_curve_repair_restores_configured_nurbs_path_order(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("CurveRepairTest", "CURVE")
+        curve.dimensions = "3D"
+        spline = curve.splines.new("NURBS")
+        spline.points.add(3)
+        for point, coordinate in zip(
+            spline.points,
+            ((0.0, 0.0, 0.0), (1.0, 1.0, 0.0), (2.0, 0.0, 0.0), (3.0, 1.0, 0.0)),
+        ):
+            point.co = (*coordinate, 1.0)
+        spline.order_u = 4
+        obj = bpy.data.objects.new("CurveRepairObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            result, count = mesh_tools.curve_repair.repair_curve(obj)
+            self.assertEqual(result, "INSUFFICIENT_POINTS")
+            self.assertEqual(count, 4)
+            self.assertEqual(len(curve.splines[0].points), 4)
+            result, count = mesh_tools.curve_repair.repair_curve(obj, order_u=4)
+            self.assertEqual(result, "FINISHED")
+            self.assertEqual(count, 4)
+            self.assertEqual(curve.splines[0].order_u, 4)
+        finally:
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
 
     def test_curve_symmetrize_mirrors_bezier_controls_and_handles(self):
         mesh_tools = load_mesh_tools()

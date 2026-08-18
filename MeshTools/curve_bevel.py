@@ -289,7 +289,7 @@ def _bevel_point_spline(spline, width, segments):
 
 class OP_CurveBevel(bpy.types.Operator):
     bl_idname = 'ho.curve_bevel'
-    bl_label = 'HoTools：曲线控制点倒角'
+    bl_label = '曲线倒角'
     bl_options = {'REGISTER', 'UNDO'}
 
     width: FloatProperty(
