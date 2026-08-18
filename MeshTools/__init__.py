@@ -197,6 +197,17 @@ def register():
             region_type='WINDOW',
         )
         keymap_item = keymap.keymap_items.new(
+            OP_Symmetrize.bl_idname,
+            type='X',
+            value='PRESS',
+            alt=True,
+            head=True,
+        )
+        keymap_item.properties.flick = True
+        keymap_item.properties.objmode = False
+        addon_keymaps.append((keymap, keymap_item))
+
+        keymap_item = keymap.keymap_items.new(
             OP_CurveBevel.bl_idname,
             type='B',
             value='PRESS',

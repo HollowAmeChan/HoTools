@@ -222,10 +222,15 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 for keymap, keymap_item in mesh_tools.addon_keymaps
                 if keymap_item.idname == "ho.symmetrize"
             ]
-            self.assertEqual(len(symmetrize_keymaps), 1)
-            self.assertEqual(symmetrize_keymaps[0][0].name, "Mesh")
-            self.assertEqual(symmetrize_keymaps[0][1].type, 'X')
-            self.assertTrue(symmetrize_keymaps[0][1].alt)
+            self.assertEqual(len(symmetrize_keymaps), 2)
+            symmetrize_keymaps_by_name = {
+                keymap.name: keymap_item
+                for keymap, keymap_item in symmetrize_keymaps
+            }
+            self.assertEqual(set(symmetrize_keymaps_by_name), {"Mesh", "Curve"})
+            for keymap_item in symmetrize_keymaps_by_name.values():
+                self.assertEqual(keymap_item.type, 'X')
+                self.assertTrue(keymap_item.alt)
             selection_keymaps = {
                 keymap_item.idname: (keymap.name, keymap_item)
                 for keymap, keymap_item in mesh_tools.addon_keymaps
@@ -350,6 +355,99 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             )
         )
         self.assertEqual(mesh_tools.addon_keymaps, [])
+
+    def test_curve_symmetrize_mirrors_bezier_controls_and_handles(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("CurveSymmetrizeTest", "CURVE")
+        curve.dimensions = "3D"
+        spline = curve.splines.new("BEZIER")
+        spline.bezier_points.add(3)
+        coordinates = (
+            (-2.0, 1.0, 0.0),
+            (-1.0, 0.0, 0.0),
+            (1.0, 0.5, 0.0),
+            (2.0, 1.0, 0.0),
+        )
+        for point, coordinate in zip(spline.bezier_points, coordinates):
+            point.co = coordinate
+            point.handle_left_type = "FREE"
+            point.handle_right_type = "FREE"
+        spline.bezier_points[2].co = (1.0, 0.75, 0.0)
+        spline.bezier_points[2].handle_left = (0.5, 0.25, 0.0)
+        spline.bezier_points[2].handle_right = (1.5, 1.25, 0.0)
+        obj = bpy.data.objects.new("CurveSymmetrizeObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            self.assertEqual(len(obj.data.splines), 1)
+            self.assertEqual(len(obj.data.splines[0].bezier_points), 4)
+            result = mesh_tools.symmetrize._curve_symmetrize(
+                obj,
+                direction="POSITIVE_X",
+                threshold=0.0001,
+                partial=False,
+                remove=False,
+            )
+            self.assertTrue(result["curve"])
+            bpy.ops.object.mode_set(mode="OBJECT")
+            mirrored = obj.data.splines[0].bezier_points[1]
+            self.assertLess((mirrored.co - Vector((-1.0, 0.75, 0.0))).length, 1e-6)
+            self.assertLess(
+                (mirrored.handle_left - Vector((-1.5, 1.25, 0.0))).length,
+                1e-6,
+            )
+            self.assertLess(
+                (mirrored.handle_right - Vector((-0.5, 0.25, 0.0))).length,
+                1e-6,
+            )
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
+
+    def test_curve_symmetrize_creates_mirror_for_single_sided_path(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("PathSymmetrizeTest", "CURVE")
+        curve.dimensions = "3D"
+        spline = curve.splines.new("POLY")
+        spline.points.add(2)
+        for point, coordinate in zip(
+            spline.points,
+            ((1.0, -1.0, 0.0), (2.0, 0.0, 0.0), (3.0, 1.0, 0.0)),
+        ):
+            point.co = (*coordinate, 1.0)
+        obj = bpy.data.objects.new("PathSymmetrizeObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            result = mesh_tools.symmetrize._curve_symmetrize(
+                obj,
+                direction="POSITIVE_X",
+                threshold=0.0001,
+                partial=False,
+                remove=False,
+            )
+            self.assertTrue(result["curve"])
+            bpy.ops.object.mode_set(mode="OBJECT")
+            self.assertEqual(len(obj.data.splines), 2)
+            mirrored = obj.data.splines[1]
+            coordinates = [point.co.xyz.copy() for point in mirrored.points]
+            self.assertEqual(
+                [tuple(round(value, 6) for value in coordinate) for coordinate in coordinates],
+                [(-3.0, 1.0, 0.0), (-2.0, 0.0, 0.0), (-1.0, -1.0, 0.0)],
+            )
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
 
     def test_curve_bevel_chamfers_selected_control_points(self):
         mesh_tools = load_mesh_tools()

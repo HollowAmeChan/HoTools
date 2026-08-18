@@ -79,10 +79,191 @@ def _object_axes(matrix):
     }
 
 
+def _mirror_vector(value, component):
+    mirrored = value.copy()
+    mirrored[component] = -mirrored[component]
+    return mirrored
+
+
+def _curve_point_selected(point, spline_type):
+    if spline_type == 'BEZIER':
+        return bool(point.select_control_point)
+    return bool(point.select)
+
+
+def _copy_spline_settings(source, target):
+    for name in (
+        'use_cyclic_u',
+        'resolution_u',
+        'order_u',
+        'use_endpoint_u',
+        'use_bezier_u',
+        'use_smooth',
+        'material_index',
+        'radius_interpolation',
+        'tilt_interpolation',
+    ):
+        if hasattr(source, name) and hasattr(target, name):
+            setattr(target, name, getattr(source, name))
+
+
+def _mirror_curve_spline(curve, source_spline, source_points, source_indices, axis):
+    """Create a separate reflected spline for a path with no target side."""
+    spline_type = source_spline.type
+    mirrored_spline = curve.splines.new(spline_type)
+    _copy_spline_settings(source_spline, mirrored_spline)
+    ordered_indices = list(reversed(source_indices))
+    if spline_type == 'BEZIER':
+        mirrored_spline.bezier_points.add(len(ordered_indices) - 1)
+        for target, source_index in zip(
+            mirrored_spline.bezier_points,
+            ordered_indices,
+        ):
+            source = source_points[source_index]
+            target.co = _mirror_vector(source.co, axis)
+            target.handle_left = _mirror_vector(source.handle_left, axis)
+            target.handle_right = _mirror_vector(source.handle_right, axis)
+            target.handle_left_type = source.handle_left_type
+            target.handle_right_type = source.handle_right_type
+            target.tilt = source.tilt
+            target.radius = source.radius
+            target.weight_softbody = source.weight_softbody
+            target.select_control_point = source.select_control_point
+            target.select_left_handle = source.select_left_handle
+            target.select_right_handle = source.select_right_handle
+            target.hide = source.hide
+    else:
+        mirrored_spline.points.add(len(ordered_indices) - 1)
+        for target, source_index in zip(
+            mirrored_spline.points,
+            ordered_indices,
+        ):
+            source = source_points[source_index]
+            target.co = _mirror_vector(source.co, axis)
+            target.tilt = source.tilt
+            target.radius = source.radius
+            target.weight_softbody = source.weight_softbody
+            target.select = source.select
+            target.hide = source.hide
+    return mirrored_spline
+
+
+def _curve_symmetrize(obj, direction, threshold, partial, remove):
+    """Mirror curve controls across an object-local axis.
+
+    Curve splines have ordered controls instead of mesh vertices with edges.
+    Reversing that order gives the counterpart of a control on the other side
+    of a symmetric open or cyclic spline. Existing counterparts are updated
+    in place; a path with only one side receives a reflected spline copy.
+    """
+    direction_name, axis = direction.split('_', 1)
+    component = 'XYZ'.index(axis)
+    source_sign = 1 if direction_name == 'POSITIVE' else -1
+    affected = []
+    skipped = []
+
+    for spline in list(obj.data.splines):
+        spline_type = spline.type
+        if spline_type == 'BEZIER':
+            points = list(spline.bezier_points)
+        elif spline_type in {'POLY', 'NURBS'}:
+            points = list(spline.points)
+        else:
+            continue
+
+        snapshots = []
+        source_indices = []
+        opposite_count = 0
+        for index, point in enumerate(points):
+            value = float(point.co[component])
+            if abs(value) <= threshold:
+                point.co[component] = 0.0
+                if spline_type == 'BEZIER':
+                    left = point.handle_left.copy()
+                    right = point.handle_right.copy()
+                    left_type = point.handle_left_type
+                    point.handle_left = _mirror_vector(right, component)
+                    point.handle_right = _mirror_vector(left, component)
+                    point.handle_left_type = point.handle_right_type
+                    point.handle_right_type = left_type
+                continue
+            if value * source_sign <= 0.0:
+                if value * source_sign < -threshold:
+                    opposite_count += 1
+                continue
+            if partial and not _curve_point_selected(point, spline_type):
+                continue
+            source_indices.append(index)
+            target_index = len(points) - 1 - index
+            if target_index == index:
+                continue
+            target = points[target_index]
+            target_value = float(target.co[component])
+            if target_value * source_sign > threshold:
+                skipped.append((spline, index))
+                continue
+            if spline_type == 'BEZIER':
+                snapshots.append(
+                    (
+                        index,
+                        target_index,
+                        point.co.copy(),
+                        point.handle_left.copy(),
+                        point.handle_right.copy(),
+                        point.handle_left_type,
+                        point.handle_right_type,
+                    )
+                )
+            else:
+                snapshots.append((index, target_index, point.co.copy()))
+
+        if source_indices and opposite_count == 0:
+            _mirror_curve_spline(
+                obj.data,
+                spline,
+                points,
+                source_indices,
+                component,
+            )
+            affected.extend((spline, index) for index in source_indices)
+            continue
+
+        for snapshot in snapshots:
+            if spline_type == 'BEZIER':
+                (
+                    _,
+                    target_index,
+                    source_co,
+                    source_left,
+                    source_right,
+                    source_left_type,
+                    source_right_type,
+                ) = snapshot
+                target = points[target_index]
+                target.co = _mirror_vector(source_co, component)
+                target.handle_left = _mirror_vector(source_right, component)
+                target.handle_right = _mirror_vector(source_left, component)
+                target.handle_left_type = source_right_type
+                target.handle_right_type = source_left_type
+            else:
+                _, target_index, source_co = snapshot
+                target = points[target_index]
+                target.co = _mirror_vector(source_co, component)
+            affected.append((spline, target_index))
+
+    obj.data.update_tag()
+    return {
+        'curve': True,
+        'affected': affected,
+        'skipped': skipped,
+        'remove_requested': bool(remove),
+    }
+
+
 class OP_Symmetrize(bpy.types.Operator):
     bl_idname = 'ho.symmetrize'
     bl_label = '对称化'
-    bl_description = '使用 Alt-X 径向操作对当前网格进行对称化'
+    bl_description = '使用 Alt-X 径向操作对当前网格或曲线进行对称化'
     bl_options = {'REGISTER', 'UNDO'}
 
     objmode: BoolProperty(name='对象模式', default=False)  # type: ignore
@@ -106,12 +287,15 @@ class OP_Symmetrize(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        active = context.active_object
+        if active is None:
+            return False
+        mesh_mode = active.type == 'MESH' and context.mode in {'EDIT_MESH', 'OBJECT'}
+        curve_mode = active.type == 'CURVE' and context.mode == 'EDIT_CURVE'
         return (
             context.area is not None
             and context.area.type == 'VIEW_3D'
-            and context.active_object is not None
-            and context.active_object.type == 'MESH'
-            and context.mode in {'EDIT_MESH', 'OBJECT'}
+            and (mesh_mode or curve_mode)
         )
 
     def draw(self, context):
@@ -123,6 +307,8 @@ class OP_Symmetrize(bpy.types.Operator):
         row.prop(self, 'axis', expand=True)
         row.prop(self, 'direction', expand=True)
         layout.prop(self, 'threshold')
+        if context.active_object and context.active_object.type == 'CURVE':
+            return
         if not self.remove and not self.partial:
             if self.is_custom_normal:
                 layout.prop(self, 'mirror_custom_normals')
@@ -193,6 +379,16 @@ class OP_Symmetrize(bpy.types.Operator):
 
     def execute(self, context):
         active = context.active_object
+        if active.type == 'CURVE':
+            self.result = _curve_symmetrize(
+                active,
+                direction=f'{self.direction}_{self.axis}',
+                threshold=self.threshold,
+                partial=self.partial,
+                remove=self.remove,
+            )
+            return {'FINISHED'}
+
         self.is_custom_normal = bool(getattr(active.data, 'has_custom_normals', False))
         was_object_mode = context.mode == 'OBJECT'
         if was_object_mode:
