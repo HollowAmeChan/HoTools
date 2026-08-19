@@ -93,6 +93,10 @@ def updateDeleteMergePieState(self, context):
     HoPie.set_delete_merge_pie_enabled(self.hoTools_enableDeleteMergePie)
 
 
+def updateMainPieState(self, context):
+    HoPie.set_main_pie_enabled(self.hoTools_enableHoMainPie)
+
+
 # 插件内置资源路径相关函数
 def asset_library_exists(path):
     libs = bpy.context.preferences.filepaths.asset_libraries
@@ -169,6 +173,7 @@ class AddonPreference(bpy.types.AddonPreferences):
     hoTools_enableCursorPie: BoolProperty(name="光标与原点饼菜单", default=False, update=updateCursorPieState)  # type: ignore
     hoTools_enableSelectionModePie: BoolProperty(name="选择模式饼菜单", default=True, update=updateSelectionModePieState)  # type: ignore
     hoTools_enableDeleteMergePie: BoolProperty(name="删除与合并饼菜单", default=True, update=updateDeleteMergePieState)  # type: ignore
+    hoTools_enableHoMainPie: BoolProperty(name="HoMainPie（编辑模式空格）", default=True, update=updateMainPieState)  # type: ignore
     hoTools_ui_exicon_expanded: BoolProperty(name='展开 ExIcon', default=False)  # type: ignore
     hoTools_ui_omninode_expanded: BoolProperty(name='展开 OmniNode', default=False)  # type: ignore
     hoTools_ui_hotab_expanded: BoolProperty(name='展开 HoTab', default=False)  # type: ignore
@@ -281,6 +286,12 @@ class AddonPreference(bpy.types.AddonPreferences):
             row.label(text='删除/合并饼')
             draw_empty_slot(delete_merge_box)
 
+            main_pie_box = content.box()
+            row = main_pie_box.row(align=True)
+            row.prop(self, 'hoTools_enableHoMainPie', text='')
+            row.label(text='HoMainPie（编辑模式空格）')
+            draw_empty_slot(main_pie_box)
+
         _draw_module_box(layout, self, 'hoTools_ui_exicon_expanded', 'ExIcon', 'hoTools_enableExIcon', draw_exicon)
         _draw_module_box(layout, self, 'hoTools_ui_omninode_expanded', 'OmniNode', 'hoTools_OmniNodeFeatures_enable')
         _draw_module_box(layout, self, 'hoTools_ui_hotab_expanded', 'HoTab', 'hoTools_enableHoTab')
@@ -327,6 +338,7 @@ def register():
     HoPie.set_cursor_pie_enabled(prefs.hoTools_enableCursorPie)
     HoPie.set_selection_mode_pie_enabled(prefs.hoTools_enableSelectionModePie)
     HoPie.set_delete_merge_pie_enabled(prefs.hoTools_enableDeleteMergePie)
+    HoPie.set_main_pie_enabled(prefs.hoTools_enableHoMainPie)
     if prefs.hoTools_OmniNodeFeatures_enable:
         OmniNode.register()
     if prefs.hoTools_enableHoTab:

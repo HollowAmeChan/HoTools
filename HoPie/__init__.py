@@ -1,15 +1,26 @@
 import bpy
-from . import align_pie, cursor_pie, delete_merge_pie, selection_mode_pie
+from . import HoMainPie, align_pie, cursor_pie, delete_merge_pie, selection_mode_pie
+from .HoPieCore import (
+    DialogSettings,
+    HoPie,
+    HoPieConfig,
+    ItemOptions,
+    LayoutBuilder,
+    LayoutOptions,
+    PieSettings,
+)
 
 
 align_pie_keymaps = []
 cursor_pie_keymaps = []
 selection_mode_pie_keymaps = []
 delete_merge_pie_keymaps = []
+main_pie_keymaps = []
 _align_pie_enabled = False
 _cursor_pie_enabled = False
 _selection_mode_pie_enabled = False
 _delete_merge_pie_enabled = False
+_main_pie_enabled = False
 
 
 def reg_props():
@@ -191,12 +202,32 @@ def set_delete_merge_pie_enabled(enabled):
     _delete_merge_pie_enabled = enabled
 
 
+def set_main_pie_enabled(enabled):
+    global _main_pie_enabled
+    enabled = bool(enabled)
+    if enabled:
+        if _main_pie_enabled:
+            return
+        _remove_keymaps(main_pie_keymaps, {'HO_MT_HoMainPie'})
+        _register_classes(HoMainPie.HO_MAIN_PIE_CLASSES)
+        _register_keymap(
+            'Mesh', 'EMPTY', 'SPACE', head=True,
+            menu_name='HO_MT_HoMainPie', keymap_store=main_pie_keymaps,
+        )
+    else:
+        _remove_keymaps(main_pie_keymaps, {'HO_MT_HoMainPie'})
+        if _main_pie_enabled:
+            _unregister_classes(HoMainPie.HO_MAIN_PIE_CLASSES)
+    _main_pie_enabled = enabled
+
+
 def preference_keymaps():
     return [
         *align_pie_keymaps,
         *cursor_pie_keymaps,
         *selection_mode_pie_keymaps,
         *delete_merge_pie_keymaps,
+        *main_pie_keymaps,
     ]
 
 
@@ -205,6 +236,7 @@ def register():
 
 
 def unregister():
+    set_main_pie_enabled(False)
     set_delete_merge_pie_enabled(False)
     set_selection_mode_pie_enabled(False)
     set_cursor_pie_enabled(False)
