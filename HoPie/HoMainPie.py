@@ -3,6 +3,8 @@
 from bpy.props import BoolProperty
 from bpy.types import Menu, Operator
 
+from ..ModifierTools import _draw_quick_modifier_buttons
+
 from .HoPieCore import (
     HoPie,
     LayoutBuilder,
@@ -149,51 +151,20 @@ def _draw_edge_display(layout: LayoutBuilder, context):
     space = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
 
-    row = layout.row(align=True)
+    col = layout.column()
+    row = col.row(align=True)
     draw_prop(row, overlay, "show_edge_crease", "折痕")
     draw_prop(row, overlay, "show_edge_sharp", "锐边")
-    row = layout.row(align=True)
+    row = col.row(align=True)
     draw_prop(row, overlay, "show_edge_bevel_weight", "倒角")
     draw_prop(row, overlay, "show_edge_seams", "缝合")
 
-    layout.separator()
-    row = layout.row(align=True)
-    row.item().operator(
-        HO_OT_HoMainPieSetEdgeOverlays.bl_idname,
-        text="全开",
-        icon="CHECKMARK",
-        enabled=True,
-        props={"enabled": True},
-    )
-    row.item().operator(
-        HO_OT_HoMainPieSetEdgeOverlays.bl_idname,
-        text="全关",
-        icon="X",
-        enabled=True,
-        props={"enabled": False},
-    )
+    row = col.row()
+    row.item().operator(HO_OT_HoMainPieSetEdgeOverlays.bl_idname,
+        text="",icon="CHECKMARK",enabled=True,props={"enabled": True},)
+    row.item().operator(HO_OT_HoMainPieSetEdgeOverlays.bl_idname,
+        text="",icon="X",enabled=True,props={"enabled": False},)
 
-def _draw_quick_modifiers(layout: LayoutBuilder, context):
-    """直接绘制 ModifierTools 的快速修改器按钮。"""
-    buttons = (
-        ("SUBSURF_SIMPLE", "纯细分"),
-        ("SUBSURF", "细分"),
-        ("SOLIDIFY", "实体化"),
-        ("MIRROR", "镜像"),
-        ("TRIANGULATE", "三角化"),
-        ("BOOLEAN", "布尔"),
-        ("SHRINKWRAP", "缩裹"),
-        ("DATA_TRANSFER", "数据传递"),
-    )
-    for start in (0, 4):
-        row = layout.row(align=True)
-        for modifier_type, label in buttons[start:start + 4]:
-            row.item().operator(
-                "ho.modifier_add_quick",
-                text=label,
-                icon="MODIFIER_ON",
-                modifier_type=modifier_type,
-            )
 
 
 class HO_MT_HoMainPieMesh(Menu):
@@ -204,8 +175,10 @@ class HO_MT_HoMainPieMesh(Menu):
 
     def draw(self, context):
         pie = HoPie(self.layout, context)
-        pie.top.expand(_draw_edge_display)
-        pie.top_right.expand(_draw_quick_modifiers)
+        pie.top.expand(_draw_edge_display,
+            height=1.5)
+        pie.top_right.expand(_draw_quick_modifier_buttons,
+            width=1.5,height=1.5)
         pie.finish()
 
 
@@ -219,9 +192,14 @@ class HO_MT_HoMainPie(Menu):
         pie = HoPie(self.layout, context)
         pie.left.pie(HO_MT_HoMainPieMesh.bl_idname,
             text="网格工具",icon="MESH_DATA",)
+
         space = find_space(context, "VIEW_3D")
         overlay = getattr(space, "overlay", None)
-        draw_prop(pie.top, overlay, "show_overlays", "叠加层", icon="OVERLAY")
+        if overlay is not None:
+            pie.top.expression(
+                "C.space_data.overlay.show_overlays = not C.space_data.overlay.show_overlays",
+                text="叠加层",icon="OVERLAY",depress=bool(getattr(overlay, "show_overlays", False)),)
+
         pie.top_left.expand(_draw_view_options,
             width=1.5,height=1.5,height_offset=5.0,)
         pie.finish()

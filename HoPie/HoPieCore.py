@@ -1,6 +1,6 @@
 """HoPie 的轻量核心。
 
-这个文件只负责“怎么写一个饼菜单”，不负责注册类、注册快捷键、保存 JSON，
+这个文件负责饼菜单 DSL、通用 operator 和注册基础设施，不保存 JSON，
 也不依赖 PME。它借鉴了 PME 的几个实用约定：
 
 * 饼菜单有八个方向槽位，另外提供 PME 风格的最顶、最底两个中心槽位；
@@ -28,17 +28,31 @@
 这里的“展开”是直接把回调绘制到当前槽位，不会再弹出一个新的嵌套饼。
 """
 
-from __future__ import annotations
-
 import inspect
 from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
 
+try:
+    import bpy
+    from bpy.props import StringProperty
+    _HO_OPERATOR_BASE = bpy.types.Operator
+except (ImportError, AttributeError):
+    bpy = None
+
+    class _HO_OPERATOR_BASE:
+        pass
+
+    def StringProperty(**kwargs: Any) -> Any:
+        return None
+
 
 _UNSET = object()
 _ICON_NAMES = None
 _ICON_NAMES_READY = False
+_QUICK_ACTIONS: Dict[str, Callable[..., Any]] = {}
+_QUICK_ACTION_SERIAL = 0
+_HO_PIE_EVENT = None
 
 
 def _resolve(value: Any, context: Any) -> Any:
@@ -188,6 +202,234 @@ def _safe_call(method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         return method(*args, **fallback)
 
 
+def _store_quick_action(callback: Callable[..., Any]) -> str:
+    """为一次菜单绘制保存回调，返回写入 operator 的短 token。"""
+    global _QUICK_ACTION_SERIAL
+    _QUICK_ACTION_SERIAL += 1
+    token = "action_%d" % _QUICK_ACTION_SERIAL
+    _QUICK_ACTIONS[token] = callback
+    return token
+
+
+class HO_OT_HoPieAction(_HO_OPERATOR_BASE):
+    """执行 Core 菜单项临时保存的回调，保留 operator 的甩动命中。"""
+
+    bl_idname = "ho.hopie_action"
+    bl_label = "HoPie 操作"
+    bl_options = {"INTERNAL"}
+
+    action: StringProperty(options={"SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        return context is not None
+
+    def execute(self, context):
+        callback = _QUICK_ACTIONS.pop(getattr(self, "action", ""), None)
+        if callback is None:
+            return {"CANCELLED"}
+        try:
+            result = _resolve(callback, context)
+        except Exception as error:
+            try:
+                self.report({"WARNING"}, "HoPie 操作执行失败: %s" % error)
+            except (AttributeError, RuntimeError):
+                pass
+            return {"CANCELLED"}
+        if isinstance(result, set):
+            return result
+        return {"FINISHED"}
+
+
+class HO_OT_HoPieExpression(_HO_OPERATOR_BASE):
+    """执行一个 HoPie 表达式按钮，供简单切换操作复用。"""
+
+    bl_idname = "ho.hopie_expression"
+    bl_label = "HoPie 表达式"
+    bl_options = {"INTERNAL"}
+
+    command: StringProperty(options={"SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        return context is not None
+
+    def invoke(self, context, event):
+        global _HO_PIE_EVENT
+        _HO_PIE_EVENT = event
+        return self.execute(context)
+
+    def execute(self, context):
+        global _HO_PIE_EVENT
+        command = getattr(self, "command", "")
+        if not command:
+            _HO_PIE_EVENT = None
+            return {"CANCELLED"}
+        namespace = {
+            "C": context,
+            "context": context,
+            "bpy": bpy,
+            "D": getattr(bpy, "data", None) if bpy is not None else None,
+            "E": _HO_PIE_EVENT,
+            "A": getattr(context, "area", None),
+            "O": getattr(context, "active_object", None),
+            "W": getattr(context, "window", None),
+            "S": getattr(context, "scene", None),
+            "R": getattr(context, "region", None),
+        }
+        try:
+            exec(compile(command, "<HoPie expression>", "exec"),
+                 {"__builtins__": {}}, namespace)
+        except Exception as error:
+            try:
+                self.report({"WARNING"}, "HoPie 表达式执行失败: %s" % error)
+            except (AttributeError, RuntimeError):
+                pass
+            _HO_PIE_EVENT = None
+            return {"CANCELLED"}
+        _HO_PIE_EVENT = None
+        return {"FINISHED"}
+
+
+class HO_OT_HoPieNestedPie(_HO_OPERATOR_BASE):
+    """把当前鼠标事件交给 popup_menu_pie，复刻 PME 的嵌套饼入口。"""
+
+    bl_idname = "ho.hopie_nested_pie"
+    bl_label = "HoPie 嵌套饼"
+    bl_options = {"INTERNAL"}
+
+    pie_menu_name: StringProperty(options={"SKIP_SAVE"})
+    invoke_mode: StringProperty(default="RELEASE", options={"SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        return bool(getattr(context, "window_manager", None))
+
+    def invoke(self, context, event):
+        if bpy is None:
+            return {"CANCELLED"}
+        menu_cls = getattr(getattr(bpy, "types", None),
+                           getattr(self, "pie_menu_name", ""), None)
+        draw = getattr(menu_cls, "draw", None)
+        if draw is None:
+            try:
+                self.report({"WARNING"}, "找不到 HoPie 子饼: %s" % self.pie_menu_name)
+            except (AttributeError, RuntimeError):
+                pass
+            return {"CANCELLED"}
+
+        def draw_menu(menu, draw_context):
+            draw(menu, draw_context)
+
+        try:
+            context.window_manager.popup_menu_pie(
+                event,
+                draw_menu,
+                title=getattr(menu_cls, "bl_label", self.pie_menu_name),
+            )
+            return {"FINISHED"}
+        except (AttributeError, RuntimeError, TypeError):
+            try:
+                bpy.ops.wm.call_menu_pie(
+                    "INVOKE_DEFAULT", name=self.pie_menu_name)
+            except (AttributeError, RuntimeError, TypeError):
+                return {"CANCELLED"}
+            return {"FINISHED"}
+
+
+HO_PIE_CORE_CLASSES = (
+    HO_OT_HoPieAction,
+    HO_OT_HoPieExpression,
+    HO_OT_HoPieNestedPie,
+)
+
+
+def register_classes(classes: Any) -> None:
+    """统一注册一组 Blender 类。"""
+    if bpy is None:
+        return
+    for item in classes:
+        try:
+            bpy.utils.register_class(item)
+        except ValueError as error:
+            if "already registered" not in str(error):
+                raise
+
+
+def unregister_classes(classes: Any) -> None:
+    """统一逆序注销一组 Blender 类。"""
+    if bpy is None:
+        return
+    for item in reversed(classes):
+        try:
+            bpy.utils.unregister_class(item)
+        except (RuntimeError, ValueError) as error:
+            if "not registered" not in str(error):
+                raise
+
+
+def register_keymap(
+        keymap_name: str, space_type: str, key_type: str,
+        *, shift: bool = False, alt: bool = False, menu_name: Optional[str] = None,
+        keymap_store: Optional[list] = None, head: bool = True,
+        operator_idname: str = "wm.call_menu_pie",
+        property_name: str = "name", invoke_mode: Optional[str] = None) -> None:
+    """创建一个插件快捷键，并把项目保存到传入的列表。"""
+    if bpy is None:
+        return
+    keyconfig = bpy.context.window_manager.keyconfigs.addon
+    if not keyconfig:
+        return
+    keymap = keyconfig.keymaps.new(
+        name=keymap_name,
+        space_type=space_type,
+        region_type="WINDOW",
+    )
+    item = keymap.keymap_items.new(
+        operator_idname,
+        type=key_type,
+        value="PRESS",
+        shift=shift,
+        alt=alt,
+        head=head,
+    )
+    setattr(item.properties, property_name, menu_name)
+    if invoke_mode is not None:
+        item.properties.invoke_mode = invoke_mode
+    if keymap_store is not None:
+        keymap_store.append((keymap, item))
+
+
+def remove_keymaps(items: list, menu_names: Any = ()) -> None:
+    """删除保存的快捷键，并清理同名旧项目。"""
+    for keymap, item in list(items):
+        try:
+            keymap.keymap_items.remove(item)
+        except (ReferenceError, ValueError):
+            pass
+    items.clear()
+
+    menu_names = set(menu_names)
+    if not menu_names or bpy is None:
+        return
+    keyconfig = bpy.context.window_manager.keyconfigs.addon
+    if not keyconfig:
+        return
+    for keymap in keyconfig.keymaps:
+        for item in list(keymap.keymap_items):
+            if item.idname not in {"wm.call_menu_pie", "ho.hopie_nested_pie"}:
+                continue
+            item_name = getattr(item.properties, "name", "")
+            if not item_name:
+                item_name = getattr(item.properties, "pie_menu_name", "")
+            if item_name not in menu_names:
+                continue
+            try:
+                keymap.keymap_items.remove(item)
+            except (ReferenceError, ValueError):
+                pass
+
+
 def find_space(context: Any, space_type: Optional[str] = None) -> Any:
     """从当前上下文取得空间，必要时回退到区域的 active space。"""
     space = getattr(context, "space_data", None)
@@ -260,7 +502,7 @@ def draw_prop(layout: Any, owner: Any, path: str,
 
 
 def ensure_layout(layout: Any, context: Any = None,
-                  operator_context: str = "INVOKE_DEFAULT") -> LayoutBuilder:
+                  operator_context: str = "INVOKE_DEFAULT") -> "LayoutBuilder":
     """保证拿到 Core 的布局包装器，已包装时原样返回。"""
     if isinstance(layout, LayoutBuilder):
         return layout
@@ -475,6 +717,86 @@ class LayoutBuilder:
                 # 不同 Blender 版本没有该操作属性时，菜单按钮仍应保留。
                 pass
         return button
+
+    def quick_operator(self, callback: Callable[..., Any],
+                       text: Optional[Any] = None, *, icon: Any = None,
+                       icon_value: Any = None,
+                       options: Optional[ItemOptions] = None,
+                       props: Optional[Mapping[str, Any]] = None,
+                       **operator_props: Any) -> Any:
+        """用临时回调创建真正的 operator 按钮，保留饼菜单甩动命中。"""
+        if not callable(callback):
+            raise TypeError("quick_operator 需要传入可调用回调")
+        values = dict(props or {})
+        values["action"] = _store_quick_action(callback)
+        return self.operator(
+            HO_OT_HoPieAction.bl_idname,
+            text,
+            icon=icon,
+            icon_value=icon_value,
+            options=options,
+            props=values,
+            **operator_props,
+        )
+
+    quick_op = quick_operator
+    action = quick_operator
+
+    def expression(self, command: Any, text: Optional[Any] = None, *,
+                   icon: Any = None, icon_value: Any = None,
+                   options: Optional[ItemOptions] = None,
+                   props: Optional[Mapping[str, Any]] = None,
+                   **operator_props: Any) -> Any:
+        """用 Core 表达式 operator 创建可甩动触发的按钮。"""
+        command = _resolve(command, self.context)
+        if not isinstance(command, str):
+            raise TypeError("expression 需要字符串命令")
+        values = dict(props or {})
+        values["command"] = command
+        return self.operator(
+            HO_OT_HoPieExpression.bl_idname,
+            text,
+            icon=icon,
+            icon_value=icon_value,
+            options=options,
+            props=values,
+            **operator_props,
+        )
+
+    expr_operator = expression
+    command = expression
+
+    def toggle_prop(self, owner: Any, path: str,
+                    text: Optional[Any] = None, *, icon: Any = None,
+                    icon_value: Any = None,
+                    options: Optional[ItemOptions] = None,
+                    **operator_props: Any) -> Any:
+        """把真实 RNA 布尔属性包装成可甩动触发的 toggle operator。"""
+        owner = _resolve(owner, self.context)
+        target, prop_name = resolve_path(owner, path)
+        if target is None or prop_name is None or not hasattr(target, prop_name):
+            return None
+        current = getattr(target, prop_name)
+        if not isinstance(current, bool):
+            return None
+
+        def toggle(_context: Any):
+            value = getattr(target, prop_name)
+            if not isinstance(value, bool):
+                return {"CANCELLED"}
+            setattr(target, prop_name, not value)
+            return {"FINISHED"}
+
+        if "depress" not in operator_props:
+            operator_props["depress"] = current
+        return self.quick_operator(
+            toggle,
+            text,
+            icon=icon,
+            icon_value=icon_value,
+            options=options,
+            **operator_props,
+        )
 
     def prop(self, owner: Any, path: str, text: Optional[Any] = None,
              *, icon: Any = None, icon_value: Any = None,
@@ -1122,6 +1444,10 @@ PieBuilder = HoPie
 
 __all__ = [
     "DialogSettings",
+    "HO_OT_HoPieAction",
+    "HO_OT_HoPieExpression",
+    "HO_OT_HoPieNestedPie",
+    "HO_PIE_CORE_CLASSES",
     "HoPie",
     "HoPieConfig",
     "ItemOptions",
@@ -1133,5 +1459,9 @@ __all__ = [
     "draw_prop",
     "ensure_layout",
     "find_space",
+    "register_classes",
+    "register_keymap",
+    "remove_keymaps",
+    "unregister_classes",
     "resolve_path",
 ]

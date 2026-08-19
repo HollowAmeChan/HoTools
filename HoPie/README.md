@@ -1,6 +1,6 @@
 # HoPieCore 快速用法
 
-`HoPieCore.py` 是 HoTools 自己的饼菜单代码层。它只包装 Blender 的 `UILayout`，不保存静态 JSON，也不负责注册菜单和快捷键。
+`HoPieCore.py` 是 HoTools 自己的饼菜单代码层。它包装 Blender 的 `UILayout`，提供通用 operator 和注册基础设施，不保存静态 JSON；具体业务菜单和功能开关仍由各模块自己注册。
 
 ## 创建一个饼
 
@@ -38,6 +38,11 @@ slot.pie("HO_MT_ChildPie", "进入子饼")       # 嵌套饼
 slot.menu("HO_MT_ChildMenu", "普通菜单")     # 普通下拉菜单
 slot.popover("OBJECT_PT_display", "视图显示") # Blender 面板
 slot.expand(draw_options, frame=True, width=1.25, height=1.2, height_offset=1.0)  # 当前槽位直接展开并留出距离
+slot.expression(
+    "C.space_data.overlay.show_overlays = not C.space_data.overlay.show_overlays",
+    "叠加层", icon="OVERLAY",
+)  # 用 operator 保留甩动命中
+slot.toggle_prop(context.space_data.overlay, "show_overlays", "叠加层")
 ```
 
 `slot.pie(...)` 使用 HoPie 自己的事件转发器打开子饼，因此会沿用当前鼠标事件；需要兼容原生调用时可传 `operator_idname="wm.call_menu_pie"`。
@@ -66,6 +71,8 @@ def draw_options(layout, context):
 展开面板的 `width`/`height` 分别是横向和纵向比例，底层对应 Blender 的 `UILayout.scale_x/scale_y`；`height_offset` 只控制垂直方向，正数让内容向上，负数让内容向下，不会占用下一个槽位。也可以直接传 `scale_x`/`scale_y`，或在 `DialogSettings(scale_x=..., scale_y=..., height_offset=...)` 中统一配置。
 
 `prop` 直接读取传入对象的真实 RNA 属性，也支持 `"foo.bar"` 这样的属性路径。属性不存在时会跳过当前项，不会让整个饼报错。
+
+需要甩动触发的布尔开关不要使用 `prop()`，改用 `toggle_prop()` 或 `expression()`；前者直接翻转真实 RNA 属性，后者执行一次 Core 表达式。表达式按钮可使用 `C`/`context`、`bpy`、`D`（`bpy.data`）、`E`（当前事件）以及 `A/O/W/S/R` 上下文别名，不提供 Python 内置函数。
 
 跨模块复用同一逻辑时，也可以使用 Core 的安全辅助函数：
 
