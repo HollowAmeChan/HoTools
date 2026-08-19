@@ -1,4 +1,4 @@
-"""HoMainPie：编辑模式下的主工作饼菜单。"""
+"""HoMainPie：模式无关的主工作饼菜单。"""
 import bpy
 from bpy.props import BoolProperty
 from bpy.types import Menu, Operator

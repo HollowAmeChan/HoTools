@@ -218,7 +218,7 @@ class HO_OT_HoPieAction(_HO_OPERATOR_BASE):
     bl_label = "HoPie 操作"
     bl_options = {"INTERNAL"}
 
-    action: StringProperty(options={"SKIP_SAVE"})
+    action: StringProperty(options={"SKIP_SAVE"}) # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -248,7 +248,7 @@ class HO_OT_HoPieExpression(_HO_OPERATOR_BASE):
     bl_label = "HoPie 表达式"
     bl_options = {"INTERNAL"}
 
-    command: StringProperty(options={"SKIP_SAVE"})
+    command: StringProperty(options={"SKIP_SAVE"}) # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -295,11 +295,11 @@ class HO_OT_HoPieNestedPie(_HO_OPERATOR_BASE):
     """把当前鼠标事件交给 popup_menu_pie，复刻 PME 的嵌套饼入口。"""
 
     bl_idname = "ho.hopie_nested_pie"
-    bl_label = "HoPie 嵌套饼"
+    bl_label = "饼:Ho大饼"
     bl_options = {"INTERNAL"}
 
-    pie_menu_name: StringProperty(options={"SKIP_SAVE"})
-    invoke_mode: StringProperty(default="RELEASE", options={"SKIP_SAVE"})
+    pie_menu_name: StringProperty(options={"SKIP_SAVE"}) # type: ignore
+    invoke_mode: StringProperty(default="RELEASE", options={"SKIP_SAVE"}) # type: ignore
 
     @classmethod
     def poll(cls, context):
