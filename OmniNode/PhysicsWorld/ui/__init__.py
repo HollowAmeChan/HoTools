@@ -91,7 +91,7 @@ def register() -> None:
         )
         register_field_visualization()
         _ensure_draw_handler()
-        bpy.types.VIEW3D_HT_header.append(draw_collision_overlay_header)
+        bpy.types.VIEW3D_HT_tool_header.append(draw_collision_overlay_header)
     except Exception:
         unregister_field_visualization()
         unregister_blender_property_domain("physics_ui", force=True)
@@ -107,7 +107,7 @@ def unregister() -> None:
     if not _REGISTERED:
         return
     try:
-        bpy.types.VIEW3D_HT_header.remove(draw_collision_overlay_header)
+        bpy.types.VIEW3D_HT_tool_header.remove(draw_collision_overlay_header)
     except Exception:
         pass
     _remove_draw_handler()

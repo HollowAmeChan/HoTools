@@ -2799,7 +2799,7 @@ class CheckerOverlayModule:
     @staticmethod
     def remove_header():
         try:
-            bpy.types.VIEW3D_HT_header.remove(draw_checker_overlay_header)
+            bpy.types.VIEW3D_HT_tool_header.remove(draw_checker_overlay_header)
         except Exception:
             pass
 
@@ -2845,7 +2845,7 @@ def register():
     reg_props()
 
     CheckerOverlayModule.remove_header()
-    bpy.types.VIEW3D_HT_header.append(draw_checker_overlay_header)
+    bpy.types.VIEW3D_HT_tool_header.append(draw_checker_overlay_header)
 
     if _overlay_load_handler not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_overlay_load_handler)

@@ -465,7 +465,7 @@ class NODE_OT_hotab_search(Operator):
     bl_options = {"REGISTER", "UNDO"}
     bl_property = "search_entry"
 
-    search_entry: EnumProperty(items=_enum_items, name="节点")
+    search_entry: EnumProperty(items=_enum_items, name="节点") # type: ignore
 
     @classmethod
     def poll(cls, context):
