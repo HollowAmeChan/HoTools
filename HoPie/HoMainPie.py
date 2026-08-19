@@ -176,16 +176,43 @@ def _draw_quick_edge_tools(layout: LayoutBuilder, context):
         )
 
 
+def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
+    """绘制常用的网格关联选择操作。"""
+    col = layout.column(align=True)
+    col.scale_x = 1.25
+    col.scale_y = 1.35
+
+    col.operator("mesh.faces_select_linked_flat",
+        text="相邻平展",icon="VIEW_PERSPECTIVE",props={"sharpness": 0.2617993950843811},)
+    col.operator("mesh.loop_to_region",
+        text="循环线内",icon="VIEW_ORTHO",)
+    col.operator("mesh.region_to_loop",
+        text="边界循环",icon="SELECT_SET",)
+
+    row = col.row(align=True)
+    row.operator("mesh.select_linked",
+        text="关联缝合",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
+    row.operator("mesh.select_linked",
+        text="关联锐边",icon="STRIP_COLOR_05",props={"delimit": {"SHARP"}},)
+
+
+def _draw_mesh_left_tools(layout: LayoutBuilder, context):
+    """把选择列放在快速边属性列左侧，保持主饼原来的空间关系。"""
+    row = layout.row(align=True)
+    _draw_mesh_selection_tools(row.column(align=True), context)
+    _draw_quick_edge_tools(row.column(align=True), context)
+
+
 def _draw_edge_display(layout: bpy.types.UILayout, context):
-    """直接绘制网格边缘显示选项。"""
+    """绘制线属性显示选项。"""
     space = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
 
     grid = layout.grid_flow(row_major=True,columns=2, even_columns=True, even_rows=True, align=True)
-    draw_prop(grid, overlay, "show_edge_crease", "折痕")
-    draw_prop(grid, overlay, "show_edge_sharp", "锐边")
-    draw_prop(grid, overlay, "show_edge_bevel_weight", "倒角")
-    draw_prop(grid, overlay, "show_edge_seams", "缝合")
+    draw_prop(grid, overlay, "show_edge_crease", "折痕",icon="STRIP_COLOR_07")
+    draw_prop(grid, overlay, "show_edge_sharp", "锐边",icon="STRIP_COLOR_05")
+    draw_prop(grid, overlay, "show_edge_bevel_weight", "倒角",icon="LAYERGROUP_COLOR_05")
+    draw_prop(grid, overlay, "show_edge_seams", "缝合",icon="STRIP_COLOR_01")
 
     grid.operator(HO_OT_HoMainPieSetEdgeOverlays.bl_idname,text="",icon="CHECKMARK").enabled = True
     grid.operator(HO_OT_HoMainPieSetEdgeOverlays.bl_idname,text="",icon="X").enabled = False
@@ -199,7 +226,7 @@ class HO_MT_HoMainPieMesh(Menu):
 
     def draw(self, context):
         pie = HoPie(self.layout, context)
-        pie.left.expand(_draw_quick_edge_tools)
+        pie.left.expand(_draw_mesh_left_tools)
         pie.top.expand(_draw_edge_display,
             height=1.5)
         # 快速修改器函数内部使用固定四列网格，普通面板和饼菜单展开保持一致。
