@@ -1,5 +1,5 @@
 """HoMainPie：编辑模式下的主工作饼菜单。"""
-
+import bpy
 from bpy.props import BoolProperty
 from bpy.types import Menu, Operator
 
@@ -110,7 +110,7 @@ class HO_OT_HoMainPieSetEdgeOverlays(Operator):
         return {"FINISHED"}
 
 
-def _draw_view_options(layout: LayoutBuilder, context):
+def _draw_view_options(layout: bpy.types.UILayout, context):
     """主饼左上角的视图选项和叠加层开关。"""
     space = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
@@ -146,24 +146,49 @@ def _draw_view_options(layout: LayoutBuilder, context):
     draw_prop(row, getattr(space, "uv_editor", None), "show_stretch", "UV 拉伸", icon="COLORSET_04_VEC")
 
 
-def _draw_edge_display(layout: LayoutBuilder, context):
+def _draw_quick_edge_tools(layout: LayoutBuilder, context):
+    """绘制快速清除/标记缝合边、锐边和折痕，以及 UV 同步开关。"""
+    col = layout.column(align=True)
+    col.scale_y = 2
+    col.scale_x = 2
+
+    buttons = (
+        ("mesh.mark_seam", "COLLECTION_COLOR_01", {"clear": True}),
+        ("mesh.mark_sharp", "COLLECTION_COLOR_05", {"clear": True}),
+        ("transform.edge_crease", "COLLECTION_COLOR_07",
+         {"value": -1.0, "release_confirm": True}),
+        ("mesh.mark_seam", "STRIP_COLOR_01", {"clear": False}),
+        ("mesh.mark_sharp", "STRIP_COLOR_05", {"clear": False}),
+        ("transform.edge_crease", "STRIP_COLOR_07",
+         {"value": 1.0, "release_confirm": True}),
+    )
+    for operator_id, icon, properties in buttons:
+        col.operator(operator_id, text="", icon=icon, props=properties)
+
+    tool_settings = getattr(getattr(context, "scene", None), "tool_settings", None)
+    if tool_settings is not None and hasattr(tool_settings, "use_uv_select_sync"):
+        col.separator()
+        col.prop(
+            tool_settings,
+            "use_uv_select_sync",
+            text="",
+            icon="UV_SYNC_SELECT",
+        )
+
+
+def _draw_edge_display(layout: bpy.types.UILayout, context):
     """直接绘制网格边缘显示选项。"""
     space = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
 
-    col = layout.column()
-    row = col.row(align=True)
-    draw_prop(row, overlay, "show_edge_crease", "折痕")
-    draw_prop(row, overlay, "show_edge_sharp", "锐边")
-    row = col.row(align=True)
-    draw_prop(row, overlay, "show_edge_bevel_weight", "倒角")
-    draw_prop(row, overlay, "show_edge_seams", "缝合")
+    grid = layout.grid_flow(row_major=True,columns=2, even_columns=True, even_rows=True, align=True)
+    draw_prop(grid, overlay, "show_edge_crease", "折痕")
+    draw_prop(grid, overlay, "show_edge_sharp", "锐边")
+    draw_prop(grid, overlay, "show_edge_bevel_weight", "倒角")
+    draw_prop(grid, overlay, "show_edge_seams", "缝合")
 
-    row = col.row()
-    row.item().operator(HO_OT_HoMainPieSetEdgeOverlays.bl_idname,
-        text="",icon="CHECKMARK",enabled=True,props={"enabled": True},)
-    row.item().operator(HO_OT_HoMainPieSetEdgeOverlays.bl_idname,
-        text="",icon="X",enabled=True,props={"enabled": False},)
+    grid.operator(HO_OT_HoMainPieSetEdgeOverlays.bl_idname,text="",icon="CHECKMARK").enabled = True
+    grid.operator(HO_OT_HoMainPieSetEdgeOverlays.bl_idname,text="",icon="X").enabled = False
 
 
 class HO_MT_HoMainPieMesh(Menu):
@@ -174,6 +199,7 @@ class HO_MT_HoMainPieMesh(Menu):
 
     def draw(self, context):
         pie = HoPie(self.layout, context)
+        pie.left.expand(_draw_quick_edge_tools)
         pie.top.expand(_draw_edge_display,
             height=1.5)
         # 快速修改器函数内部使用固定四列网格，普通面板和饼菜单展开保持一致。
