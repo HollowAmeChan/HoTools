@@ -1,7 +1,6 @@
 """HoMainPie：编辑模式下的主工作饼菜单。"""
 
-import bpy
-from bpy.props import BoolProperty, EnumProperty
+from bpy.props import BoolProperty
 from bpy.types import Menu, Operator
 
 from .HoPieCore import (
@@ -12,45 +11,48 @@ from .HoPieCore import (
 )
 
 
-class HO_OT_HoMainPieToggleOverlay(Operator):
-    """切换三维视图的总叠加层。"""
-
-    bl_idname = "ho.main_pie_toggle_overlay"
-    bl_label = "叠加层"
-    bl_description = "显示或隐藏三维视图叠加层"
-
-    @classmethod
-    def poll(cls, context):
-        return find_space(context, "VIEW_3D") is not None
-
-    def execute(self, context):
-        space = find_space(context, "VIEW_3D")
-        overlay = getattr(space, "overlay", None)
-        if overlay is None:
-            return {"CANCELLED"}
-        overlay.show_overlays = not overlay.show_overlays
-        return {"FINISHED"}
+_RANDOM_PREVIEW_RESTORE = "MATERIAL"
 
 
-class HO_OT_HoMainPieSetColorMode(Operator):
-    """设置视图光照的颜色来源。"""
+class HO_OT_HoMainPieToggleRandomPreview(Operator):
+    """切换随机颜色预览，并记住切换前的颜色模式。"""
 
-    bl_idname = "ho.main_pie_set_color_mode"
-    bl_label = "设置视图颜色"
+    bl_idname = "ho.main_pie_toggle_random_preview"
+    bl_label = "随机预览"
+    bl_description = "切换随机颜色预览，并恢复之前的颜色模式"
     bl_options = {"REGISTER", "UNDO"}
 
-    color_mode: EnumProperty(
-        name="颜色模式",
-        items=(
-            ("MATERIAL", "材质", "使用材质颜色"),
-            ("RANDOM", "随机", "使用随机颜色"),
-        ),
-        options={"HIDDEN"},
-    )
+    @staticmethod
+    def _remember(color_type):
+        """记住开启随机预览前的颜色模式。"""
+        global _RANDOM_PREVIEW_RESTORE
+        if isinstance(color_type, str) and color_type != "RANDOM":
+            _RANDOM_PREVIEW_RESTORE = color_type
+
+    @staticmethod
+    def _restore():
+        """读取需要恢复的颜色模式。"""
+        if (not isinstance(_RANDOM_PREVIEW_RESTORE, str)
+                or _RANDOM_PREVIEW_RESTORE == "RANDOM"):
+            return "MATERIAL"
+        return _RANDOM_PREVIEW_RESTORE
+
+    @staticmethod
+    def _disable_vertex_color_preview(context):
+        """回到材质颜色时关闭 HoTools 的顶点色预览。"""
+        settings = getattr(getattr(context, "scene", None), "ho_vertex_color_tools", None)
+        if settings is None or not hasattr(settings, "view_mode"):
+            return
+        try:
+            settings.view_mode = False
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            pass
 
     @classmethod
     def poll(cls, context):
-        return find_space(context, "VIEW_3D") is not None
+        space = find_space(context, "VIEW_3D")
+        shading = getattr(space, "shading", None)
+        return shading is not None and hasattr(shading, "color_type")
 
     def execute(self, context):
         space = find_space(context, "VIEW_3D")
@@ -58,12 +60,22 @@ class HO_OT_HoMainPieSetColorMode(Operator):
         if shading is None or not hasattr(shading, "color_type"):
             return {"CANCELLED"}
 
-        # 切回材质颜色时关闭 HoTools 自己的顶点色预览，保持两个入口状态一致。
-        if self.color_mode == "MATERIAL":
-            settings = getattr(getattr(context, "scene", None), "ho_vertex_color_tools", None)
-            if settings is not None and hasattr(settings, "view_mode") and settings.view_mode:
-                settings.view_mode = False
-        shading.color_type = self.color_mode
+        current = getattr(shading, "color_type", None)
+        if current == "RANDOM":
+            color_type = self._restore()
+            try:
+                shading.color_type = color_type
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                return {"CANCELLED"}
+            if color_type == "MATERIAL":
+                self._disable_vertex_color_preview(context)
+            return {"FINISHED"}
+
+        try:
+            shading.color_type = "RANDOM"
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            return {"CANCELLED"}
+        self._remember(current)
         return {"FINISHED"}
 
 
@@ -97,7 +109,7 @@ class HO_OT_HoMainPieSetEdgeOverlays(Operator):
 
 
 def _draw_view_options(layout: LayoutBuilder, context):
-    """集中绘制主饼左上角的视图选项和叠加层开关。"""
+    """主饼左上角的视图选项和叠加层开关。"""
     space = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
     scene = getattr(context, "scene", None)
@@ -123,13 +135,13 @@ def _draw_view_options(layout: LayoutBuilder, context):
         # draw_prop(checker_row,scene,"ho_checker_overlay_realtime_refresh","实时刷新",icon="FILE_REFRESH")
 
     row = layout.row(align=True)
-    row.item().operator(HO_OT_HoMainPieSetColorMode.bl_idname,text="材质",icon="MATERIAL",).color_mode = "MATERIAL"
-    row.item().operator(HO_OT_HoMainPieSetColorMode.bl_idname,text="随机",icon="COLORSET_05_VEC",).color_mode = "RANDOM"
+    shading = getattr(space, "shading", None)
+    random_active = getattr(shading, "color_type", None) == "RANDOM"
+    row.item().operator(HO_OT_HoMainPieToggleRandomPreview.bl_idname,
+        text="随机预览",icon="COLORSET_05_VEC",depress=random_active,)
     if overlay is not None:
         draw_prop(row, overlay, "show_text", "文本", icon="COLORSET_10_VEC")
-    uv_editor = getattr(space, "uv_editor", None)
-    if uv_editor is not None:
-        draw_prop(row, uv_editor, "show_stretch", "UV 拉伸", icon="COLORSET_04_VEC")
+    draw_prop(row, getattr(space, "uv_editor", None), "show_stretch", "UV 拉伸", icon="COLORSET_04_VEC")
 
 
 class HO_MT_HoMainPieEdgeDisplay(Menu):
@@ -221,21 +233,12 @@ class HO_MT_HoMainPieMesh(Menu):
 
     def draw(self, context):
         pie = HoPie(self.layout, context)
-        pie.bottom.menu(
-            HO_MT_HoMainPieEdgeDisplay.bl_idname,
-            text="网格显示操作",
-            icon="FUND",
-        )
-        pie.top.menu(
-            HO_MT_HoMainPieSelection.bl_idname,
-            text="点线面工具合集",
-            icon="VIEW_PAN",
-        )
-        pie.top_left.menu(
-            HO_MT_HoMainPieQuickModifiers.bl_idname,
-            text="快速网格",
-            icon="MODIFIER_ON",
-        )
+        pie.bottom.menu(HO_MT_HoMainPieEdgeDisplay.bl_idname,
+            text="网格显示操作",icon="FUND",)
+        pie.top.menu(HO_MT_HoMainPieSelection.bl_idname,
+            text="点线面工具合集",icon="VIEW_PAN",)
+        pie.top_left.menu(HO_MT_HoMainPieQuickModifiers.bl_idname,
+            text="快速网格",icon="MODIFIER_ON",)
         pie.finish()
 
 
@@ -247,28 +250,18 @@ class HO_MT_HoMainPie(Menu):
 
     def draw(self, context):
         pie = HoPie(self.layout, context)
-        # 槽位顺序与 PME 一致，但写代码时直接使用方向名，不再手数分隔符。
-        pie.left.pie(
-            HO_MT_HoMainPieMesh.bl_idname,
-            text="网格工具",
-            icon="MESH_DATA",
-        )
-        pie.top.operator(
-            HO_OT_HoMainPieToggleOverlay.bl_idname,
-            text="叠加层",
-            icon="OVERLAY",
-        )
-        pie.top_left.expand(
-            _draw_view_options,
-            width=1.5,
-            height=1.5,
-        )
+        pie.left.pie(HO_MT_HoMainPieMesh.bl_idname,
+            text="网格工具",icon="MESH_DATA",)
+        space = find_space(context, "VIEW_3D")
+        overlay = getattr(space, "overlay", None)
+        draw_prop(pie.top, overlay, "show_overlays", "叠加层", icon="OVERLAY")
+        pie.top_left.expand(_draw_view_options,
+            width=1.5,height=1.5,)
         pie.finish()
 
 
 HO_MAIN_PIE_CLASSES = (
-    HO_OT_HoMainPieToggleOverlay,
-    HO_OT_HoMainPieSetColorMode,
+    HO_OT_HoMainPieToggleRandomPreview,
     HO_OT_HoMainPieSetEdgeOverlays,
     HO_MT_HoMainPieEdgeDisplay,
     HO_MT_HoMainPieSelection,
