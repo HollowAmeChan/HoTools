@@ -223,7 +223,7 @@ class HO_MT_HoMainPie(Menu):
         overlay = getattr(space, "overlay", None)
         draw_prop(pie.top, overlay, "show_overlays", "叠加层", icon="OVERLAY")
         pie.top_left.expand(_draw_view_options,
-            width=1.5,height=1.5,)
+            width=1.5,height=1.5,height_offset=5.0,)
         pie.finish()
 
 

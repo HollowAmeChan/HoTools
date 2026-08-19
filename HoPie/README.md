@@ -37,7 +37,7 @@ pie.finish()
 slot.pie("HO_MT_ChildPie", "进入子饼")       # 嵌套饼
 slot.menu("HO_MT_ChildMenu", "普通菜单")     # 普通下拉菜单
 slot.popover("OBJECT_PT_display", "视图显示") # Blender 面板
-slot.expand(draw_options, frame=True, width=1.25, height=1.2)  # 当前槽位直接展开并调整比例
+slot.expand(draw_options, frame=True, width=1.25, height=1.2, height_offset=1.0)  # 当前槽位直接展开并留出距离
 ```
 
 `slot.pie(...)` 使用 HoPie 自己的事件转发器打开子饼，因此会沿用当前鼠标事件；需要兼容原生调用时可传 `operator_idname="wm.call_menu_pie"`。
@@ -63,7 +63,7 @@ def draw_options(layout, context):
     row.item().operator("ho.refresh", "刷新", icon="FILE_REFRESH")
 ```
 
-展开面板的 `width`/`height` 分别是横向和纵向比例，底层对应 Blender 的 `UILayout.scale_x/scale_y`；也可以直接传 `scale_x`/`scale_y`，或在 `DialogSettings(scale_x=..., scale_y=...)` 中统一配置。
+展开面板的 `width`/`height` 分别是横向和纵向比例，底层对应 Blender 的 `UILayout.scale_x/scale_y`；`height_offset` 只控制垂直方向，正数让内容向上，负数让内容向下，不会占用下一个槽位。也可以直接传 `scale_x`/`scale_y`，或在 `DialogSettings(scale_x=..., scale_y=..., height_offset=...)` 中统一配置。
 
 `prop` 直接读取传入对象的真实 RNA 属性，也支持 `"foo.bar"` 这样的属性路径。属性不存在时会跳过当前项，不会让整个饼报错。
 

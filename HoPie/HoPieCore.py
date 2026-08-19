@@ -290,6 +290,7 @@ class DialogSettings:
     width: int = 0
     scale_x: Optional[Any] = None
     scale_y: Optional[Any] = None
+    height_offset: Optional[Any] = None
 
 
 @dataclass
@@ -532,6 +533,7 @@ class LayoutBuilder:
              height: Optional[Any] = None,
              scale_x: Optional[Any] = None,
              scale_y: Optional[Any] = None,
+             height_offset: Optional[Any] = None,
              settings: Optional[DialogSettings] = None,
              **item_values: Any) -> Any:
         """添加普通下拉菜单；它不会创建新的饼。"""
@@ -547,6 +549,7 @@ class LayoutBuilder:
                 height=height,
                 scale_x=scale_x,
                 scale_y=scale_y,
+                height_offset=height_offset,
                 settings=settings,
             )
         if expand is not None:
@@ -558,6 +561,7 @@ class LayoutBuilder:
                     height=height,
                     scale_x=scale_x,
                     scale_y=scale_y,
+                    height_offset=height_offset,
                     settings=settings,
                 )
             if not callable(expand):
@@ -570,6 +574,7 @@ class LayoutBuilder:
                 height=height,
                 scale_x=scale_x,
                 scale_y=scale_y,
+                height_offset=height_offset,
                 settings=settings,
             )
         style_values = {
@@ -772,6 +777,7 @@ class LayoutBuilder:
     def expand(self, draw: Callable[..., Any], *, frame: bool = False,
                width: Optional[Any] = None, height: Optional[Any] = None,
                scale_x: Optional[Any] = None, scale_y: Optional[Any] = None,
+               height_offset: Optional[Any] = None,
                settings: Optional[DialogSettings] = None) -> "LayoutBuilder":
         """在当前槽位直接绘制回调内容，不调用 `layout.menu()`。
 
@@ -779,6 +785,8 @@ class LayoutBuilder:
         `LayoutBuilder`，因此可以继续链式调用 `row/prop/operator`。
         `width`/`height` 分别是 `scale_x`/`scale_y` 的直观别名，用于调整
         展开面板的横向和纵向比例。
+        `height_offset` 只控制垂直方向的留白，用于调整内容和饼中心的距离；
+        正数让内容向上，负数让内容向下，不会占用下一个饼槽位。
         """
         self._before_draw()
         target = self.layout.box() if frame else self.layout
@@ -793,6 +801,8 @@ class LayoutBuilder:
             scale_y = height
         if scale_y is None:
             scale_y = dialog.scale_y
+        if height_offset is None:
+            height_offset = dialog.height_offset
         layout_scale = {}
         if scale_x is not None:
             layout_scale["scale_x"] = scale_x
@@ -800,6 +810,22 @@ class LayoutBuilder:
             layout_scale["scale_y"] = scale_y
         if layout_scale:
             builder.configure(**layout_scale)
+        leading_offset = None
+        trailing_offset = None
+        if height_offset is not None:
+            height_value = _resolve(height_offset, self.context)
+            if height_value not in (None, 0):
+                try:
+                    if height_value < 0:
+                        # separator 的因子不能用负数，负数改为内容前的留白。
+                        leading_offset = -height_value
+                    else:
+                        # 内容后的留白会把垂直布局中的内容向上推。
+                        trailing_offset = height_value
+                except (TypeError, ValueError):
+                    builder.separator(height_value)
+        if leading_offset is not None:
+            builder.separator(leading_offset)
         builder.metadata["dialog"] = dialog
         try:
             parameters = inspect.signature(draw).parameters
@@ -815,6 +841,8 @@ class LayoutBuilder:
             draw(builder)
         else:
             draw(builder, self.context)
+        if trailing_offset is not None:
+            builder.separator(trailing_offset)
         return builder
 
     expanded = expand
@@ -822,6 +850,7 @@ class LayoutBuilder:
                     frame: bool = False, width: Optional[Any] = None,
                     height: Optional[Any] = None,
                     scale_x: Optional[Any] = None, scale_y: Optional[Any] = None,
+                    height_offset: Optional[Any] = None,
                     settings: Optional[DialogSettings] = None) -> "LayoutBuilder":
         """把已注册 Menu 类直接绘制到当前面板，支持递归展开子 Menu。"""
         if callable(menu) and not isinstance(menu, type) and not hasattr(menu, "draw"):
@@ -832,6 +861,7 @@ class LayoutBuilder:
                 height=height,
                 scale_x=scale_x,
                 scale_y=scale_y,
+                height_offset=height_offset,
                 settings=settings,
             )
 
@@ -868,6 +898,7 @@ class LayoutBuilder:
             height=height,
             scale_x=scale_x,
             scale_y=scale_y,
+            height_offset=height_offset,
             settings=settings,
         )
 
