@@ -12,6 +12,7 @@ from .HoPieCore import HoPie
 pie = HoPie(self.layout, context)
 pie.left.pie("HO_MT_AnotherPie", "网格工具", icon="MESH_DATA")
 pie.top.operator("ho.example", "执行", icon="CHECKMARK", enabled=True)
+pie.finish()
 ```
 
 如果外面已经调用了 `self.layout.menu_pie()`，使用 `HoPie.from_pie_layout(layout, context)`，避免重复创建。
@@ -28,7 +29,7 @@ pie.top.operator("ho.example", "执行", icon="CHECKMARK", enabled=True)
 | `bottom_left` / `bottom_right` | 左下 / 右下 |
 | `top_center` / `bottom_center` | 中心最顶 / 中心最底 |
 
-`center` 是 `top_center` 的别名，`center_secondary` 是 `bottom_center` 的别名。也可以用 `pie[0]` 到 `pie[9]` 访问。
+`center` 是 `top_center` 的别名，`center_secondary` 是 `bottom_center` 的别名。也可以用 `pie[0]` 到 `pie[9]` 访问。槽位按上表顺序绘制，空位由 `finish()` 自动补齐；也可以使用 `with HoPie(...) as pie:` 自动结束。
 
 ## 三种入口
 
@@ -38,6 +39,20 @@ slot.menu("HO_MT_ChildMenu", "普通菜单")     # 普通下拉菜单
 slot.popover("OBJECT_PT_display", "视图显示") # Blender 面板
 slot.expand(draw_options, frame=True)          # 当前槽位直接展开
 ```
+
+`slot.pie(...)` 使用 HoPie 自己的事件转发器打开子饼，因此会沿用当前鼠标事件；需要兼容原生调用时可传 `operator_idname="wm.call_menu_pie"`。
+
+展开面板可以继续展开子面板，内容会保持在同一个绘制上下文中：
+
+```python
+def draw_parent(layout, context):
+    layout.label("父面板")
+    layout.expand(draw_child, frame=True)
+```
+
+也可以把普通菜单入口直接写成展开面板：`layout.menu("子菜单", "子面板", expand=draw_child)`。这样不会再弹出第二个窗口，而是和父面板同时绘制。
+
+如果子面板已经是注册过的 Blender `Menu`，可以直接写 `layout.menu("HO_MT_Child", expand=True)`，内部的 `Menu.draw` 会在当前布局中递归绘制。
 
 `expand` 的回调接收 `LayoutBuilder` 和 `context`：
 
@@ -63,4 +78,3 @@ pie.right.operator(
     enabled=lambda context: context.object is not None,
 )
 ```
-

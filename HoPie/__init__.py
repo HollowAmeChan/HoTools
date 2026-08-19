@@ -1,4 +1,5 @@
 import bpy
+from bpy.props import StringProperty
 from . import HoMainPie, align_pie, cursor_pie, delete_merge_pie, selection_mode_pie
 from .HoPieCore import (
     DialogSettings,
@@ -9,6 +10,51 @@ from .HoPieCore import (
     LayoutOptions,
     PieSettings,
 )
+
+
+class HO_OT_HoPieNestedPie(bpy.types.Operator):
+    """把当前鼠标事件交给 Blender 的 popup_menu_pie，复刻 PME 的嵌套饼入口。"""
+
+    bl_idname = "ho.hopie_nested_pie"
+    bl_label = "HoPie 嵌套饼"
+    bl_options = {"INTERNAL"}
+
+    pie_menu_name: StringProperty(options={"SKIP_SAVE"})
+    invoke_mode: StringProperty(default="RELEASE", options={"SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        return bool(getattr(context, "window_manager", None))
+
+    def invoke(self, context, event):
+        menu_cls = getattr(bpy.types, self.pie_menu_name, None)
+        draw = getattr(menu_cls, "draw", None)
+        if draw is None:
+            self.report({"WARNING"}, "找不到 HoPie 子饼: %s" % self.pie_menu_name)
+            return {"CANCELLED"}
+
+        def draw_menu(menu, draw_context):
+            draw(menu, draw_context)
+
+        try:
+            # popup_menu_pie 使用当前事件的鼠标位置和方向，保留甩动命中。
+            context.window_manager.popup_menu_pie(
+                event,
+                draw_menu,
+                title=getattr(menu_cls, "bl_label", self.pie_menu_name),
+            )
+            return {"FINISHED"}
+        except (AttributeError, RuntimeError, TypeError):
+            # 非标准窗口上下文退回 Blender 原生调用，至少保证菜单可用。
+            try:
+                bpy.ops.wm.call_menu_pie(
+                    "INVOKE_DEFAULT", name=self.pie_menu_name)
+            except (AttributeError, RuntimeError, TypeError):
+                return {"CANCELLED"}
+            return {"FINISHED"}
+
+
+_HO_PIE_CORE_CLASSES = (HO_OT_HoPieNestedPie,)
 
 
 align_pie_keymaps = []
@@ -33,7 +79,9 @@ def ureg_props():
 
 def _register_keymap(
         keymap_name, space_type, key_type, shift=False, alt=False,
-        menu_name=None, keymap_store=None, head=True):
+        menu_name=None, keymap_store=None, head=True,
+        operator_idname="wm.call_menu_pie", property_name="name",
+        invoke_mode=None):
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if not keyconfig:
         return
@@ -43,14 +91,16 @@ def _register_keymap(
         region_type='WINDOW',
     )
     item = keymap.keymap_items.new(
-        'wm.call_menu_pie',
+        operator_idname,
         type=key_type,
         value='PRESS',
         shift=shift,
         alt=alt,
         head=head,
     )
-    item.properties.name = menu_name
+    setattr(item.properties, property_name, menu_name)
+    if invoke_mode is not None:
+        item.properties.invoke_mode = invoke_mode
     keymap_store.append((keymap, item))
 
 
@@ -70,9 +120,12 @@ def _remove_keymaps(items, menu_names=()):
         return
     for keymap in keyconfig.keymaps:
         for item in list(keymap.keymap_items):
-            if item.idname != 'wm.call_menu_pie':
+            if item.idname not in {'wm.call_menu_pie', 'ho.hopie_nested_pie'}:
                 continue
-            if getattr(item.properties, 'name', '') not in menu_names:
+            item_name = getattr(item.properties, 'name', '')
+            if not item_name:
+                item_name = getattr(item.properties, 'pie_menu_name', '')
+            if item_name not in menu_names:
                 continue
             try:
                 keymap.keymap_items.remove(item)
@@ -209,15 +262,19 @@ def set_main_pie_enabled(enabled):
         if _main_pie_enabled:
             return
         _remove_keymaps(main_pie_keymaps, {'HO_MT_HoMainPie'})
+        _register_classes(_HO_PIE_CORE_CLASSES)
         _register_classes(HoMainPie.HO_MAIN_PIE_CLASSES)
         _register_keymap(
             'Mesh', 'EMPTY', 'SPACE', head=True,
             menu_name='HO_MT_HoMainPie', keymap_store=main_pie_keymaps,
+            operator_idname='ho.hopie_nested_pie',
+            property_name='pie_menu_name', invoke_mode='HOTKEY',
         )
     else:
         _remove_keymaps(main_pie_keymaps, {'HO_MT_HoMainPie'})
         if _main_pie_enabled:
             _unregister_classes(HoMainPie.HO_MAIN_PIE_CLASSES)
+            _unregister_classes(_HO_PIE_CORE_CLASSES)
     _main_pie_enabled = enabled
 
 

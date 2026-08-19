@@ -17,6 +17,7 @@
     pie.top.operator("ho.some_operator", "执行", icon="CHECKMARK")
     pie.top_left.expand(draw_view_options, frame=True)
     pie.top_center.operator("ho.some_operator", "最顶")
+    pie.finish()
 
 `draw_view_options` 会收到一个 `LayoutBuilder` 和当前 context：
 
@@ -31,6 +32,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field, replace
+from types import SimpleNamespace
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
 
 
@@ -253,6 +255,10 @@ class LayoutBuilder:
         _set_layout(layout, LayoutOptions(operator_context=operator_context),
                     context, operator_context)
 
+    def _before_draw(self) -> None:
+        """给 SlotBuilder 预留的绘制前钩子；普通布局不需要处理。"""
+        return None
+
     @property
     def raw_layout(self) -> Any:
         """需要 Blender 原生 API 时的逃生口。"""
@@ -260,6 +266,7 @@ class LayoutBuilder:
 
     def configure(self, **values: Any) -> "LayoutBuilder":
         """修改当前容器的 PME 风格属性并返回自身。"""
+        self._before_draw()
         _set_layout(
             self.layout,
             LayoutOptions(**{
@@ -299,6 +306,7 @@ class LayoutBuilder:
 
     def item(self, align: bool = True, **options: Any) -> "LayoutBuilder":
         """创建 PME 常用的“每个按钮一列”，适合展开槽位中的横向排版。"""
+        self._before_draw()
         child = self.layout.column(align=align)
         builder = LayoutBuilder(
             child,
@@ -315,6 +323,7 @@ class LayoutBuilder:
                  props: Optional[Mapping[str, Any]] = None,
                  **operator_props: Any) -> Any:
         """添加操作按钮，并把 `props`/额外关键字写入操作属性。"""
+        self._before_draw()
         style_values = {
             key: operator_props.pop(key)
             for key in _OPERATOR_STYLE_FIELDS
@@ -351,6 +360,7 @@ class LayoutBuilder:
              slider: Any = None, toggle: Any = None, icon_only: Any = None,
              index: Any = None, emboss: Any = None, **kwargs: Any) -> Any:
         """读取真实 RNA 属性并绘制；属性路径可以是 `foo.bar`。"""
+        self._before_draw()
         owner = _resolve(owner, self.context)
         owner, prop_name = resolve_path(owner, path)
         if owner is None or prop_name is None or not hasattr(owner, prop_name):
@@ -392,12 +402,27 @@ class LayoutBuilder:
         ))
         return _safe_call(target.prop, owner, prop_name, **call_kwargs)
 
-    def menu(self, menu_name: str, text: Optional[Any] = None,
+    def menu(self, menu_name: Union[str, Callable[..., Any]], text: Optional[Any] = None,
              *, icon: Any = None, icon_value: Any = None,
              options: Optional[ItemOptions] = None,
              use_mouse_over_open: Any = None,
+             expand: Optional[Callable[..., Any]] = None,
+             frame: bool = False,
              **item_values: Any) -> Any:
         """添加普通下拉菜单；它不会创建新的饼。"""
+        self._before_draw()
+        if callable(menu_name) and not isinstance(menu_name, type) and \
+                not hasattr(menu_name, "draw"):
+            if expand not in (None, True):
+                raise ValueError("menu 的可调用参数和 expand 只能二选一")
+            return self.expand(menu_name, frame=frame)
+        if expand is not None:
+            if expand is True:
+                return self.expand_menu(menu_name, frame=frame)
+            if not callable(expand):
+                raise ValueError("menu(expand=...) 需要传入绘制回调或 True")
+            # PME 的 @ 菜单标记会把内容直接画进当前槽位，不额外生成一个菜单按钮。
+            return self.expand(expand, frame=frame)
         style_values = {
             key: item_values.pop(key)
             for key in _MENU_STYLE_FIELDS
@@ -424,8 +449,10 @@ class LayoutBuilder:
             *, icon: Any = None, icon_value: Any = None,
             options: Optional[ItemOptions] = None,
             invoke_mode: Optional[str] = None,
+            operator_idname: Optional[str] = None,
             **item_values: Any) -> Any:
         """添加一个嵌套饼入口；绘制目标仍由 Blender 菜单注册系统负责。"""
+        self._before_draw()
         style_values = {
             key: item_values.pop(key)
             for key in _OPERATOR_STYLE_FIELDS
@@ -445,11 +472,22 @@ class LayoutBuilder:
             _resolve(item.icon, self.context),
             _resolve(item.icon_value, self.context),
         ))
-        button = _safe_call(target.operator, "wm.call_menu_pie", **kwargs)
+        nested_operator = operator_idname
+        if nested_operator is None:
+            owner = getattr(self, "_pie", None)
+            nested_operator = getattr(
+                owner, "nested_operator_idname", "wm.call_menu_pie")
+        button = _safe_call(target.operator, nested_operator, **kwargs)
         try:
-            button.name = menu_name
+            property_name = (
+                "pie_menu_name" if nested_operator != "wm.call_menu_pie" else "name"
+            )
+            setattr(button, property_name, menu_name)
             if invoke_mode is not None:
                 button.invoke_mode = invoke_mode
+            elif nested_operator != "wm.call_menu_pie":
+                # PME 在 PMENU -> PMENU 时使用 SUB，保留子饼的事件语义。
+                button.invoke_mode = "SUB"
         except (AttributeError, TypeError, ValueError):
             pass
         return button
@@ -463,6 +501,7 @@ class LayoutBuilder:
                 region_type: Optional[str] = None,
                 **item_values: Any) -> Any:
         """添加 Blender 原生面板入口。"""
+        self._before_draw()
         style_values = {
             key: item_values.pop(key)
             for key in _MENU_STYLE_FIELDS
@@ -486,6 +525,7 @@ class LayoutBuilder:
 
     def label(self, text: Any = "", *, icon: Any = None,
               icon_value: Any = None) -> Any:
+        self._before_draw()
         kwargs: Dict[str, Any] = {"text": _resolve(text, self.context)}
         kwargs.update(_icon_kwargs(
             _resolve(icon, self.context),
@@ -494,6 +534,7 @@ class LayoutBuilder:
         return _safe_call(self.layout.label, **kwargs)
 
     def separator(self, factor: Optional[Any] = None) -> Any:
+        self._before_draw()
         if factor is None:
             return self.layout.separator()
         try:
@@ -505,6 +546,7 @@ class LayoutBuilder:
 
     def spacer(self, *, hsep: str = "NONE", factor: Optional[Any] = None) -> Any:
         """PME spacer 的轻量版本；COLUMN/ALIGNER 等标记保存在 metadata。"""
+        self._before_draw()
         self.metadata.setdefault("spacers", []).append({"hsep": hsep, "factor": factor})
         factors = {"NONE": 1.0, "SPACER": 1.0, "COLUMN": 1.0,
                    "ALIGNER": 1.0, "LARGE": 3.0, "LARGER": 5.0}
@@ -515,6 +557,7 @@ class LayoutBuilder:
             fixed_col: bool = False, fixed_but: bool = False,
             **layout_options: Any) -> "LayoutBuilder":
         """创建一行，并保留 PME 的 size/vspacer/fixed 配置。"""
+        self._before_draw()
         if vspacer not in (None, "NONE", 0):
             values = {"NORMAL": 1.0, "LARGE": 3.0, "LARGER": 5.0}
             self.separator(values.get(vspacer, vspacer))
@@ -542,6 +585,7 @@ class LayoutBuilder:
     def column(self, *, align: bool = True,
                options: Optional[LayoutOptions] = None,
                **layout_options: Any) -> "LayoutBuilder":
+        self._before_draw()
         child = self.layout.column(align=align)
         merged = replace(options) if options is not None else LayoutOptions()
         for key, value in layout_options.items():
@@ -555,6 +599,7 @@ class LayoutBuilder:
 
     def box(self, *, options: Optional[LayoutOptions] = None,
             **layout_options: Any) -> "LayoutBuilder":
+        self._before_draw()
         child = self.layout.box()
         merged = replace(options) if options is not None else LayoutOptions()
         for key, value in layout_options.items():
@@ -568,6 +613,7 @@ class LayoutBuilder:
 
     def split(self, factor: Optional[Any] = None,
               *, align: bool = False) -> "LayoutBuilder":
+        self._before_draw()
         kwargs = {"align": align}
         if factor is not None:
             kwargs["factor"] = _resolve(factor, self.context)
@@ -581,6 +627,7 @@ class LayoutBuilder:
         回调签名支持 `draw(layout)` 或 `draw(layout, context)`；这里的 layout 是
         `LayoutBuilder`，因此可以继续链式调用 `row/prop/operator`。
         """
+        self._before_draw()
         target = self.layout.box() if frame else self.layout
         target = target.column(align=True)
         builder = LayoutBuilder(target, self.context, self.operator_context)
@@ -602,7 +649,43 @@ class LayoutBuilder:
         return builder
 
     expanded = expand
-    expanded_menu = expand
+    def expand_menu(self, menu: Union[str, type, Callable[..., Any]], *,
+                    frame: bool = False) -> "LayoutBuilder":
+        """把已注册 Menu 类直接绘制到当前面板，支持递归展开子 Menu。"""
+        if callable(menu) and not isinstance(menu, type) and not hasattr(menu, "draw"):
+            return self.expand(menu, frame=frame)
+
+        menu_cls = menu
+        if isinstance(menu, str):
+            try:
+                import bpy
+                menu_cls = getattr(bpy.types, menu, None)
+            except ImportError:
+                menu_cls = None
+        draw = getattr(menu_cls, "draw", None)
+        if draw is None:
+            raise ValueError("找不到可展开的 Menu: %s" % menu)
+
+        def draw_registered_menu(layout: "LayoutBuilder", context: Any) -> None:
+            # Blender 的 Menu 实例不能可靠地由 Python 手动构造，用轻量代理提供
+            # draw 方法实际需要的 layout 和类属性即可。
+            class MenuProxy(SimpleNamespace):
+                def __getattr__(self, name: str) -> Any:
+                    return getattr(menu_cls, name)
+
+            proxy = MenuProxy(
+                # 传 Builder 而不是裸 UILayout，让子 Menu 也能继续调用 expand=True。
+                layout=layout,
+                bl_idname=getattr(menu_cls, "bl_idname", ""),
+                bl_label=getattr(menu_cls, "bl_label", ""),
+            )
+            draw(proxy, context)
+
+        return self.expand(draw_registered_menu, frame=frame)
+
+    expanded_menu = expand_menu
+    expand_panel = expand
+    panel = expand
     draw = expand
 
 
@@ -610,18 +693,28 @@ class SlotBuilder(LayoutBuilder):
     """一个有名字的饼槽位。"""
 
     def __init__(self, layout: Any, context: Any, name: str, index: int,
-                 operator_context: str = "INVOKE_DEFAULT") -> None:
+                 operator_context: str = "INVOKE_DEFAULT",
+                 pie: Optional["HoPie"] = None) -> None:
         super().__init__(layout, context, operator_context)
         self.name = name
         self.index = index
+        self._pie = pie
+        self._activated = False
+
+    def _before_draw(self) -> None:
+        if self._pie is None or self._activated:
+            return
+        self._pie._activate_slot(self)
+        self._activated = True
 
 
 class HoPie(LayoutBuilder):
     """HoPie 菜单的入口对象。
 
     默认会从传入的 `self.layout` 创建 `menu_pie()`；如果调用方已经拿到了
-    `layout.menu_pie()`，传 `menu_pie=False` 即可。八个方向槽位在初始化时固定建立，
-    所以可以按任意顺序写 `pie.left`、`pie.top_left`，不会因为调用顺序改变方向。
+    `layout.menu_pie()`，传 `menu_pie=False` 即可。槽位不会预先包成 column，
+    而是在第一次绘制时直接写入饼的根布局，从而保留 Blender 原生的甩动命中区域。
+    槽位按 PME 顺序激活，写完后调用 `finish()` 补齐空方向；也可以使用 with 语法。
     中心的 `top_center`/`bottom_center` 会在第一次使用时按 PME 的间隔规则追加。
     """
 
@@ -634,19 +727,23 @@ class HoPie(LayoutBuilder):
     def __init__(self, layout: Any, context: Any = None, *,
                  menu_pie: bool = True,
                  config: Optional[HoPieConfig] = None,
-                 settings: Optional[PieSettings] = None) -> None:
+                 settings: Optional[PieSettings] = None,
+                 nested_operator_idname: str = "ho.hopie_nested_pie") -> None:
         if menu_pie and hasattr(layout, "menu_pie"):
             layout = layout.menu_pie()
         super().__init__(layout, context, "INVOKE_DEFAULT")
         self.config = config or HoPieConfig(pie=settings or PieSettings())
+        self.nested_operator_idname = nested_operator_idname
         # 常用配置提供直接入口，完整配置仍可从 `pie.config` 读取。
         self.settings = self.config.pie
         self.dialog = self.config.dialog
         self._slots: Dict[str, SlotBuilder] = {}
+        self._next_slot = 0
+        self._finished = False
+        self._center_started = False
         for index, name in enumerate(self.SLOT_NAMES):
-            child = layout.column(align=True)
             self._slots[name] = SlotBuilder(
-                child, context, name, index, self.operator_context,
+                layout, context, name, index, self.operator_context, self,
             )
         self._centers: Dict[str, SlotBuilder] = {}
 
@@ -683,30 +780,67 @@ class HoPie(LayoutBuilder):
 
     def _center(self, name: str, index: int) -> SlotBuilder:
         if name not in self._centers:
-            # PME 只有在中心项存在时才插入两段间隔；第一次访问时再创建，
-            # 不让一个没有中心按钮的普通饼平白多出两个菜单项。
-            if not self._centers:
-                self.layout.separator()
-                self.layout.separator()
-                top_child = self.layout.column(align=True)
-                self._centers["top_center"] = SlotBuilder(
-                    top_child, self.context, "top_center", 8,
-                    self.operator_context,
-                )
-                if name == "bottom_center":
-                    self.layout.separator()
-                    bottom_child = self.layout.column(align=True)
-                    self._centers["bottom_center"] = SlotBuilder(
-                        bottom_child, self.context, "bottom_center", 9,
-                        self.operator_context,
-                    )
-            elif name == "bottom_center":
-                self.layout.separator()
-                child = self.layout.column(align=True)
-                self._centers[name] = SlotBuilder(
-                    child, self.context, name, index, self.operator_context,
-                )
+            self._centers[name] = SlotBuilder(
+                self.layout, self.context, name, index,
+                self.operator_context, self,
+            )
         return self._centers[name]
+
+    def _activate_slot(self, slot: SlotBuilder) -> None:
+        """按 PME 的顺序把槽位落到 menu_pie 根布局。"""
+        if self._finished:
+            raise RuntimeError("HoPie 已经 finish，不能继续添加菜单项")
+
+        if slot.index < self._next_slot:
+            raise RuntimeError(
+                "HoPie 槽位必须按 PME 顺序绘制，当前槽位已经越过：%s" % slot.name
+            )
+
+        if slot.index < 8:
+            while self._next_slot < slot.index:
+                self.layout.separator()
+                self._next_slot += 1
+            self._next_slot = slot.index + 1
+            return
+
+        # 中心项存在时，PME 会先补两段间隔，再绘制中心最顶/最底。
+        if not self._center_started:
+            while self._next_slot < 8:
+                self.layout.separator()
+                self._next_slot += 1
+            self.layout.separator()
+            self.layout.separator()
+            self._center_started = True
+            self._next_slot = 9
+
+            top = self._centers.get("top_center")
+            if top is not None:
+                top.layout = self.layout.column(align=True)
+                top._activated = True
+
+        if slot.index == 9 and self._next_slot == 9:
+            self.layout.separator()
+            slot.layout = self.layout.column(align=True)
+            self._next_slot = 10
+
+    def finish(self) -> "HoPie":
+        """结束饼的声明并补齐未使用的方向槽位。"""
+        if self._finished:
+            return self
+        if not self._center_started:
+            while self._next_slot < 8:
+                self.layout.separator()
+                self._next_slot += 1
+        self._finished = True
+        return self
+
+    finalize = finish
+
+    def __enter__(self) -> "HoPie":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+        self.finish()
 
     @property
     def center(self) -> SlotBuilder:

@@ -23,6 +23,8 @@ def _draw_prop(layout, owner, prop_name, text, icon=None):
     """属性不存在时跳过，避免不同 Blender 版本导致整个饼菜单报错。"""
     if owner is None or not hasattr(owner, prop_name):
         return False
+    if isinstance(layout, LayoutBuilder):
+        layout = layout.item()
     kwargs = {"text": text}
     if icon:
         kwargs["icon"] = icon
@@ -122,52 +124,63 @@ class HO_MT_HoMainPieDisplayOperations(Menu):
 
     def draw(self, context):
         layout = self.layout
-        space = _space_view3d(context)
-        overlay = getattr(space, "overlay", None)
-        scene = getattr(context, "scene", None)
+        if not isinstance(layout, LayoutBuilder):
+            layout = LayoutBuilder(layout, context)
+        _draw_display_operations(layout, context)
 
-        row = layout.row(align=True)
-        _draw_prop(row, overlay, "show_weight", "权重", "COLOR")
-        _draw_prop(row, overlay, "show_face_orientation", "朝向", "AXIS_FRONT")
-        _draw_prop(row, overlay, "show_wireframes", "线框", "SHADING_WIRE")
-        _draw_prop(row, overlay, "show_gizmo_object_translate", "轴", "GIZMO")
 
-        row = layout.row(align=True)
-        settings = getattr(scene, "ho_vertex_color_tools", None)
-        _draw_prop(row, settings, "view_mode", "顶点色", "COLOR")
-        _draw_prop(row, scene, "ho_checker_overlay_show", "Checker", "CHECKMARK")
+def _draw_display_operations(layout, context):
+    """绘制真实视图叠加属性，可作为主面板里的嵌套展开内容。"""
+    if not isinstance(layout, LayoutBuilder):
+        layout = LayoutBuilder(layout, context)
+    space = _space_view3d(context)
+    overlay = getattr(space, "overlay", None)
+    scene = getattr(context, "scene", None)
 
-        if scene is not None and hasattr(scene, "ho_checker_overlay_realtime_refresh"):
-            checker_row = layout.row(align=True)
-            checker_row.enabled = bool(getattr(scene, "ho_checker_overlay_show", False))
-            _draw_prop(
-                checker_row,
-                scene,
-                "ho_checker_overlay_realtime_refresh",
-                "实时刷新",
-                "FILE_REFRESH",
-            )
+    layout.label("显示操作", icon="OVERLAY")
+    row = layout.row(align=True)
+    _draw_prop(row, overlay, "show_weight", "权重", "COLOR")
+    _draw_prop(row, overlay, "show_face_orientation", "朝向", "AXIS_FRONT")
+    _draw_prop(row, overlay, "show_wireframes", "线框", "SHADING_WIRE")
+    _draw_prop(row, overlay, "show_gizmo_object_translate", "轴", "GIZMO")
 
-        layout.separator()
-        row = layout.row(align=True)
-        row.operator(
-            HO_OT_HoMainPieSetColorMode.bl_idname,
-            text="材质",
-            icon="MATERIAL",
-        ).color_mode = "MATERIAL"
-        row.operator(
-            HO_OT_HoMainPieSetColorMode.bl_idname,
-            text="随机",
-            icon="COLOR",
-        ).color_mode = "RANDOM"
+    row = layout.row(align=True)
+    settings = getattr(scene, "ho_vertex_color_tools", None)
+    _draw_prop(row, settings, "view_mode", "顶点色", "COLOR")
+    _draw_prop(row, scene, "ho_checker_overlay_show", "Checker", "CHECKMARK")
 
-        if overlay is not None:
-            _draw_prop(layout, overlay, "show_text", "文本", "TEXT")
+    if scene is not None and hasattr(scene, "ho_checker_overlay_realtime_refresh"):
+        checker_row = layout.row(align=True)
+        checker_row.raw_layout.enabled = bool(
+            getattr(scene, "ho_checker_overlay_show", False))
+        _draw_prop(
+            checker_row,
+            scene,
+            "ho_checker_overlay_realtime_refresh",
+            "实时刷新",
+            "FILE_REFRESH",
+        )
 
-        # UV 编辑器拥有该属性时，沿用 PME 的入口；三维视图中不会强行访问它。
-        uv_editor = getattr(space, "uv_editor", None)
-        if uv_editor is not None:
-            _draw_prop(layout, uv_editor, "show_stretch", "UV 拉伸", "UV")
+    layout.separator()
+    row = layout.row(align=True)
+    row.item().operator(
+        HO_OT_HoMainPieSetColorMode.bl_idname,
+        text="材质",
+        icon="MATERIAL",
+    ).color_mode = "MATERIAL"
+    row.item().operator(
+        HO_OT_HoMainPieSetColorMode.bl_idname,
+        text="随机",
+        icon="COLOR",
+    ).color_mode = "RANDOM"
+
+    if overlay is not None:
+        _draw_prop(layout, overlay, "show_text", "文本", "TEXT")
+
+    # UV 编辑器拥有该属性时，沿用 PME 的入口；三维视图中不会强行访问它。
+    uv_editor = getattr(space, "uv_editor", None)
+    if uv_editor is not None:
+        _draw_prop(layout, uv_editor, "show_stretch", "UV 拉伸", "UV")
 
 
 class HO_MT_HoMainPieViewOptions(Menu):
@@ -195,12 +208,7 @@ def _draw_view_options(layout, context):
         icon="VIEW_ORTHO",
     )
     row.item().popover(panel="OBJECT_PT_display", text="视图显示", icon="VIEW3D")
-    row = layout.row()
-    row.item().menu(
-        HO_MT_HoMainPieDisplayOperations.bl_idname,
-        text="显示操作",
-        icon="OVERLAY",
-    )
+    layout.menu(HO_MT_HoMainPieDisplayOperations.bl_idname, expand=True)
 
 
 class HO_MT_HoMainPieEdgeDisplay(Menu):
@@ -307,6 +315,7 @@ class HO_MT_HoMainPieMesh(Menu):
             text="快速网格",
             icon="MODIFIER_ON",
         )
+        pie.finish()
 
 
 class HO_MT_HoMainPie(Menu):
@@ -329,6 +338,7 @@ class HO_MT_HoMainPie(Menu):
             icon="OVERLAY",
         )
         pie.top_left.expand(_draw_view_options)
+        pie.finish()
 
 
 HO_MAIN_PIE_CLASSES = (
