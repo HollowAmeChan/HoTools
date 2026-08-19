@@ -1986,12 +1986,33 @@ class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
         return {'FINISHED'}
     
 try:
-    from . import rebase_core as _rebase_core
+    from .rebase_core import (
+        FBSF_FUNCTION_ITEMS,
+        ShapeKeyRebaseError,
+        _fbsf_auto_preset,
+        _fbsf_classification_context,
+        _fbsf_current_source_specs,
+        _fbsf_resolve_keyword_eye_tags,
+        _fbsf_resolve_target_side_tags,
+        _fbsf_tag_channels,
+        _rebase_shape_keys_fbsf,
+        _validate_shape_key_rebase_data,
+    )
 except ImportError:  # 兼容直接导入脚本
-    import rebase_core as _rebase_core
-for _rebase_name in _rebase_core.__all__:
-    globals()[_rebase_name] = getattr(_rebase_core, _rebase_name)
-del _rebase_name
+    from rebase_core import (
+        FBSF_FUNCTION_ITEMS,
+        ShapeKeyRebaseError,
+        _fbsf_auto_preset,
+        _fbsf_classification_context,
+        _fbsf_current_source_specs,
+        _fbsf_resolve_keyword_eye_tags,
+        _fbsf_resolve_target_side_tags,
+        _fbsf_tag_channels,
+        _rebase_shape_keys_fbsf,
+        _validate_shape_key_rebase_data,
+    )
+
+
 class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
     """全键变基"""
     bl_idname = "ho.apply_active_shapekey_to_basis"
@@ -2447,31 +2468,6 @@ class OP_ForceApplyAll(Operator):
         self.report({'INFO'}, "已强制应用并删除所有形态键")
         return {'FINISHED'}
 
-def draw_in_DATA_PT_modifiers(self, context):
-    """修改器顶上"""
-    layout: bpy.types.UILayout = self.layout
-    layout.use_property_decorate = False  # 禁用关键帧动画
-
-    obj = context.object
-
-    if not obj:
-        return  # 未选物体不显示
-    if not obj.modifiers:
-        return  # 物体没有修改器不显示
-    if obj.type != "MESH":
-        return  # 不是网格的不显示
-    if not obj.data.shape_keys:
-        return  # 没有形态键不显示
-    if len(obj.data.shape_keys.key_blocks) == 1:
-        return  # 只有一个基型的不显示
-
-    row = layout.row(align=True)
-    row.alert = True
-    row.label(text="形态键修改器共存")
-    row.alert = False
-    row.operator(OP_applyShowingModifiersKeepShapekeys.bl_idname,
-                 text="应用")
-
 def _draw_sk_operators(layout: UILayout,context:Context):
     layout = layout.box()
     layout = layout.column()
@@ -2831,13 +2827,11 @@ def register():
     for i in cls:
         bpy.utils.register_class(i)
     reg_props()
-    bpy.types.DATA_PT_modifiers.append(draw_in_DATA_PT_modifiers)
     bpy.types.MESH_MT_shape_key_context_menu.append(
         draw_in_MESH_MT_shape_key_context_menu)
 
 
 def unregister():
-    bpy.types.DATA_PT_modifiers.remove(draw_in_DATA_PT_modifiers)
     bpy.types.MESH_MT_shape_key_context_menu.remove(
         draw_in_MESH_MT_shape_key_context_menu)
     ureg_props()

@@ -583,25 +583,6 @@ def draw_in_OUTLINER_MT_context_menu(self, context: bpy.types.Context):
                     icon="RESTRICT_RENDER_OFF")
 
 
-def draw_in_DATA_PT_modifiers(self, context: bpy.types.Context):
-    """修改器顶上"""
-    layout: bpy.types.UILayout = self.layout
-    layout.use_property_decorate = False  # 禁用关键帧动画
-
-    obj = context.object
-
-    if not obj:
-        return  # 未选物体不显示
-    if not obj.modifiers:
-        return  # 物体没有修改器不显示
-    if obj.type != "MESH":
-        return  # 不是网格的不显示
-
-    row = layout.row(align=True)
-    row.operator(OP_CopyALL_modifiers_to_selected.bl_idname,
-                 text="复制全部到所选")
-
-
 def draw_in_DATA_PT_customdata(self, context: bpy.types.Context):
     """几何数据属性下"""
     layout: bpy.types.UILayout = self.layout
@@ -656,7 +637,6 @@ def register():
     for i in cls:
         bpy.utils.register_class(i)
     bpy.types.OUTLINER_MT_context_menu.append(draw_in_OUTLINER_MT_context_menu)
-    bpy.types.DATA_PT_modifiers.append(draw_in_DATA_PT_modifiers)
     bpy.types.DATA_PT_customdata.append(draw_in_DATA_PT_customdata)
     bpy.types.VIEW3D_MT_object_convert.append(draw_in_VIEW3D_MT_object_convert)
     bpy.types.VIEW3D_MT_edit_curve_context_menu.append(
@@ -673,7 +653,6 @@ def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
     bpy.types.OUTLINER_MT_context_menu.remove(draw_in_OUTLINER_MT_context_menu)
-    bpy.types.DATA_PT_modifiers.remove(draw_in_DATA_PT_modifiers)
     bpy.types.DATA_PT_customdata.remove(draw_in_DATA_PT_customdata)
     bpy.types.VIEW3D_MT_edit_curve_context_menu.remove(
         draw_in_VIEW3D_MT_edit_curve_context_menu)

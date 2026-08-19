@@ -21,7 +21,7 @@ sys.path.append(py_lib_dir)
 sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
 
 
-from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,HoPie
+from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,ModifierTools,HoPie
 from . import OmniNode, HoTab
 from bpy.props import BoolProperty, FloatProperty
 
@@ -306,6 +306,7 @@ def register():
     VertexColorTools.register()
     VertexGroupTools.register()
     ShapekeyTools.register()
+    ModifierTools.register()
     from .OmniNode.PhysicsWorld.blender import register as register_physics_world
     register_physics_world()
     BoneTools.register()
@@ -336,6 +337,7 @@ def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
 
+    ModifierTools.unregister()
     FastOperators.unregister()
     VertexColorTools.unregister()
     VertexGroupTools.unregister()
