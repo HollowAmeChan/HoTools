@@ -144,64 +144,38 @@ def _draw_view_options(layout: LayoutBuilder, context):
     draw_prop(row, getattr(space, "uv_editor", None), "show_stretch", "UV 拉伸", icon="COLORSET_04_VEC")
 
 
-class HO_MT_HoMainPieEdgeDisplay(Menu):
-    """网格显示操作，直接读取当前三维视图叠加层属性。"""
+def _draw_edge_display(layout: LayoutBuilder, context):
+    """直接绘制网格边缘显示选项。"""
+    space = find_space(context, "VIEW_3D")
+    overlay = getattr(space, "overlay", None)
 
-    bl_idname = "HO_MT_HoMainPieEdgeDisplay"
-    bl_label = "网格显示操作"
+    row = layout.row(align=True)
+    draw_prop(row, overlay, "show_edge_crease", "折痕")
+    draw_prop(row, overlay, "show_edge_sharp", "锐边")
+    row = layout.row(align=True)
+    draw_prop(row, overlay, "show_edge_bevel_weight", "倒角")
+    draw_prop(row, overlay, "show_edge_seams", "缝合")
 
-    def draw(self, context):
-        layout = self.layout
-        space = find_space(context, "VIEW_3D")
-        overlay = getattr(space, "overlay", None)
+    layout.separator()
+    row = layout.row(align=True)
+    row.item().operator(
+        HO_OT_HoMainPieSetEdgeOverlays.bl_idname,
+        text="全开",
+        icon="CHECKMARK",
+        enabled=True,
+        props={"enabled": True},
+    )
+    row.item().operator(
+        HO_OT_HoMainPieSetEdgeOverlays.bl_idname,
+        text="全关",
+        icon="X",
+        enabled=True,
+        props={"enabled": False},
+    )
 
-        row = layout.row(align=True)
-        draw_prop(row, overlay, "show_edge_crease", "折痕")
-        draw_prop(row, overlay, "show_edge_sharp", "锐边")
-        row = layout.row(align=True)
-        draw_prop(row, overlay, "show_edge_bevel_weight", "倒角")
-        draw_prop(row, overlay, "show_edge_seams", "缝合")
-
-        layout.separator()
-        row = layout.row(align=True)
-        enable = row.operator(
-            HO_OT_HoMainPieSetEdgeOverlays.bl_idname,
-            text="全开",
-            icon="CHECKMARK",
-        )
-        enable.enabled = True
-        disable = row.operator(
-            HO_OT_HoMainPieSetEdgeOverlays.bl_idname,
-            text="全关",
-            icon="X",
-        )
-        disable.enabled = False
-
-
-class HO_MT_HoMainPieSelection(Menu):
-    """点、线、面选择工具的轻量入口。"""
-
-    bl_idname = "HO_MT_HoMainPieSelection"
-    bl_label = "点线面工具合集"
-
-    def draw(self, context):
-        layout = self.layout
-        row = layout.row(align=True)
-        row.operator("mesh.select_mode", text="点").type = "VERT"
-        row.operator("mesh.select_mode", text="边").type = "EDGE"
-        row.operator("mesh.select_mode", text="面").type = "FACE"
-        layout.separator()
-        layout.operator("mesh.select_all", text="全选").action = "SELECT"
-        layout.operator("mesh.select_all", text="取消全选").action = "DESELECT"
-
-
-class HO_MT_HoMainPieQuickModifiers(Menu):
-    """快速网格修改器，调用 ModifierTools 的现有操作。"""
-
-    bl_idname = "HO_MT_HoMainPieQuickModifiers"
-    bl_label = "快速网格"
-
-    _BUTTONS = (
+def _draw_quick_modifiers(layout: LayoutBuilder, context):
+    """直接绘制 ModifierTools 的快速修改器按钮。"""
+    buttons = (
         ("SUBSURF_SIMPLE", "纯细分"),
         ("SUBSURF", "细分"),
         ("SOLIDIFY", "实体化"),
@@ -211,18 +185,15 @@ class HO_MT_HoMainPieQuickModifiers(Menu):
         ("SHRINKWRAP", "缩裹"),
         ("DATA_TRANSFER", "数据传递"),
     )
-
-    def draw(self, context):
-        layout = self.layout
-        for start in (0, 4):
-            row = layout.row(align=True)
-            for modifier_type, label in self._BUTTONS[start:start + 4]:
-                button = row.operator(
-                    "ho.modifier_add_quick",
-                    text=label,
-                    icon="MODIFIER_ON",
-                )
-                button.modifier_type = modifier_type
+    for start in (0, 4):
+        row = layout.row(align=True)
+        for modifier_type, label in buttons[start:start + 4]:
+            row.item().operator(
+                "ho.modifier_add_quick",
+                text=label,
+                icon="MODIFIER_ON",
+                modifier_type=modifier_type,
+            )
 
 
 class HO_MT_HoMainPieMesh(Menu):
@@ -233,12 +204,8 @@ class HO_MT_HoMainPieMesh(Menu):
 
     def draw(self, context):
         pie = HoPie(self.layout, context)
-        pie.bottom.menu(HO_MT_HoMainPieEdgeDisplay.bl_idname,
-            text="网格显示操作",icon="FUND",)
-        pie.top.menu(HO_MT_HoMainPieSelection.bl_idname,
-            text="点线面工具合集",icon="VIEW_PAN",)
-        pie.top_left.menu(HO_MT_HoMainPieQuickModifiers.bl_idname,
-            text="快速网格",icon="MODIFIER_ON",)
+        pie.top.expand(_draw_edge_display)
+        pie.top_right.expand(_draw_quick_modifiers)
         pie.finish()
 
 
@@ -263,9 +230,6 @@ class HO_MT_HoMainPie(Menu):
 HO_MAIN_PIE_CLASSES = (
     HO_OT_HoMainPieToggleRandomPreview,
     HO_OT_HoMainPieSetEdgeOverlays,
-    HO_MT_HoMainPieEdgeDisplay,
-    HO_MT_HoMainPieSelection,
-    HO_MT_HoMainPieQuickModifiers,
     HO_MT_HoMainPieMesh,
     HO_MT_HoMainPie,
 )
