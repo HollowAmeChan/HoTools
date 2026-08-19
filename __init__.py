@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
 
 
 from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,HoPie
-from . import OmniNode
+from . import OmniNode, HoTab
 from bpy.props import BoolProperty, FloatProperty
 
 # 内置的绘制快捷键ui的接口
@@ -35,6 +35,7 @@ def _preference_keymaps():
         *getattr(VertexGroupTools.vertexGroupOperators, 'addon_keymaps', []),
         *MeshTools.preference_keymaps(),
         *HoPie.preference_keymaps(),
+        *HoTab.preference_keymaps(),
     ]
 
 
@@ -67,6 +68,13 @@ def updateOmniNodeFeaturesState(self, context):
         OmniNode.register()
     else:
         OmniNode.unregister()
+
+
+def updateHoTabState(self, context):
+    if self.hoTools_enableHoTab:
+        HoTab.enable()
+    else:
+        HoTab.disable()
 
 
 def updateAlignPieState(self, context):
@@ -156,12 +164,14 @@ class AddonPreference(bpy.types.AddonPreferences):
                                        default=False, update=updateExIconState)  # type: ignore
     hoTools_OmniNodeFeatures_enable: BoolProperty(name="OmniNode",
                                           default=False,update=updateOmniNodeFeaturesState)  # type: ignore
+    hoTools_enableHoTab: BoolProperty(name="HoTab", default=True, update=updateHoTabState)  # type: ignore
     hoTools_enableAlignPie: BoolProperty(name="对齐饼菜单", default=False, update=updateAlignPieState)  # type: ignore
     hoTools_enableCursorPie: BoolProperty(name="光标与原点饼菜单", default=False, update=updateCursorPieState)  # type: ignore
     hoTools_enableSelectionModePie: BoolProperty(name="选择模式饼菜单", default=True, update=updateSelectionModePieState)  # type: ignore
     hoTools_enableDeleteMergePie: BoolProperty(name="删除与合并饼菜单", default=True, update=updateDeleteMergePieState)  # type: ignore
     hoTools_ui_exicon_expanded: BoolProperty(name='展开 ExIcon', default=False)  # type: ignore
     hoTools_ui_omninode_expanded: BoolProperty(name='展开 OmniNode', default=False)  # type: ignore
+    hoTools_ui_hotab_expanded: BoolProperty(name='展开 HoTab', default=False)  # type: ignore
     hoTools_ui_hopie_expanded: BoolProperty(name='展开 HoPie', default=False)  # type: ignore
     hoTools_ui_keymaps_expanded: BoolProperty(name='展开快捷键', default=True)  # type: ignore
 
@@ -273,6 +283,7 @@ class AddonPreference(bpy.types.AddonPreferences):
 
         _draw_module_box(layout, self, 'hoTools_ui_exicon_expanded', 'ExIcon', 'hoTools_enableExIcon', draw_exicon)
         _draw_module_box(layout, self, 'hoTools_ui_omninode_expanded', 'OmniNode', 'hoTools_OmniNodeFeatures_enable')
+        _draw_module_box(layout, self, 'hoTools_ui_hotab_expanded', 'HoTab', 'hoTools_enableHoTab')
         _draw_module_box(layout, self, 'hoTools_ui_hopie_expanded', 'HoPie', draw_content=draw_hopie)
 
         def draw_keymaps(content):
@@ -308,6 +319,7 @@ def register():
     Rbf.register()
     ModTools.register()
     HoPie.register()
+    HoTab.register()
 
     prefs = bpy.context.preferences.addons[__name__].preferences
     HoPie.set_align_pie_enabled(prefs.hoTools_enableAlignPie)
@@ -316,6 +328,8 @@ def register():
     HoPie.set_delete_merge_pie_enabled(prefs.hoTools_enableDeleteMergePie)
     if prefs.hoTools_OmniNodeFeatures_enable:
         OmniNode.register()
+    if prefs.hoTools_enableHoTab:
+        HoTab.enable()
 
 
 def unregister():
@@ -340,4 +354,5 @@ def unregister():
     Rbf.unregister()
     OmniNode.unregister()
     ModTools.unregister()
+    HoTab.unregister()
     

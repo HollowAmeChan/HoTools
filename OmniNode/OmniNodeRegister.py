@@ -687,6 +687,11 @@ _registered_menu_classes = []
 _node_categories_registered = False
 
 
+def iter_registered_node_classes():
+    """返回当前已经注册的 OmniNode 节点类，供其他模块读取目录。"""
+    return tuple(_registered_node_classes)
+
+
 def _rollback_registration():
     global _node_categories_registered
     if _node_categories_registered:

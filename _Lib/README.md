@@ -3,9 +3,9 @@
 HoTools ships separate dependency trees for Blender's embedded Python ABI:
 
 - `py311`: Blender 4.5 / Python 3.11, including Pillow 11.3.0, CFFI 2.0.0,
-  pycparser 3.0, and PyOIDN 2.4.0.2.
+  pycparser 3.0, PyOIDN 2.4.0.2, and pypinyin 0.55.0.
 - `py313`: Blender 5.2 / Python 3.13, including Pillow 12.1.1, CFFI 2.0.0,
-  pycparser 3.0, and PyOIDN 2.5.0.1.
+  pycparser 3.0, PyOIDN 2.5.0.1, and pypinyin 0.55.0.
 
 PyOIDN 2.4.0.2 can import under Blender 5.2 but fails when it creates an OIDN
 device because its bundled runtime conflicts with Blender 5.2's loaded TBB DLL.
