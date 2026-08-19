@@ -37,6 +37,8 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
 
 
 _UNSET = object()
+_ICON_NAMES = None
+_ICON_NAMES_READY = False
 
 
 def _resolve(value: Any, context: Any) -> Any:
@@ -94,6 +96,61 @@ def _set_layout(layout: Any, options: Optional["LayoutOptions"], context: Any,
     return layout
 
 
+def _blender_icon_names() -> Optional[set]:
+    """读取 Blender 当前版本的 UILayout 图标枚举。"""
+    global _ICON_NAMES, _ICON_NAMES_READY
+    if _ICON_NAMES_READY:
+        return _ICON_NAMES
+    _ICON_NAMES_READY = True
+    try:
+        import bpy
+        rna = getattr(getattr(bpy.types, "UILayout", None), "bl_rna", None)
+        functions = getattr(rna, "functions", None)
+        if functions is None:
+            return None
+        for function_name in ("operator", "prop", "label", "menu"):
+            try:
+                function = functions.get(function_name)
+            except AttributeError:
+                function = functions[function_name]
+            if function is None:
+                continue
+            parameters = getattr(function, "parameters", None)
+            if parameters is None:
+                continue
+            try:
+                parameter = parameters.get("icon")
+            except AttributeError:
+                parameter = parameters["icon"]
+            enum_items = getattr(parameter, "enum_items", None)
+            if enum_items is None:
+                continue
+            names = {
+                str(item.identifier)
+                for item in enum_items
+                if getattr(item, "identifier", None)
+            }
+            if names:
+                _ICON_NAMES = names
+                return _ICON_NAMES
+    except (ImportError, AttributeError, KeyError, IndexError, TypeError,
+            RuntimeError, ValueError):
+        pass
+    return None
+
+
+def _normalize_icon(icon: Any) -> Any:
+    """图标不存在时统一回退到 Blender 的 ERROR 图标。"""
+    if not isinstance(icon, str):
+        return "ERROR"
+    if icon == "":
+        return "ERROR"
+    names = _blender_icon_names()
+    if names is not None and icon not in names:
+        return "ERROR"
+    return icon
+
+
 def _icon_kwargs(icon: Any = None, icon_value: Any = None) -> Dict[str, Any]:
     """把 Blender 图标名和 PME 的 `@123` 图标值写成 UILayout 参数。"""
     if icon_value is not None:
@@ -102,10 +159,9 @@ def _icon_kwargs(icon: Any = None, icon_value: Any = None) -> Dict[str, Any]:
         try:
             return {"icon_value": int(icon[1:])}
         except (TypeError, ValueError):
-            # 非数字的自定义图标名交给 Blender 处理，避免误吞掉用户输入。
-            return {"icon": icon}
+            return {"icon": "ERROR"}
     if icon is not None:
-        return {"icon": icon}
+        return {"icon": _normalize_icon(icon)}
     return {}
 
 
@@ -114,6 +170,14 @@ def _safe_call(method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     try:
         return method(*args, **kwargs)
     except TypeError:
+        if kwargs.get("icon") not in (None, "ERROR"):
+            # 某些 Blender 版本的 RNA 枚举反射不完整，运行时再做一次统一回退。
+            retry = dict(kwargs)
+            retry["icon"] = "ERROR"
+            try:
+                return method(*args, **retry)
+            except TypeError:
+                pass
         # 老版本或测试替身不认识 icon_value/use_mouse_over_open 等参数时，
         # 去掉这些非核心参数再调用一次。
         fallback = dict(kwargs)
@@ -196,7 +260,7 @@ def draw_prop(layout: Any, owner: Any, path: str,
 
 
 def ensure_layout(layout: Any, context: Any = None,
-                  operator_context: str = "INVOKE_DEFAULT") -> "LayoutBuilder":
+                  operator_context: str = "INVOKE_DEFAULT") -> LayoutBuilder:
     """保证拿到 Core 的布局包装器，已包装时原样返回。"""
     if isinstance(layout, LayoutBuilder):
         return layout
@@ -224,6 +288,8 @@ class DialogSettings:
     expand: bool = True
     panel: str = "PIE"
     width: int = 0
+    scale_x: Optional[Any] = None
+    scale_y: Optional[Any] = None
 
 
 @dataclass
@@ -462,7 +528,11 @@ class LayoutBuilder:
              options: Optional[ItemOptions] = None,
              use_mouse_over_open: Any = None,
              expand: Optional[Callable[..., Any]] = None,
-             frame: bool = False,
+             frame: bool = False, width: Optional[Any] = None,
+             height: Optional[Any] = None,
+             scale_x: Optional[Any] = None,
+             scale_y: Optional[Any] = None,
+             settings: Optional[DialogSettings] = None,
              **item_values: Any) -> Any:
         """添加普通下拉菜单；它不会创建新的饼。"""
         self._before_draw()
@@ -470,14 +540,38 @@ class LayoutBuilder:
                 not hasattr(menu_name, "draw"):
             if expand not in (None, True):
                 raise ValueError("menu 的可调用参数和 expand 只能二选一")
-            return self.expand(menu_name, frame=frame)
+            return self.expand(
+                menu_name,
+                frame=frame,
+                width=width,
+                height=height,
+                scale_x=scale_x,
+                scale_y=scale_y,
+                settings=settings,
+            )
         if expand is not None:
             if expand is True:
-                return self.expand_menu(menu_name, frame=frame)
+                return self.expand_menu(
+                    menu_name,
+                    frame=frame,
+                    width=width,
+                    height=height,
+                    scale_x=scale_x,
+                    scale_y=scale_y,
+                    settings=settings,
+                )
             if not callable(expand):
                 raise ValueError("menu(expand=...) 需要传入绘制回调或 True")
             # PME 的 @ 菜单标记会把内容直接画进当前槽位，不额外生成一个菜单按钮。
-            return self.expand(expand, frame=frame)
+            return self.expand(
+                expand,
+                frame=frame,
+                width=width,
+                height=height,
+                scale_x=scale_x,
+                scale_y=scale_y,
+                settings=settings,
+            )
         style_values = {
             key: item_values.pop(key)
             for key in _MENU_STYLE_FIELDS
@@ -676,17 +770,37 @@ class LayoutBuilder:
                              self.operator_context)
 
     def expand(self, draw: Callable[..., Any], *, frame: bool = False,
+               width: Optional[Any] = None, height: Optional[Any] = None,
+               scale_x: Optional[Any] = None, scale_y: Optional[Any] = None,
                settings: Optional[DialogSettings] = None) -> "LayoutBuilder":
         """在当前槽位直接绘制回调内容，不调用 `layout.menu()`。
 
         回调签名支持 `draw(layout)` 或 `draw(layout, context)`；这里的 layout 是
         `LayoutBuilder`，因此可以继续链式调用 `row/prop/operator`。
+        `width`/`height` 分别是 `scale_x`/`scale_y` 的直观别名，用于调整
+        展开面板的横向和纵向比例。
         """
         self._before_draw()
         target = self.layout.box() if frame else self.layout
         target = target.column(align=True)
         builder = LayoutBuilder(target, self.context, self.operator_context)
-        builder.metadata["dialog"] = settings or DialogSettings(box=frame)
+        dialog = settings or DialogSettings(box=frame)
+        if scale_x is None:
+            scale_x = width
+        if scale_x is None:
+            scale_x = dialog.scale_x
+        if scale_y is None:
+            scale_y = height
+        if scale_y is None:
+            scale_y = dialog.scale_y
+        layout_scale = {}
+        if scale_x is not None:
+            layout_scale["scale_x"] = scale_x
+        if scale_y is not None:
+            layout_scale["scale_y"] = scale_y
+        if layout_scale:
+            builder.configure(**layout_scale)
+        builder.metadata["dialog"] = dialog
         try:
             parameters = inspect.signature(draw).parameters
         except (TypeError, ValueError):
@@ -705,10 +819,21 @@ class LayoutBuilder:
 
     expanded = expand
     def expand_menu(self, menu: Union[str, type, Callable[..., Any]], *,
-                    frame: bool = False) -> "LayoutBuilder":
+                    frame: bool = False, width: Optional[Any] = None,
+                    height: Optional[Any] = None,
+                    scale_x: Optional[Any] = None, scale_y: Optional[Any] = None,
+                    settings: Optional[DialogSettings] = None) -> "LayoutBuilder":
         """把已注册 Menu 类直接绘制到当前面板，支持递归展开子 Menu。"""
         if callable(menu) and not isinstance(menu, type) and not hasattr(menu, "draw"):
-            return self.expand(menu, frame=frame)
+            return self.expand(
+                menu,
+                frame=frame,
+                width=width,
+                height=height,
+                scale_x=scale_x,
+                scale_y=scale_y,
+                settings=settings,
+            )
 
         menu_cls = menu
         if isinstance(menu, str):
@@ -736,7 +861,15 @@ class LayoutBuilder:
             )
             draw(proxy, context)
 
-        return self.expand(draw_registered_menu, frame=frame)
+        return self.expand(
+            draw_registered_menu,
+            frame=frame,
+            width=width,
+            height=height,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            settings=settings,
+        )
 
     expanded_menu = expand_menu
     expand_panel = expand

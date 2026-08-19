@@ -37,7 +37,7 @@ pie.finish()
 slot.pie("HO_MT_ChildPie", "进入子饼")       # 嵌套饼
 slot.menu("HO_MT_ChildMenu", "普通菜单")     # 普通下拉菜单
 slot.popover("OBJECT_PT_display", "视图显示") # Blender 面板
-slot.expand(draw_options, frame=True)          # 当前槽位直接展开
+slot.expand(draw_options, frame=True, width=1.25, height=1.2)  # 当前槽位直接展开并调整比例
 ```
 
 `slot.pie(...)` 使用 HoPie 自己的事件转发器打开子饼，因此会沿用当前鼠标事件；需要兼容原生调用时可传 `operator_idname="wm.call_menu_pie"`。
@@ -63,6 +63,8 @@ def draw_options(layout, context):
     row.item().operator("ho.refresh", "刷新", icon="FILE_REFRESH")
 ```
 
+展开面板的 `width`/`height` 分别是横向和纵向比例，底层对应 Blender 的 `UILayout.scale_x/scale_y`；也可以直接传 `scale_x`/`scale_y`，或在 `DialogSettings(scale_x=..., scale_y=...)` 中统一配置。
+
 `prop` 直接读取传入对象的真实 RNA 属性，也支持 `"foo.bar"` 这样的属性路径。属性不存在时会跳过当前项，不会让整个饼报错。
 
 跨模块复用同一逻辑时，也可以使用 Core 的安全辅助函数：
@@ -78,6 +80,8 @@ HoMainPie 遵循同一约定：视图开关和叠加层属性直接绘制在主�
 ## 常用配置
 
 按钮支持 `text_ctxt`、`translate`、`icon`、`icon_value`、`enabled`、`active`、`alert`、`emboss`、`depress`、`icon_only`、`operator_context`、`scale_x`、`scale_y` 等参数。布局支持 `row`、`column`、`box`、`split`、`size`、`vspacer`、`fixed_col`、`fixed_but` 和 `spacer(hsep=...)`。
+
+图标名会按当前 Blender 的 UILayout 枚举校验；找不到时统一使用 `ERROR`，`@123` 仍表示自定义 `icon_value`。
 
 参数可以是普通值，也可以是接收 `context` 的函数，例如：
 

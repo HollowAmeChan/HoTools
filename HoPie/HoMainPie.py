@@ -6,8 +6,8 @@ from bpy.types import Menu, Operator
 
 from .HoPieCore import (
     HoPie,
+    LayoutBuilder,
     draw_prop,
-    ensure_layout,
     find_space,
 )
 
@@ -96,9 +96,8 @@ class HO_OT_HoMainPieSetEdgeOverlays(Operator):
         return {"FINISHED"}
 
 
-def _draw_view_options(layout, context):
+def _draw_view_options(layout: LayoutBuilder, context):
     """集中绘制主饼左上角的视图选项和叠加层开关。"""
-    layout = ensure_layout(layout, context)
     space = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
     scene = getattr(context, "scene", None)
@@ -108,15 +107,15 @@ def _draw_view_options(layout, context):
     row.item().popover(panel="OBJECT_PT_display", text="视图显示", icon="VIEW3D")
 
     row = layout.row(align=True)
-    draw_prop(row, overlay, "show_weight", "权重", icon="COLOR")
-    draw_prop(row, overlay, "show_face_orientation", "朝向", icon="AXIS_FRONT")
-    draw_prop(row, overlay, "show_wireframes", "线框", icon="SHADING_WIRE")
-    draw_prop(row, overlay, "show_gizmo_object_translate", "轴", icon="GIZMO")
+    draw_prop(row, overlay, "show_weight", "权重", icon="STRIP_COLOR_01")
+    draw_prop(row, overlay, "show_face_orientation", "朝向", icon="STRIP_COLOR_05")
+    draw_prop(row, overlay, "show_wireframes", "线框", icon="STRIP_COLOR_09")
+    draw_prop(row, overlay, "show_gizmo_object_translate", "轴", icon="STRIP_COLOR_03")
 
     row = layout.row(align=True)
     settings = getattr(scene, "ho_vertex_color_tools", None)
-    draw_prop(row, settings, "view_mode", "顶点色", icon="COLOR")
-    draw_prop(row, scene, "ho_checker_overlay_show", "Checker", icon="CHECKMARK")
+    draw_prop(row, settings, "view_mode", "顶点色", icon="COLORSET_06_VEC")
+    draw_prop(row, scene, "ho_checker_overlay_show", "棋盘格", icon="TEXTURE_DATA")
 
     if scene is not None and hasattr(scene, "ho_checker_overlay_realtime_refresh"):
         checker_row = layout.row(align=True)
@@ -125,12 +124,12 @@ def _draw_view_options(layout, context):
 
     row = layout.row(align=True)
     row.item().operator(HO_OT_HoMainPieSetColorMode.bl_idname,text="材质",icon="MATERIAL",).color_mode = "MATERIAL"
-    row.item().operator(HO_OT_HoMainPieSetColorMode.bl_idname,text="随机",icon="COLOR",).color_mode = "RANDOM"
+    row.item().operator(HO_OT_HoMainPieSetColorMode.bl_idname,text="随机",icon="COLORSET_05_VEC",).color_mode = "RANDOM"
     if overlay is not None:
-        draw_prop(row, overlay, "show_text", "文本", icon="TEXT")
+        draw_prop(row, overlay, "show_text", "文本", icon="COLORSET_10_VEC")
     uv_editor = getattr(space, "uv_editor", None)
     if uv_editor is not None:
-        draw_prop(row, uv_editor, "show_stretch", "UV 拉伸", icon="UV")
+        draw_prop(row, uv_editor, "show_stretch", "UV 拉伸", icon="COLORSET_04_VEC")
 
 
 class HO_MT_HoMainPieEdgeDisplay(Menu):
@@ -259,7 +258,11 @@ class HO_MT_HoMainPie(Menu):
             text="叠加层",
             icon="OVERLAY",
         )
-        pie.top_left.expand(_draw_view_options)
+        pie.top_left.expand(
+            _draw_view_options,
+            width=1.5,
+            height=1.5,
+        )
         pie.finish()
 
 
