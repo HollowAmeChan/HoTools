@@ -263,13 +263,14 @@ def _draw_quick_modifier_buttons(layout):
 
 def _draw_modifier_tools(layout, context):
     obj = context.active_object
-    if obj is None:
-        return
     layout.use_property_decorate = False
     col = layout.column(align=True)
 
     _draw_quick_modifier_buttons(col)
 
+    if obj is None:
+        return
+    
     if obj.modifiers:
         row = col.row(align=True)
         row.operator(OP_ApplyAllModifiers.bl_idname,text="应用全部", icon="IMPORT")
