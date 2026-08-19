@@ -124,6 +124,24 @@ def _safe_call(method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         return method(*args, **fallback)
 
 
+def find_space(context: Any, space_type: Optional[str] = None) -> Any:
+    """从当前上下文取得空间，必要时回退到区域的 active space。"""
+    space = getattr(context, "space_data", None)
+    if space is not None and (
+            space_type is None or getattr(space, "type", None) == space_type):
+        return space
+    area = getattr(context, "area", None)
+    if area is None or (
+            space_type is not None and getattr(area, "type", None) != space_type):
+        return None
+    spaces = getattr(area, "spaces", None)
+    active = getattr(spaces, "active", None)
+    if active is None or (
+            space_type is not None and getattr(active, "type", None) != space_type):
+        return None
+    return active
+
+
 def resolve_path(owner: Any, path: str) -> Tuple[Any, Optional[str]]:
     """解析 `a.b.c`，返回最后一个属性的 owner 和属性名。
 
@@ -146,6 +164,43 @@ def resolve_path(owner: Any, path: str) -> Tuple[Any, Optional[str]]:
         if current is None:
             return None, None
     return current, parts[-1]
+
+
+def draw_prop(layout: Any, owner: Any, path: str,
+              text: Optional[Any] = None, *, icon: Any = None,
+              icon_value: Any = None, context: Any = None,
+              **kwargs: Any) -> Any:
+    """安全地绘制一个 RNA 属性。
+
+    `owner` 可以是对象，也可以是接收 context 的回调；`path` 支持
+    `scene.tool_settings.foo` 这样的嵌套路径。裸 UILayout 没有 context
+    时可显式传入 `context=`。属性不存在时直接跳过，适合跨 Blender
+    版本或跨编辑器共用的饼菜单。
+    """
+    if context is None:
+        context = getattr(layout, "context", None)
+    owner = _resolve(owner, context)
+    owner, prop_name = resolve_path(owner, path)
+    if owner is None or prop_name is None or not hasattr(owner, prop_name):
+        return None
+
+    target = layout.item() if isinstance(layout, LayoutBuilder) else layout
+    call_kwargs = dict(kwargs)
+    if text is not None:
+        call_kwargs["text"] = _resolve(text, context)
+    call_kwargs.update(_icon_kwargs(
+        _resolve(icon, context),
+        _resolve(icon_value, context),
+    ))
+    return _safe_call(target.prop, owner, prop_name, **call_kwargs)
+
+
+def ensure_layout(layout: Any, context: Any = None,
+                  operator_context: str = "INVOKE_DEFAULT") -> "LayoutBuilder":
+    """保证拿到 Core 的布局包装器，已包装时原样返回。"""
+    if isinstance(layout, LayoutBuilder):
+        return layout
+    return LayoutBuilder(layout, context, operator_context)
 
 
 @dataclass
@@ -911,5 +966,8 @@ __all__ = [
     "PieBuilder",
     "PieSettings",
     "SlotBuilder",
+    "draw_prop",
+    "ensure_layout",
+    "find_space",
     "resolve_path",
 ]

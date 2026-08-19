@@ -65,6 +65,16 @@ def draw_options(layout, context):
 
 `prop` 直接读取传入对象的真实 RNA 属性，也支持 `"foo.bar"` 这样的属性路径。属性不存在时会跳过当前项，不会让整个饼报错。
 
+跨模块复用同一逻辑时，也可以使用 Core 的安全辅助函数：
+
+```python
+from .HoPieCore import draw_prop
+
+draw_prop(layout, context.space_data.overlay, "show_text", "文本", icon="TEXT", context=context)
+```
+
+HoMainPie 遵循同一约定：视图开关和叠加层属性直接绘制在主饼槽位；只有网格工具这类确实要“进入下一层”的功能才使用 `menu()` 或 `pie()`。
+
 ## 常用配置
 
 按钮支持 `text_ctxt`、`translate`、`icon`、`icon_value`、`enabled`、`active`、`alert`、`emboss`、`depress`、`icon_only`、`operator_context`、`scale_x`、`scale_y` 等参数。布局支持 `row`、`column`、`box`、`split`、`size`、`vspacer`、`fixed_col`、`fixed_but` 和 `spacer(hsep=...)`。

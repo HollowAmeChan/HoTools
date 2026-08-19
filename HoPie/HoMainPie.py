@@ -4,32 +4,12 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty
 from bpy.types import Menu, Operator
 
-from .HoPieCore import HoPie, LayoutBuilder
-
-
-def _space_view3d(context):
-    """只在三维视图中返回当前空间。"""
-    space = getattr(context, "space_data", None)
-    if space is not None and getattr(space, "type", None) == "VIEW_3D":
-        return space
-    area = getattr(context, "area", None)
-    if area is not None and getattr(area, "type", None) == "VIEW_3D":
-        spaces = getattr(area, "spaces", None)
-        return getattr(spaces, "active", None)
-    return None
-
-
-def _draw_prop(layout, owner, prop_name, text, icon=None):
-    """属性不存在时跳过，避免不同 Blender 版本导致整个饼菜单报错。"""
-    if owner is None or not hasattr(owner, prop_name):
-        return False
-    if isinstance(layout, LayoutBuilder):
-        layout = layout.item()
-    kwargs = {"text": text}
-    if icon:
-        kwargs["icon"] = icon
-    layout.prop(owner, prop_name, **kwargs)
-    return True
+from .HoPieCore import (
+    HoPie,
+    draw_prop,
+    ensure_layout,
+    find_space,
+)
 
 
 class HO_OT_HoMainPieToggleOverlay(Operator):
@@ -41,10 +21,10 @@ class HO_OT_HoMainPieToggleOverlay(Operator):
 
     @classmethod
     def poll(cls, context):
-        return _space_view3d(context) is not None
+        return find_space(context, "VIEW_3D") is not None
 
     def execute(self, context):
-        space = _space_view3d(context)
+        space = find_space(context, "VIEW_3D")
         overlay = getattr(space, "overlay", None)
         if overlay is None:
             return {"CANCELLED"}
@@ -70,10 +50,10 @@ class HO_OT_HoMainPieSetColorMode(Operator):
 
     @classmethod
     def poll(cls, context):
-        return _space_view3d(context) is not None
+        return find_space(context, "VIEW_3D") is not None
 
     def execute(self, context):
-        space = _space_view3d(context)
+        space = find_space(context, "VIEW_3D")
         shading = getattr(space, "shading", None)
         if shading is None or not hasattr(shading, "color_type"):
             return {"CANCELLED"}
@@ -98,10 +78,10 @@ class HO_OT_HoMainPieSetEdgeOverlays(Operator):
 
     @classmethod
     def poll(cls, context):
-        return _space_view3d(context) is not None
+        return find_space(context, "VIEW_3D") is not None
 
     def execute(self, context):
-        space = _space_view3d(context)
+        space = find_space(context, "VIEW_3D")
         overlay = getattr(space, "overlay", None)
         if overlay is None:
             return {"CANCELLED"}
@@ -116,49 +96,35 @@ class HO_OT_HoMainPieSetEdgeOverlays(Operator):
         return {"FINISHED"}
 
 
-class HO_MT_HoMainPieDisplayOperations(Menu):
-    """PME 中的显示操作子菜单。"""
-
-    bl_idname = "HO_MT_HoMainPieDisplayOperations"
-    bl_label = "显示操作"
-
-    def draw(self, context):
-        layout = self.layout
-        if not isinstance(layout, LayoutBuilder):
-            layout = LayoutBuilder(layout, context)
-        _draw_display_operations(layout, context)
-
-
 def _draw_display_operations(layout, context):
-    """绘制真实视图叠加属性，可作为主面板里的嵌套展开内容。"""
-    if not isinstance(layout, LayoutBuilder):
-        layout = LayoutBuilder(layout, context)
-    space = _space_view3d(context)
+    """绘制真实视图叠加属性，供主饼的视图选项直接复用。"""
+    layout = ensure_layout(layout, context)
+    space = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
     scene = getattr(context, "scene", None)
 
     layout.label("显示操作", icon="OVERLAY")
     row = layout.row(align=True)
-    _draw_prop(row, overlay, "show_weight", "权重", "COLOR")
-    _draw_prop(row, overlay, "show_face_orientation", "朝向", "AXIS_FRONT")
-    _draw_prop(row, overlay, "show_wireframes", "线框", "SHADING_WIRE")
-    _draw_prop(row, overlay, "show_gizmo_object_translate", "轴", "GIZMO")
+    draw_prop(row, overlay, "show_weight", "权重", icon="COLOR")
+    draw_prop(row, overlay, "show_face_orientation", "朝向", icon="AXIS_FRONT")
+    draw_prop(row, overlay, "show_wireframes", "线框", icon="SHADING_WIRE")
+    draw_prop(row, overlay, "show_gizmo_object_translate", "轴", icon="GIZMO")
 
     row = layout.row(align=True)
     settings = getattr(scene, "ho_vertex_color_tools", None)
-    _draw_prop(row, settings, "view_mode", "顶点色", "COLOR")
-    _draw_prop(row, scene, "ho_checker_overlay_show", "Checker", "CHECKMARK")
+    draw_prop(row, settings, "view_mode", "顶点色", icon="COLOR")
+    draw_prop(row, scene, "ho_checker_overlay_show", "Checker", icon="CHECKMARK")
 
     if scene is not None and hasattr(scene, "ho_checker_overlay_realtime_refresh"):
         checker_row = layout.row(align=True)
         checker_row.raw_layout.enabled = bool(
             getattr(scene, "ho_checker_overlay_show", False))
-        _draw_prop(
+        draw_prop(
             checker_row,
             scene,
             "ho_checker_overlay_realtime_refresh",
             "实时刷新",
-            "FILE_REFRESH",
+            icon="FILE_REFRESH",
         )
 
     layout.separator()
@@ -175,32 +141,17 @@ def _draw_display_operations(layout, context):
     ).color_mode = "RANDOM"
 
     if overlay is not None:
-        _draw_prop(layout, overlay, "show_text", "文本", "TEXT")
+        draw_prop(layout, overlay, "show_text", "文本", icon="TEXT")
 
     # UV 编辑器拥有该属性时，沿用 PME 的入口；三维视图中不会强行访问它。
     uv_editor = getattr(space, "uv_editor", None)
     if uv_editor is not None:
-        _draw_prop(layout, uv_editor, "show_stretch", "UV 拉伸", "UV")
-
-
-class HO_MT_HoMainPieViewOptions(Menu):
-    """常规视图选项，位置对应 PME 主饼左上。"""
-
-    bl_idname = "HO_MT_HoMainPieViewOptions"
-    bl_label = "常规视图选项"
-
-    def draw(self, context):
-        _draw_view_options(LayoutBuilder(self.layout, context), context)
+        draw_prop(layout, uv_editor, "show_stretch", "UV 拉伸", icon="UV")
 
 
 def _draw_view_options(layout, context):
-    """把常规视图选项直接画进传入的饼槽位。
-
-    `layout` 既可以是 HoPieCore 的 LayoutBuilder，也兼容旧的原生 UILayout，
-    这样同一组真实视图属性既能在主饼中展开，也能被独立菜单调用。
-    """
-    if not isinstance(layout, LayoutBuilder):
-        layout = LayoutBuilder(layout, context)
+    """把常规视图选项直接画进主饼槽位，不再套一层子菜单。"""
+    layout = ensure_layout(layout, context)
     row = layout.row()
     row.item().operator(
         "view3d.view_persportho",
@@ -208,7 +159,7 @@ def _draw_view_options(layout, context):
         icon="VIEW_ORTHO",
     )
     row.item().popover(panel="OBJECT_PT_display", text="视图显示", icon="VIEW3D")
-    layout.menu(HO_MT_HoMainPieDisplayOperations.bl_idname, expand=True)
+    _draw_display_operations(layout, context)
 
 
 class HO_MT_HoMainPieEdgeDisplay(Menu):
@@ -219,15 +170,15 @@ class HO_MT_HoMainPieEdgeDisplay(Menu):
 
     def draw(self, context):
         layout = self.layout
-        space = _space_view3d(context)
+        space = find_space(context, "VIEW_3D")
         overlay = getattr(space, "overlay", None)
 
         row = layout.row(align=True)
-        _draw_prop(row, overlay, "show_edge_crease", "折痕")
-        _draw_prop(row, overlay, "show_edge_sharp", "锐边")
+        draw_prop(row, overlay, "show_edge_crease", "折痕")
+        draw_prop(row, overlay, "show_edge_sharp", "锐边")
         row = layout.row(align=True)
-        _draw_prop(row, overlay, "show_edge_bevel_weight", "倒角")
-        _draw_prop(row, overlay, "show_edge_seams", "缝合")
+        draw_prop(row, overlay, "show_edge_bevel_weight", "倒角")
+        draw_prop(row, overlay, "show_edge_seams", "缝合")
 
         layout.separator()
         row = layout.row(align=True)
@@ -345,8 +296,6 @@ HO_MAIN_PIE_CLASSES = (
     HO_OT_HoMainPieToggleOverlay,
     HO_OT_HoMainPieSetColorMode,
     HO_OT_HoMainPieSetEdgeOverlays,
-    HO_MT_HoMainPieDisplayOperations,
-    HO_MT_HoMainPieViewOptions,
     HO_MT_HoMainPieEdgeDisplay,
     HO_MT_HoMainPieSelection,
     HO_MT_HoMainPieQuickModifiers,

@@ -9,6 +9,9 @@ from .HoPieCore import (
     LayoutBuilder,
     LayoutOptions,
     PieSettings,
+    draw_prop,
+    ensure_layout,
+    find_space,
 )
 
 
@@ -67,6 +70,7 @@ _cursor_pie_enabled = False
 _selection_mode_pie_enabled = False
 _delete_merge_pie_enabled = False
 _main_pie_enabled = False
+_core_registered = False
 
 
 def reg_props():
@@ -256,13 +260,15 @@ def set_delete_merge_pie_enabled(enabled):
 
 
 def set_main_pie_enabled(enabled):
-    global _main_pie_enabled
+    global _main_pie_enabled, _core_registered
     enabled = bool(enabled)
     if enabled:
         if _main_pie_enabled:
             return
         _remove_keymaps(main_pie_keymaps, {'HO_MT_HoMainPie'})
-        _register_classes(_HO_PIE_CORE_CLASSES)
+        if not _core_registered:
+            _register_classes(_HO_PIE_CORE_CLASSES)
+            _core_registered = True
         _register_classes(HoMainPie.HO_MAIN_PIE_CLASSES)
         _register_keymap(
             'Mesh', 'EMPTY', 'SPACE', head=True,
@@ -274,7 +280,6 @@ def set_main_pie_enabled(enabled):
         _remove_keymaps(main_pie_keymaps, {'HO_MT_HoMainPie'})
         if _main_pie_enabled:
             _unregister_classes(HoMainPie.HO_MAIN_PIE_CLASSES)
-            _unregister_classes(_HO_PIE_CORE_CLASSES)
     _main_pie_enabled = enabled
 
 
@@ -289,13 +294,21 @@ def preference_keymaps():
 
 
 def register():
+    global _core_registered
     reg_props()
+    if not _core_registered:
+        _register_classes(_HO_PIE_CORE_CLASSES)
+        _core_registered = True
 
 
 def unregister():
+    global _core_registered
     set_main_pie_enabled(False)
     set_delete_merge_pie_enabled(False)
     set_selection_mode_pie_enabled(False)
     set_cursor_pie_enabled(False)
     set_align_pie_enabled(False)
+    if _core_registered:
+        _unregister_classes(_HO_PIE_CORE_CLASSES)
+        _core_registered = False
     ureg_props()
