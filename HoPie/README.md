@@ -68,6 +68,10 @@ def draw_options(layout, context):
     row.item().operator("ho.refresh", "刷新", icon="FILE_REFRESH")
 ```
 
+`expand` 也兼容直接接收原生 `UILayout` 的旧绘制函数：`scale_x`、`scale_y`、
+`alignment`、`enabled`、`alert`、`use_property_decorate` 等属性赋值会自动转发到底层布局，
+因此可以直接复用其他模块的绘制函数，不需要为 HoPie 改写一份。
+
 展开面板的 `width`/`height` 分别是横向和纵向比例，底层对应 Blender 的 `UILayout.scale_x/scale_y`；`height_offset` 只控制垂直方向，正数让内容向上，负数让内容向下，不会占用下一个槽位。也可以直接传 `scale_x`/`scale_y`，或在 `DialogSettings(scale_x=..., scale_y=..., height_offset=...)` 中统一配置。
 
 `prop` 直接读取传入对象的真实 RNA 属性，也支持 `"foo.bar"` 这样的属性路径。属性不存在时会跳过当前项，不会让整个饼报错。
@@ -88,7 +92,7 @@ HoMainPie 遵循同一约定：视图开关和叠加层属性直接绘制在主�
 
 按钮支持 `text_ctxt`、`translate`、`icon`、`icon_value`、`enabled`、`active`、`alert`、`emboss`、`depress`、`icon_only`、`operator_context`、`scale_x`、`scale_y` 等参数。布局支持 `row`、`column`、`box`、`split`、`size`、`vspacer`、`fixed_col`、`fixed_but` 和 `spacer(hsep=...)`。
 
-图标名会按当前 Blender 的 UILayout 枚举校验；找不到时统一使用 `ERROR`，`@123` 仍表示自定义 `icon_value`。
+图标名优先交给当前 Blender 直接绘制；RNA 拒绝时统一回退为 `ERROR`，`@123` 仍表示自定义 `icon_value`。
 
 参数可以是普通值，也可以是接收 `context` 的函数，例如：
 
@@ -99,3 +103,5 @@ pie.right.operator(
     enabled=lambda context: context.object is not None,
 )
 ```
+
+> **展开布局注意**：Blender 在饼菜单的嵌套展开容器中，`row(align=True)` 可能吞掉固定行的一列。需要多列按钮时，优先使用 `grid_flow(columns=N, even_columns=True, even_rows=True, align=True)`；这样既能保留完整按钮，也能保持列宽和视觉对齐。

@@ -166,7 +166,6 @@ def _draw_edge_display(layout: LayoutBuilder, context):
         text="",icon="X",enabled=True,props={"enabled": False},)
 
 
-
 class HO_MT_HoMainPieMesh(Menu):
     """PME 中的网格工具子饼。"""
 
@@ -177,8 +176,8 @@ class HO_MT_HoMainPieMesh(Menu):
         pie = HoPie(self.layout, context)
         pie.top.expand(_draw_edge_display,
             height=1.5)
-        pie.top_right.expand(_draw_quick_modifier_buttons,
-            width=1.5,height=1.5)
+        # 快速修改器函数内部使用固定四列网格，普通面板和饼菜单展开保持一致。
+        pie.top_right.expand(_draw_quick_modifier_buttons)
         pie.finish()
 
 

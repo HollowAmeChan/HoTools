@@ -496,6 +496,216 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             bpy.data.objects.remove(obj, do_unlink=True)
             mesh_tools.unregister()
 
+    def test_curve_symmetrize_remove_keeps_source_side_only(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("PathSymmetrizeRemoveTest", "CURVE")
+        curve.dimensions = "3D"
+        spline = curve.splines.new("POLY")
+        spline.points.add(3)
+        for point, coordinate in zip(
+            spline.points,
+            ((-2.0, 0.0, 0.0), (-1.0, 1.0, 0.0),
+             (1.0, 1.0, 0.0), (2.0, 0.0, 0.0)),
+        ):
+            point.co = (*coordinate, 1.0)
+        obj = bpy.data.objects.new("PathSymmetrizeRemoveObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            result = mesh_tools.symmetrize._curve_symmetrize(
+                obj,
+                direction="POSITIVE_X",
+                threshold=0.0001,
+                partial=False,
+                remove=True,
+            )
+            self.assertTrue(result["curve"])
+            bpy.ops.object.mode_set(mode="OBJECT")
+            self.assertEqual(len(curve.splines), 1)
+            remaining = curve.splines[0].points
+            self.assertEqual(len(remaining), 2)
+            self.assertEqual(
+                [tuple(round(value, 6) for value in point.co.xyz)
+                 for point in remaining],
+                [(1.0, 1.0, 0.0), (2.0, 0.0, 0.0)],
+            )
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
+
+    def test_curve_symmetrize_remove_drops_opposite_single_sided_spline(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("MultiPathSymmetrizeRemoveTest", "CURVE")
+        curve.dimensions = "3D"
+        for coordinates in (
+            ((1.0, 0.0, 0.0), (2.0, 1.0, 0.0)),
+            ((-2.0, 1.0, 0.0), (-1.0, 0.0, 0.0)),
+        ):
+            spline = curve.splines.new("POLY")
+            spline.points.add(len(coordinates) - 1)
+            for point, coordinate in zip(spline.points, coordinates):
+                point.co = (*coordinate, 1.0)
+        obj = bpy.data.objects.new("MultiPathSymmetrizeRemoveObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            result = mesh_tools.symmetrize._curve_symmetrize(
+                obj,
+                direction="POSITIVE_X",
+                threshold=0.0001,
+                partial=False,
+                remove=True,
+            )
+            self.assertTrue(result["curve"])
+            bpy.ops.object.mode_set(mode="OBJECT")
+            self.assertEqual(len(curve.splines), 1)
+            self.assertTrue(all(point.co.x > 0.0 for point in curve.splines[0].points))
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
+
+    def test_curve_symmetrize_default_drops_opposite_only_spline(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("DefaultMultiPathSymmetrizeTest", "CURVE")
+        curve.dimensions = "3D"
+        positive = curve.splines.new("POLY")
+        positive.points.add(1)
+        for point, coordinate in zip(
+            positive.points,
+            ((1.0, 0.0, 0.0), (2.0, 1.0, 0.0)),
+        ):
+            point.co = (*coordinate, 1.0)
+        negative = curve.splines.new("POLY")
+        negative.points.add(1)
+        for point, coordinate in zip(
+            negative.points,
+            ((-2.0, 1.0, 0.0), (-1.0, 0.0, 0.0)),
+        ):
+            point.co = (*coordinate, 1.0)
+        obj = bpy.data.objects.new("DefaultMultiPathSymmetrizeObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            result = mesh_tools.symmetrize._curve_symmetrize(
+                obj,
+                direction="POSITIVE_X",
+                threshold=0.0001,
+                partial=False,
+                remove=False,
+            )
+            self.assertTrue(result["curve"])
+            bpy.ops.object.mode_set(mode="OBJECT")
+            self.assertEqual(len(curve.splines), 2)
+            self.assertTrue(all(point.co.x > 0.0 for point in curve.splines[0].points))
+            self.assertTrue(all(point.co.x < 0.0 for point in curve.splines[1].points))
+            self.assertEqual(
+                [round(point.co.x, 6) for point in curve.splines[1].points],
+                [-2.0, -1.0],
+            )
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
+
+    def test_curve_symmetrize_default_prunes_unpaired_controls(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("DefaultUnpairedPathSymmetrizeTest", "CURVE")
+        curve.dimensions = "3D"
+        spline = curve.splines.new("POLY")
+        spline.points.add(4)
+        for point, coordinate in zip(
+            spline.points,
+            ((-3.0, 0.0, 0.0), (-2.0, 1.0, 0.0), (-1.0, 2.0, 0.0),
+             (1.0, 1.0, 0.0), (2.0, 0.0, 0.0)),
+        ):
+            point.co = (*coordinate, 1.0)
+        obj = bpy.data.objects.new("DefaultUnpairedPathSymmetrizeObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            result = mesh_tools.symmetrize._curve_symmetrize(
+                obj,
+                direction="POSITIVE_X",
+                threshold=0.0001,
+                partial=False,
+                remove=False,
+            )
+            self.assertTrue(result["curve"])
+            bpy.ops.object.mode_set(mode="OBJECT")
+            self.assertEqual(len(curve.splines), 1)
+            self.assertEqual(len(curve.splines[0].points), 4)
+            self.assertEqual(
+                [round(point.co.x, 6) for point in curve.splines[0].points],
+                [-2.0, -1.0, 1.0, 2.0],
+            )
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
+
+    def test_curve_symmetrize_partial_remove_only_deletes_selected_opposite(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("PartialPathSymmetrizeRemoveTest", "CURVE")
+        curve.dimensions = "3D"
+        spline = curve.splines.new("BEZIER")
+        spline.bezier_points.add(3)
+        for point, coordinate in zip(
+            spline.bezier_points,
+            ((-2.0, 0.0, 0.0), (-1.0, 1.0, 0.0),
+             (1.0, 1.0, 0.0), (2.0, 0.0, 0.0)),
+        ):
+            point.co = coordinate
+            point.handle_left_type = "AUTO"
+            point.handle_right_type = "AUTO"
+            point.select_control_point = coordinate == (-1.0, 1.0, 0.0)
+        obj = bpy.data.objects.new("PartialPathSymmetrizeRemoveObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            result = mesh_tools.symmetrize._curve_symmetrize(
+                obj,
+                direction="POSITIVE_X",
+                threshold=0.0001,
+                partial=True,
+                remove=True,
+            )
+            self.assertTrue(result["curve"])
+            bpy.ops.object.mode_set(mode="OBJECT")
+            remaining = curve.splines[0].bezier_points
+            self.assertEqual(len(remaining), 3)
+            self.assertEqual(
+                [round(point.co.x, 6) for point in remaining],
+                [-2.0, 1.0, 2.0],
+            )
+            self.assertTrue(all(point.handle_left_type == "AUTO" for point in remaining))
+            self.assertTrue(all(point.handle_right_type == "AUTO" for point in remaining))
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
+
     def test_curve_symmetrize_preserves_nurbs_order_on_mirrored_path(self):
         mesh_tools = load_mesh_tools()
         mesh_tools.register()

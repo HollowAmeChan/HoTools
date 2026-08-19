@@ -610,12 +610,69 @@ class LayoutBuilder:
     测试替身验证菜单结构，而不需要启动 Blender。
     """
 
+    _BUILDER_FIELDS = frozenset({
+        "layout", "context", "metadata",
+    })
+
+    def __getattr__(self, name: str) -> Any:
+        """把 Core 未定义的读取转发给底层 UILayout。
+
+        expand() 回调允许直接复用旧的 Blender 绘制函数；这些函数通常会
+        读取 `alignment`、`scale_x` 或其他 UILayout 属性。只代理未知属性，
+        不覆盖 LayoutBuilder 自己的链式方法。
+        """
+        try:
+            layout = object.__getattribute__(self, "layout")
+        except AttributeError:
+            raise AttributeError(name) from None
+        try:
+            return getattr(layout, name)
+        except AttributeError:
+            raise AttributeError(name) from None
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """把非 Builder 状态字段写入真实 UILayout。
+
+        Blender 的 UILayout 属性是动态 RNA 属性，不能通过类注解完整列举；
+        先尝试写入底层布局，失败时再保存为普通 Python 字段，以兼容外部
+        回调自己的临时状态字段。
+        """
+        if name.startswith("_") or name in self._BUILDER_FIELDS:
+            object.__setattr__(self, name, value)
+            return
+
+        if name == "operator_context":
+            object.__setattr__(self, name, value)
+            try:
+                layout = object.__getattribute__(self, "layout")
+                setattr(layout, name, value)
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                pass
+            return
+
+        try:
+            layout = object.__getattribute__(self, "layout")
+        except AttributeError:
+            object.__setattr__(self, name, value)
+            return
+
+        try:
+            setattr(layout, name, value)
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            object.__setattr__(self, name, value)
+
     def __init__(self, layout: Any, context: Any = None,
-                 operator_context: str = "INVOKE_DEFAULT") -> None:
+                 operator_context: str = "INVOKE_DEFAULT", *,
+                 pme_item_columns: bool = False,
+                 pme_item: bool = False) -> None:
         self.layout = layout
         self.context = context
         self.operator_context = operator_context
         self.metadata: Dict[str, Any] = {}
+        # PME 的展开布局会为每个条目建立独立列，避免同一行中的按钮
+        # 共享宽度计算。这个状态只在 expand 的子布局中传播。
+        self._pme_item_columns = bool(pme_item_columns)
+        self._pme_item = bool(pme_item)
         _set_layout(layout, LayoutOptions(operator_context=operator_context),
                     context, operator_context)
 
@@ -656,6 +713,8 @@ class LayoutBuilder:
             options.scale_x, options.scale_y, options.alignment,
         )
         isolated = any(value is not None for value in state)
+        if self._pme_item_columns and not self._pme_item:
+            isolated = True
         target = self.layout.column(align=True) if isolated else self.layout
         layout_options = LayoutOptions(
             operator_context=options.operator_context or self.operator_context,
@@ -676,6 +735,8 @@ class LayoutBuilder:
             child,
             self.context,
             options.pop("operator_context", self.operator_context),
+            pme_item_columns=self._pme_item_columns,
+            pme_item=True,
         )
         if options:
             builder.configure(**options)
@@ -1047,8 +1108,12 @@ class LayoutBuilder:
         for key, value in layout_options.items():
             if key in LayoutOptions.__dataclass_fields__:
                 setattr(merged, key, value)
-        builder = LayoutBuilder(child, self.context,
-                                merged.operator_context or self.operator_context)
+        builder = LayoutBuilder(
+            child,
+            self.context,
+            merged.operator_context or self.operator_context,
+            pme_item_columns=self._pme_item_columns,
+        )
         builder.configure(**{
             key: value for key, value in vars(merged).items() if value is not None
         })
@@ -1067,8 +1132,12 @@ class LayoutBuilder:
         for key, value in layout_options.items():
             if key in LayoutOptions.__dataclass_fields__:
                 setattr(merged, key, value)
-        return LayoutBuilder(child, self.context,
-                             merged.operator_context or self.operator_context).configure(
+        return LayoutBuilder(
+            child,
+            self.context,
+            merged.operator_context or self.operator_context,
+            pme_item_columns=self._pme_item_columns,
+        ).configure(
                                  **{key: value for key, value in vars(merged).items()
                                     if value is not None}
                              )
@@ -1081,8 +1150,12 @@ class LayoutBuilder:
         for key, value in layout_options.items():
             if key in LayoutOptions.__dataclass_fields__:
                 setattr(merged, key, value)
-        return LayoutBuilder(child, self.context,
-                             merged.operator_context or self.operator_context).configure(
+        return LayoutBuilder(
+            child,
+            self.context,
+            merged.operator_context or self.operator_context,
+            pme_item_columns=self._pme_item_columns,
+        ).configure(
                                  **{key: value for key, value in vars(merged).items()
                                     if value is not None}
                              )
@@ -1093,13 +1166,18 @@ class LayoutBuilder:
         kwargs = {"align": align}
         if factor is not None:
             kwargs["factor"] = _resolve(factor, self.context)
-        return LayoutBuilder(self.layout.split(**kwargs), self.context,
-                             self.operator_context)
+        return LayoutBuilder(
+            self.layout.split(**kwargs),
+            self.context,
+            self.operator_context,
+            pme_item_columns=self._pme_item_columns,
+        )
 
     def expand(self, draw: Callable[..., Any], *, frame: bool = False,
                width: Optional[Any] = None, height: Optional[Any] = None,
                scale_x: Optional[Any] = None, scale_y: Optional[Any] = None,
                height_offset: Optional[Any] = None,
+               item_columns: bool = True,
                settings: Optional[DialogSettings] = None) -> "LayoutBuilder":
         """在当前槽位直接绘制回调内容，不调用 `layout.menu()`。
 
@@ -1107,13 +1185,20 @@ class LayoutBuilder:
         `LayoutBuilder`，因此可以继续链式调用 `row/prop/operator`。
         `width`/`height` 分别是 `scale_x`/`scale_y` 的直观别名，用于调整
         展开面板的横向和纵向比例。
+        `item_columns` 默认启用 PME 的逐项列布局；旧的面板绘制函数无需改写，
+        也能避免同一行中的按钮被 Blender 的宽度计算吞掉。
         `height_offset` 只控制垂直方向的留白，用于调整内容和饼中心的距离；
         正数让内容向上，负数让内容向下，不会占用下一个饼槽位。
         """
         self._before_draw()
         target = self.layout.box() if frame else self.layout
         target = target.column(align=True)
-        builder = LayoutBuilder(target, self.context, self.operator_context)
+        builder = LayoutBuilder(
+            target,
+            self.context,
+            self.operator_context,
+            pme_item_columns=item_columns,
+        )
         dialog = settings or DialogSettings(box=frame)
         if scale_x is None:
             scale_x = width
@@ -1173,6 +1258,7 @@ class LayoutBuilder:
                     height: Optional[Any] = None,
                     scale_x: Optional[Any] = None, scale_y: Optional[Any] = None,
                     height_offset: Optional[Any] = None,
+                    item_columns: bool = True,
                     settings: Optional[DialogSettings] = None) -> "LayoutBuilder":
         """把已注册 Menu 类直接绘制到当前面板，支持递归展开子 Menu。"""
         if callable(menu) and not isinstance(menu, type) and not hasattr(menu, "draw"):
@@ -1184,6 +1270,7 @@ class LayoutBuilder:
                 scale_x=scale_x,
                 scale_y=scale_y,
                 height_offset=height_offset,
+                item_columns=item_columns,
                 settings=settings,
             )
 
@@ -1221,6 +1308,7 @@ class LayoutBuilder:
             scale_x=scale_x,
             scale_y=scale_y,
             height_offset=height_offset,
+            item_columns=item_columns,
             settings=settings,
         )
 
@@ -1232,6 +1320,10 @@ class LayoutBuilder:
 
 class SlotBuilder(LayoutBuilder):
     """一个有名字的饼槽位。"""
+
+    _BUILDER_FIELDS = LayoutBuilder._BUILDER_FIELDS | {
+        "name", "index",
+    }
 
     def __init__(self, layout: Any, context: Any, name: str, index: int,
                  operator_context: str = "INVOKE_DEFAULT",
@@ -1258,6 +1350,10 @@ class HoPie(LayoutBuilder):
     槽位按 PME 顺序激活，写完后调用 `finish()` 补齐空方向；也可以使用 with 语法。
     中心的 `top_center`/`bottom_center` 会在第一次使用时按 PME 的间隔规则追加。
     """
+
+    _BUILDER_FIELDS = LayoutBuilder._BUILDER_FIELDS | {
+        "config", "settings", "dialog", "nested_operator_idname",
+    }
 
     SLOT_NAMES: Tuple[str, ...] = (
         "left", "right", "bottom", "top",

@@ -253,12 +253,19 @@ def _draw_quick_modifier_buttons(layout):
     box = layout.box()
     col = box.column(align=True)
     col.scale_y = 2
-    for start in range(0, len(_QUICK_MODIFIER_ITEMS), 4):
-        row = col.row(align=True)
-        for modifier_id, label, _description in _QUICK_MODIFIER_ITEMS[start:start + 4]:
-            icon = _QUICK_MODIFIER_SPECS[modifier_id][2]
-            operator = row.operator(OP_AddQuickModifier.bl_idname, text=label, icon=icon)
-            operator.modifier_type = modifier_id
+    # 展开到 HoPie 时，row(align=True) 在 Blender 的嵌套布局中可能吞掉一列。
+    # 固定四列网格同时保持按钮无缝对齐，普通修改器面板也使用同一套布局。
+    grid = col.grid_flow(
+        row_major=True,
+        columns=4,
+        even_columns=True,
+        even_rows=True,
+        align=True,
+    )
+    for modifier_id, label, _description in _QUICK_MODIFIER_ITEMS:
+        icon = _QUICK_MODIFIER_SPECS[modifier_id][2]
+        operator = grid.operator(OP_AddQuickModifier.bl_idname, text=label, icon=icon)
+        operator.modifier_type = modifier_id
 
 
 def _draw_modifier_tools(layout, context):
