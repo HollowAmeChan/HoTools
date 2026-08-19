@@ -91,18 +91,22 @@ def _curve_point_selected(point, spline_type):
     return bool(point.select)
 
 
+_SPLINE_SETTINGS = (
+    'use_cyclic_u',
+    'resolution_u',
+    'order_u',
+    'use_endpoint_u',
+    'use_bezier_u',
+    'use_smooth',
+    'hide',
+    'material_index',
+    'radius_interpolation',
+    'tilt_interpolation',
+)
+
+
 def _copy_spline_settings(source, target):
-    for name in (
-        'use_cyclic_u',
-        'resolution_u',
-        'order_u',
-        'use_endpoint_u',
-        'use_bezier_u',
-        'use_smooth',
-        'material_index',
-        'radius_interpolation',
-        'tilt_interpolation',
-    ):
+    for name in _SPLINE_SETTINGS:
         if hasattr(source, name) and hasattr(target, name):
             setattr(target, name, getattr(source, name))
 
@@ -152,6 +156,145 @@ def _mirror_curve_spline(curve, source_spline, source_points, source_indices, ax
     return mirrored_spline
 
 
+def _curve_point_record(point, spline_type):
+    if spline_type == 'BEZIER':
+        return {
+            'co': point.co.copy(),
+            'handle_left': point.handle_left.copy(),
+            'handle_right': point.handle_right.copy(),
+            'handle_left_type': point.handle_left_type,
+            'handle_right_type': point.handle_right_type,
+            'tilt': point.tilt,
+            'radius': point.radius,
+            'weight_softbody': point.weight_softbody,
+            'select_control_point': point.select_control_point,
+            'select_left_handle': point.select_left_handle,
+            'select_right_handle': point.select_right_handle,
+            'hide': point.hide,
+        }
+    return {
+        'co': point.co.copy(),
+        'tilt': point.tilt,
+        'radius': point.radius,
+        'weight_softbody': point.weight_softbody,
+        'select': point.select,
+        'hide': point.hide,
+    }
+
+
+def _restore_curve_point(point, spline_type, record):
+    point.co = record['co']
+    if spline_type == 'BEZIER':
+        point.handle_left_type = 'FREE'
+        point.handle_right_type = 'FREE'
+        point.handle_left = record['handle_left']
+        point.handle_right = record['handle_right']
+        point.handle_left_type = record['handle_left_type']
+        point.handle_right_type = record['handle_right_type']
+        point.select_control_point = record['select_control_point']
+        point.select_left_handle = record['select_left_handle']
+        point.select_right_handle = record['select_right_handle']
+    else:
+        point.select = record['select']
+    point.tilt = record['tilt']
+    point.radius = record['radius']
+    point.weight_softbody = record['weight_softbody']
+    point.hide = record['hide']
+
+
+def _rebuild_curve_splines(curve, snapshots):
+    active_index = next(
+        (
+            index
+            for index, snapshot in enumerate(snapshots)
+            if snapshot['active']
+        ),
+        None,
+    )
+    curve.splines.clear()
+    active_spline = None
+    for index, snapshot in enumerate(snapshots):
+        points = snapshot['points']
+        if not points:
+            continue
+        spline = curve.splines.new(snapshot['type'])
+        if snapshot['type'] == 'BEZIER':
+            spline.bezier_points.add(len(points) - 1)
+            target_points = spline.bezier_points
+        else:
+            spline.points.add(len(points) - 1)
+            target_points = spline.points
+        for target, record in zip(target_points, points):
+            _restore_curve_point(target, snapshot['type'], record)
+        for name, value in snapshot['settings'].items():
+            if hasattr(spline, name):
+                setattr(spline, name, value)
+        if index == active_index:
+            active_spline = spline
+    if active_spline is not None:
+        curve.splines.active = active_spline
+
+
+def _curve_remove_opposite(obj, direction, threshold, partial):
+    """Remove controls on the non-source side, matching mesh remove mode."""
+    direction_name, axis = direction.split('_', 1)
+    component = 'XYZ'.index(axis)
+    source_sign = 1 if direction_name == 'POSITIVE' else -1
+    snapshots = []
+    affected = []
+    changed = False
+
+    for spline in list(obj.data.splines):
+        spline_type = spline.type
+        if spline_type == 'BEZIER':
+            points = list(spline.bezier_points)
+        elif spline_type in {'POLY', 'NURBS'}:
+            points = list(spline.points)
+        else:
+            continue
+
+        keep_records = []
+        removed_indices = []
+        for index, point in enumerate(points):
+            value = float(point.co[component])
+            selected = _curve_point_selected(point, spline_type)
+            considered = not partial or selected
+            if considered and abs(value) <= threshold:
+                point.co[component] = 0.0
+            should_remove = considered and value * source_sign < -threshold
+            if should_remove:
+                removed_indices.append(index)
+                continue
+            record = _curve_point_record(point, spline_type)
+            if considered and abs(value) <= threshold:
+                record['co'][component] = 0.0
+            keep_records.append(record)
+
+        if removed_indices:
+            changed = True
+            affected.extend((spline, index) for index in removed_indices)
+        snapshots.append({
+            'type': spline_type,
+            'points': keep_records,
+            'active': spline == obj.data.splines.active,
+            'settings': {
+                name: getattr(spline, name)
+                for name in _SPLINE_SETTINGS
+                if hasattr(spline, name)
+            },
+        })
+
+    if changed:
+        _rebuild_curve_splines(obj.data, snapshots)
+    obj.data.update_tag()
+    return {
+        'curve': True,
+        'affected': affected,
+        'skipped': [],
+        'remove_requested': True,
+    }
+
+
 def _curve_symmetrize(obj, direction, threshold, partial, remove):
     """Mirror curve controls across an object-local axis.
 
@@ -160,6 +303,9 @@ def _curve_symmetrize(obj, direction, threshold, partial, remove):
     of a symmetric open or cyclic spline. Existing counterparts are updated
     in place; a path with only one side receives a reflected spline copy.
     """
+    if remove:
+        return _curve_remove_opposite(obj, direction, threshold, partial)
+
     direction_name, axis = direction.split('_', 1)
     component = 'XYZ'.index(axis)
     source_sign = 1 if direction_name == 'POSITIVE' else -1
