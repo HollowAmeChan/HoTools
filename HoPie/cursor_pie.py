@@ -38,6 +38,18 @@ class CursorToOrigin(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class CursorRotationReset(bpy.types.Operator):
+    bl_idname = 'ho.cursor_rotation_reset'
+    bl_label = '游标旋转重置'
+    bl_description = '将3D游标旋转重置为默认方向，保留当前位置'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        cursor = context.scene.cursor
+        set_cursor_transform(cursor, cursor.location.copy(), Quaternion())
+        return {'FINISHED'}
+
+
 class CursorToSelected(bpy.types.Operator):
     bl_idname = 'ho.cursor_to_selected'
     bl_label = '游标->选中项'
@@ -317,10 +329,12 @@ class HO_MT_cursor_pie(bpy.types.Menu):
         pie.separator()
         pie.operator(CursorToOrigin.bl_idname, icon='PIVOT_CURSOR')
         pie.operator('view3d.snap_selected_to_cursor', text='选中项->游标（偏移）', icon='RESTRICT_SELECT_OFF').use_offset = True
+        pie.operator(CursorRotationReset.bl_idname, icon='FILE_REFRESH')
 
 
 CURSOR_PIE_CLASSES = (
     CursorToOrigin,
+    CursorRotationReset,
     CursorToSelected,
     SelectedToCursor,
     OriginToActive,
