@@ -20,14 +20,16 @@ def _point_count(spline):
 DEFAULT_NURBS_ORDER = 5
 
 
-def repair_curve(obj, order_u=DEFAULT_NURBS_ORDER):
-    spline = _active_spline(obj.data)
+def _repair_spline(spline, order_u):
+    """Repair one spline and return its status and control count."""
     count = _point_count(spline)
     if spline is None or count <= 3:
         return 'TOO_FEW_POINTS', count
     if spline.type == 'NURBS':
         if count < order_u:
             return 'INSUFFICIENT_POINTS', count
+        # Set order only when enough controls exist.  Blender otherwise clamps
+        # it and the path remains at the wrong smoothness after a later edit.
         spline.order_u = order_u
         spline.use_endpoint_u = True
         if spline.resolution_u < 1:
@@ -38,8 +40,26 @@ def repair_curve(obj, order_u=DEFAULT_NURBS_ORDER):
             point.handle_right_type = 'AUTO_CLAMPED'
     else:
         return 'UNSUPPORTED_SPLINE', count
-    obj.data.update_tag()
     return 'FINISHED', count
+
+
+def repair_curve(obj, order_u=DEFAULT_NURBS_ORDER):
+    splines = list(obj.data.splines)
+    if not splines:
+        return 'TOO_FEW_POINTS', 0
+
+    statuses = [_repair_spline(spline, order_u) for spline in splines]
+    count = _point_count(_active_spline(obj.data))
+    if any(status == 'FINISHED' for status, _ in statuses):
+        result = 'FINISHED'
+    elif any(status == 'INSUFFICIENT_POINTS' for status, _ in statuses):
+        result = 'INSUFFICIENT_POINTS'
+    elif all(status == 'TOO_FEW_POINTS' for status, _ in statuses):
+        result = 'TOO_FEW_POINTS'
+    else:
+        result = 'UNSUPPORTED_SPLINE'
+    obj.data.update_tag()
+    return result, count
 
 
 class OP_RepairCurvePath(bpy.types.Operator):

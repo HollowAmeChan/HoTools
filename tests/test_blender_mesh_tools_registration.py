@@ -496,6 +496,73 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             bpy.data.objects.remove(obj, do_unlink=True)
             mesh_tools.unregister()
 
+    def test_curve_symmetrize_preserves_nurbs_order_on_mirrored_path(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("NurbsPathSymmetrizeTest", "CURVE")
+        curve.dimensions = "3D"
+        spline = curve.splines.new("NURBS")
+        spline.points.add(4)
+        spline.order_u = 5
+        spline.use_endpoint_u = True
+        spline.resolution_u = 16
+        for point, coordinate in zip(
+            spline.points,
+            ((1.0, -2.0, 0.0), (2.0, -1.0, 0.0), (3.0, 0.0, 0.0),
+             (4.0, 1.0, 0.0), (5.0, 2.0, 0.0)),
+        ):
+            point.co = (*coordinate, 1.0)
+        obj = bpy.data.objects.new("NurbsPathSymmetrizeObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            result = mesh_tools.symmetrize._curve_symmetrize(
+                obj,
+                direction="POSITIVE_X",
+                threshold=0.0001,
+                partial=False,
+                remove=False,
+            )
+            self.assertTrue(result["curve"])
+            bpy.ops.object.mode_set(mode="OBJECT")
+            self.assertEqual(len(curve.splines), 2)
+            mirrored = curve.splines[1]
+            self.assertEqual(mirrored.type, "NURBS")
+            self.assertEqual(mirrored.order_u, 5)
+            self.assertTrue(mirrored.use_endpoint_u)
+            self.assertEqual(mirrored.resolution_u, 16)
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
+
+    def test_curve_repair_repairs_all_path_splines(self):
+        mesh_tools = load_mesh_tools()
+        mesh_tools.register()
+        curve = bpy.data.curves.new("MultiPathRepairTest", "CURVE")
+        curve.dimensions = "3D"
+        for offset in (0.0, 10.0):
+            spline = curve.splines.new("NURBS")
+            spline.points.add(4)
+            for index, point in enumerate(spline.points):
+                point.co = (offset + index + 1.0, float(index), 0.0, 1.0)
+        obj = bpy.data.objects.new("MultiPathRepairObject", curve)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            result, count = mesh_tools.curve_repair.repair_curve(obj, order_u=5)
+            self.assertEqual(result, "FINISHED")
+            self.assertEqual(count, 5)
+            self.assertEqual([spline.order_u for spline in curve.splines], [5, 5])
+            self.assertTrue(all(spline.use_endpoint_u for spline in curve.splines))
+        finally:
+            bpy.data.objects.remove(obj, do_unlink=True)
+            mesh_tools.unregister()
+
     def test_curve_bevel_chamfers_selected_control_points(self):
         mesh_tools = load_mesh_tools()
         mesh_tools.register()

@@ -111,7 +111,6 @@ def _mirror_curve_spline(curve, source_spline, source_points, source_indices, ax
     """Create a separate reflected spline for a path with no target side."""
     spline_type = source_spline.type
     mirrored_spline = curve.splines.new(spline_type)
-    _copy_spline_settings(source_spline, mirrored_spline)
     ordered_indices = list(reversed(source_indices))
     if spline_type == 'BEZIER':
         mirrored_spline.bezier_points.add(len(ordered_indices) - 1)
@@ -145,6 +144,11 @@ def _mirror_curve_spline(curve, source_spline, source_points, source_indices, ax
             target.weight_softbody = source.weight_softbody
             target.select = source.select
             target.hide = source.hide
+    # Blender clamps NURBS order to the number of controls currently in the
+    # spline.  Apply settings only after all mirrored controls exist; applying
+    # them to the newly-created one-point spline permanently loses the source
+    # order (and endpoint behavior).
+    _copy_spline_settings(source_spline, mirrored_spline)
     return mirrored_spline
 
 
