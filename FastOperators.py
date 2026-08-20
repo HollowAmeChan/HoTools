@@ -19,35 +19,6 @@ def ureg_props():
     return
 
 
-class OP_select_inside_face_loop(bpy.types.Operator):
-    bl_idname = "ho.select_inside_face_loop"
-    bl_label = "填充选择"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    event: bpy.types.Event
-    location: tuple[int, int]
-
-    @classmethod
-    def poll(cls, context):
-        # 确保操作在网格对象的编辑模式下执行
-        return context.active_object and context.active_object.type == 'MESH' and context.mode == 'EDIT_MESH'
-
-    def execute(self, context):
-        ops = bpy.ops
-        mesh = ops.mesh
-
-        mesh.hide()
-        ops.view3d.select(location=self.location)
-        mesh.select_linked()
-        mesh.reveal()
-        return {'FINISHED'}
-
-    def invoke(self, context, event):
-        self.event = event
-        self.location = (event.mouse_region_x, event.mouse_region_y)
-        return self.execute(context)
-
-
 class OP_RestartBlender(Operator):
     bl_idname = "ho.restart_blender"
     bl_label = "快速重启"
@@ -127,10 +98,6 @@ class OP_CopyALL_modifiers_to_selected(Operator):
         return {'FINISHED'}
 
 
-
-
-
-
 class OP_CustomSplitNormals_Export(Operator, ExportHelper):
     bl_idname = "ho.custom_splitnormal_export"
     bl_label = "导出自定义拆边法向为文件"
@@ -207,127 +174,6 @@ class OP_CustomSplitNormals_Import(Operator, ImportHelper):
         mesh.normals_split_custom_set(split_normals)
         self.report({'INFO'}, f"成功导入并应用 {len(split_normals)} 个法线")
         return {'FINISHED'}
-
-
-class OP_AddSelectSideRingLoops(Operator):
-    bl_idname = "ho.addselect_sideringloops"
-    bl_label = "加选Ring"
-    bl_description = "选择并排的循环边线,如果选中中的不是loop会尝试首先选择loop"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return (
-            obj is not None and
-            obj.type == 'MESH' and
-            context.mode == 'EDIT_MESH'
-        )
-
-    def execute(self, context):
-
-        obj = context.active_object
-        me = obj.data
-
-        # 1️⃣ 如果选中的不是完整 loop，先补全 loop
-        bpy.ops.mesh.loop_multi_select(ring=False)
-
-        bm = bmesh.from_edit_mesh(me)
-        bm.faces.ensure_lookup_table()  # 刷新索引表
-        bm.edges.ensure_lookup_table()
-        bm.verts.ensure_lookup_table()
-
-        selected_edges = [e for e in bm.edges if e.select]
-
-        if not selected_edges:
-            self.report({'WARNING'}, "没有选中任何边")
-            return {'CANCELLED'}
-
-        side_edges = set()
-
-        # 2️⃣ 对每条已选边，查找相邻的“并排ring边”
-        for edge in selected_edges:
-
-            if len(edge.link_faces) != 2:
-                continue  # 非流形边跳过
-
-            for face in edge.link_faces:
-
-                # 找到该面中与当前边“相对”的边（quad专用）
-                if len(face.edges) == 4:
-                    for e in face.edges:
-                        if e != edge and not any(v in edge.verts for v in e.verts):
-                            side_edges.add(e)
-
-        # 3️⃣ 选中这些并排边
-        for e in side_edges:
-            e.select = True
-
-        bmesh.update_edit_mesh(me, loop_triangles=False, destructive=False)
-
-        return {'FINISHED'}
-
-
-class OP_RemoveSelectSideRingLoops(Operator):
-    bl_idname = "ho.removeselect_sideringloops"
-    bl_label = "减选Ring"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return (
-            obj is not None and
-            obj.type == 'MESH' and
-            context.mode == 'EDIT_MESH'
-        )
-
-    def execute(self, context):
-
-        obj = context.active_object
-        me = obj.data
-        bm = bmesh.from_edit_mesh(me)
-
-        bm.faces.ensure_lookup_table()  # 刷新索引表
-        bm.edges.ensure_lookup_table()
-        bm.verts.ensure_lookup_table()
-
-        selected_edges = {e for e in bm.edges if e.select}
-
-        if not selected_edges:
-            return {'CANCELLED'}
-
-        ring_neighbors = {e: set() for e in selected_edges}
-
-        # 建立 ring 邻接关系
-        for edge in selected_edges:
-
-            for face in edge.link_faces:
-
-                if len(face.edges) != 4:
-                    continue
-
-                # 找对边（ring方向）
-                for e in face.edges:
-                    if e != edge and not any(v in edge.verts for v in e.verts):
-                        if e in selected_edges:
-                            ring_neighbors[edge].add(e)
-                        break
-
-        # 找外层（只有一个ring邻居的）
-        edges_to_remove = {
-            e for e, neighbors in ring_neighbors.items()
-            if len(neighbors) <= 1
-        }
-
-        for e in edges_to_remove:
-            e.select = False
-
-        bmesh.update_edit_mesh(me)
-
-        return {'FINISHED'}
-
-
 
 
 def get_first_image_from_material(obj):
@@ -700,28 +546,6 @@ class HO_OT_QuickAddLattice(Operator):
             return None
         return modifier
 
-    @classmethod
-    def _find_existing_lattice(cls, objects):
-        """从选中物体的晶格修改器反查 F9 重做对应的晶格对象。"""
-        candidates = []
-        for obj in objects:
-            modifier_groups = [getattr(obj, "modifiers", ())]
-            grease_pencil_modifiers = getattr(obj, "grease_pencil_modifiers", None)
-            if grease_pencil_modifiers is not None:
-                modifier_groups.append(grease_pencil_modifiers)
-            for modifiers in modifier_groups:
-                for modifier in modifiers:
-                    lattice_object = getattr(modifier, "object", None)
-                    if (
-                        getattr(lattice_object, "type", None) == 'LATTICE'
-                        and lattice_object not in candidates
-                    ):
-                        candidates.append(lattice_object)
-
-        # 一个选中组只对应一个晶格时才能无歧义地更新；多个晶格说明是
-        # 普通的再次调用，应继续创建新的晶格。
-        return candidates[0] if len(candidates) == 1 else None
-
     def _create(self, context, objects, rotation, name):
         """按当前分辨率创建线性晶格并绑定到物体。"""
         bounds = self._bounds(objects, rotation)
@@ -775,41 +599,19 @@ class HO_OT_QuickAddLattice(Operator):
             return None, 0
         return lattice_object, attached
 
-    def _update_lattice(self, lattice_object, context):
-        """更新晶格分辨率，同时保持其世界变换。"""
-        lattice_data = getattr(lattice_object, "data", None)
-        if lattice_object is None or lattice_object.type != 'LATTICE':
-            return False
-        if lattice_data is None:
-            return False
-
-        # 修改控制点数量时保持晶格的世界变换。某些 Blender 版本在
-        # 更新晶格数据后会刷新父子依赖，显式恢复矩阵可避免位置漂移。
-        world_matrix = lattice_object.matrix_world.copy()
-        lattice_data.points_u, lattice_data.points_v, lattice_data.points_w = self.resolution
-        view_layer = getattr(context, "view_layer", None)
-        if view_layer is not None:
-            view_layer.update()
-        lattice_object.matrix_world = world_matrix
-        return True
-
     @classmethod
     def poll(cls, context):
         return bool(cls._selected_objects(context))
+
+    def invoke(self, context, event):
+        """从菜单调用时弹出唯一需要输入的分辨率参数。"""
+        return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
         objects = self._selected_objects(context)
         if not objects:
             self.report({'ERROR'}, "请在物体模式下选择可添加晶格的物体")
             return {'CANCELLED'}
-
-        # F9 重做时，原操作创建的修改器仍连接在选中物体上；通过修改器
-        # 反查晶格比依赖 execute() 内写入的操作器属性可靠。
-        existing_lattice = self._find_existing_lattice(objects)
-        if existing_lattice is not None:
-            self._update_lattice(existing_lattice, context)
-            self.report({'INFO'}, "已更新晶格分辨率")
-            return {'FINISHED'}
 
         if len(objects) == 1:
             rotation = objects[0].matrix_world.to_quaternion()
@@ -836,7 +638,7 @@ class HO_OT_QuickAddLattice(Operator):
         return {'FINISHED'}
 
     def draw(self, context):
-        """F9 参数面板只显示分辨率，其余行为保持固定默认值。"""
+        """参数面板只显示分辨率，其余行为保持固定默认值。"""
         self.layout.prop(self, "resolution", text="分辨率")
 
 
@@ -853,7 +655,7 @@ class HO_MT_HoObjectTools(bpy.types.Menu):
     def draw(self, context):
         if getattr(context, "mode", None) != 'OBJECT':
             return
-        self.layout.operator_context = 'EXEC_DEFAULT'
+        self.layout.operator_context = 'INVOKE_DEFAULT'
         self.layout.operator(
             HO_OT_QuickAddLattice.bl_idname,
             text="快速添加晶格",
@@ -923,7 +725,6 @@ cls = [OP_RestartBlender,
        OP_CopyALL_modifiers_to_selected,
        OP_CustomSplitNormals_Import, OP_CustomSplitNormals_Export,
        OP_MeshToImageEmpty,
-       OP_AddSelectSideRingLoops, OP_RemoveSelectSideRingLoops,
        OP_MergeOverlapping_VertexNormals,
        HO_OT_QuickAddLattice,
        HO_MT_HoObjectTools,

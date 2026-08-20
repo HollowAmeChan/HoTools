@@ -27,10 +27,6 @@ def _selected_faces(bm):
     return [face for face in bm.faces if face.select and not face.hide]
 
 
-def _selected_vertices(bm):
-    return [vert for vert in bm.verts if vert.select and not vert.hide]
-
-
 def _isolated_edges(edges):
     edge_set = set(edges)
     return [
@@ -97,93 +93,6 @@ def _select_edge_loops(bm, edges, min_angle):
     return selected
 
 
-class OP_SelectVertexGroup(bpy.types.Operator):
-    bl_idname = 'ho.vselect'
-    bl_label = '顶点组选择'
-    bl_description = '选择属于一个或多个顶点组的顶点'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    sel_idx: IntProperty(name='组索引', default=0)  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        return _is_edit_mesh(context) and bool(context.active_object.vertex_groups)
-
-    def _group_vertices(self, obj, group_index):
-        return [
-            vertex.index
-            for vertex in obj.data.vertices
-            if any(
-                item.group == group_index and item.weight > 0.0
-                for item in vertex.groups
-            )
-        ]
-
-    def _prepare(self, context):
-        if hasattr(self, 'group_indices') and hasattr(self, 'active_group'):
-            return bool(self.group_indices)
-        obj = context.active_object
-        bm = bmesh.from_edit_mesh(obj.data)
-        selected = _selected_vertices(bm)
-        groups = []
-        for group in obj.vertex_groups:
-            if any(
-                any(item.group == group.index for item in obj.data.vertices[vert.index].groups)
-                for vert in selected
-            ):
-                groups.append(group.index)
-        if not groups:
-            return False
-        self.group_indices = groups
-        self.sel_idx %= len(groups)
-        self.active_group = groups[self.sel_idx]
-        self.select_all_groups = False
-        return True
-
-    def invoke(self, context, event):
-        if not self._prepare(context):
-            return {'CANCELLED'}
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'} if len(self.group_indices) > 1 else self.execute(context)
-
-    def modal(self, context, event):
-        if event.type in {'WHEELUPMOUSE', 'ONE'} and event.value == 'PRESS':
-            self.sel_idx = (self.sel_idx + 1) % len(self.group_indices)
-            self.active_group = self.group_indices[self.sel_idx]
-        elif event.type in {'WHEELDOWNMOUSE', 'TWO'} and event.value == 'PRESS':
-            self.sel_idx = (self.sel_idx - 1) % len(self.group_indices)
-            self.active_group = self.group_indices[self.sel_idx]
-        elif event.type == 'A' and event.value == 'PRESS':
-            self.select_all_groups = not self.select_all_groups
-        elif event.type in {'LEFTMOUSE', 'SPACE'} and event.value == 'PRESS':
-            return self.execute(context)
-        elif event.type in {'RIGHTMOUSE', 'ESC'}:
-            return {'CANCELLED'}
-        elif event.type == 'MIDDLEMOUSE' or (
-            event.alt and event.type in {'LEFTMOUSE', 'RIGHTMOUSE'}
-        ) or event.type.startswith('NDOF'):
-            return {'PASS_THROUGH'}
-        return {'RUNNING_MODAL'}
-
-    def execute(self, context):
-        if not self._prepare(context):
-            return {'CANCELLED'}
-        obj = context.active_object
-        bm = bmesh.from_edit_mesh(obj.data)
-        groups = self.group_indices if getattr(self, 'select_all_groups', False) else [self.active_group]
-        indices = {
-            vertex_index
-            for group_index in groups
-            for vertex_index in self._group_vertices(obj, group_index)
-        }
-        for vertex in bm.verts:
-            if vertex.index in indices:
-                vertex.select_set(True)
-        bm.select_flush(True)
-        bmesh.update_edit_mesh(obj.data)
-        return {'FINISHED'}
-
-
 class OP_SelectSharpChain(bpy.types.Operator):
     bl_idname = 'ho.sselect'
     bl_label = '锐边链选择'
@@ -247,7 +156,7 @@ class OP_SelectLoop(bpy.types.Operator):
 class OP_EnhancedSelect(bpy.types.Operator):
     bl_idname = 'ho.select'
     bl_label = '增强选择'
-    bl_description = '根据当前选择模式分派顶点组、循环、锐边或 Blender 默认选择'
+    bl_description = '根据当前选择模式分派循环、锐边或 Blender 默认选择'
     bl_options = {'REGISTER', 'UNDO'}
 
     loop: BoolProperty(name='循环选择', default=False)  # type: ignore
@@ -269,10 +178,7 @@ class OP_EnhancedSelect(bpy.types.Operator):
     def _dispatch(self, context):
         mode = _mesh_mode(context)
         bm = bmesh.from_edit_mesh(context.active_object.data)
-        if mode == (True, False, False):
-            if context.active_object.vertex_groups and _selected_vertices(bm):
-                return bpy.ops.ho.vselect('INVOKE_DEFAULT')
-        elif mode == (False, True, False):
+        if mode == (False, True, False):
             edges = _selected_edges(bm)
             if edges:
                 if self.loop or all(edge.smooth for edge in edges):

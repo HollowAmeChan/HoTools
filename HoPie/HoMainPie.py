@@ -243,6 +243,11 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
         text="选择循环",icon="FILE_VOLUME",props={"ring": False},)
     row.operator("mesh.loop_multi_select",
         text="选择并排",icon="ALIGN_JUSTIFY",props={"ring": True},)
+    row = col.row(align=True)
+    row.operator("ho.sselect", 
+        text="S选", icon="SHARPCURVE")
+    row.operator("ho.lselect", 
+        text="L选", icon="FILE_VOLUME")
 
 
 def _draw_mesh_left_tools(layout: LayoutBuilder, context):

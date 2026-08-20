@@ -141,7 +141,6 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.transform_edge_constrained",
                 "ho.symmetrize",
                 "ho.select",
-                "ho.vselect",
                 "ho.sselect",
                 "ho.lselect",
                 "ho.fill_selection",

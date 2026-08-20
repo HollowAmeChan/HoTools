@@ -10,7 +10,6 @@ from .select import (
     OP_EnhancedSelect,
     OP_SelectLoop,
     OP_SelectSharpChain,
-    OP_SelectVertexGroup,
 )
 from .fill_selection import OP_FillSelection
 from .ring_select import OP_AddSelectSideRingLoops, OP_RemoveSelectSideRingLoops
@@ -107,7 +106,6 @@ cls = [
     OP_EnhancedSelect,
     OP_SelectLoop,
     OP_SelectSharpChain,
-    OP_SelectVertexGroup,
     OP_FillSelection,
     OP_AddSelectSideRingLoops,
     OP_RemoveSelectSideRingLoops,
