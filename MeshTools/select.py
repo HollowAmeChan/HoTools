@@ -77,7 +77,12 @@ def _edge_continuation(edge, vertex, min_angle):
 
 
 def _select_edge_loops(bm, edges, min_angle):
-    selected = set(edges)
+    # 其它预先选中的边作为边界，避免一次操作穿过已有环继续生成
+    # 第二个连通环；真正的扩展种子由调用方限制为一个活动边。
+    selected = {
+        edge for edge in bm.edges
+        if edge.select and not edge.hide
+    }
     for edge in edges:
         for vertex in edge.verts:
             previous = edge
@@ -120,7 +125,13 @@ class OP_SelectLoop(bpy.types.Operator):
     bl_description = '将孤立边选择扩展为循环边或面环'
     bl_options = {'REGISTER', 'UNDO'}
 
-    min_angle: IntProperty(name='最小角度', default=60, min=0, max=180)  # type: ignore
+    min_angle: IntProperty(
+        name='最大转角',
+        description='循环扩展允许的最大边方向转角，0 仅允许近似直线延续',
+        default=60,
+        min=0,
+        max=180,
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -138,7 +149,15 @@ class OP_SelectLoop(bpy.types.Operator):
         mode = _mesh_mode(context)
         if mode == (False, True, False):
             edges = _selected_edges(bm)
-            _select_edge_loops(bm, _isolated_edges(edges), 180 - self.min_angle)
+            seeds = _isolated_edges(edges)
+            active_edge = getattr(bm.select_history, 'active', None)
+            if isinstance(active_edge, bmesh.types.BMEdge) and active_edge in edges:
+                seeds = [active_edge]
+            elif seeds:
+                seeds = seeds[:1]
+            # _edge_continuation 返回的是边方向的实际偏折角，直接使用
+            # 用户输入值；不能再做 180 - angle 的反转。
+            _select_edge_loops(bm, seeds, self.min_angle)
         elif mode == (False, False, True):
             faces = _selected_faces(bm)
             if len(faces) == 2:
@@ -160,7 +179,13 @@ class OP_EnhancedSelect(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     loop: BoolProperty(name='循环选择', default=False)  # type: ignore
-    min_angle: IntProperty(name='最小角度', default=60, min=0, max=180)  # type: ignore
+    min_angle: IntProperty(
+        name='最大转角',
+        description='循环扩展允许的最大边方向转角',
+        default=60,
+        min=0,
+        max=180,
+    )  # type: ignore
     draw_props: BoolProperty(name='显示参数', default=False)  # type: ignore
 
     @classmethod

@@ -390,10 +390,11 @@ class HO_MT_HoMainPie(Menu):
 
     def draw(self, context):
         pie = HoPie(self.layout, context)
-        pie.left.pie(HO_MT_HoMainPieObject.bl_idname,
-            text="物体面板",icon="OBJECT_DATA",)
-        pie.right.pie(HO_MT_HoMainPieMesh.bl_idname,
+        pie.left.pie(HO_MT_HoMainPieMesh.bl_idname,
             text="网格工具",icon="MESH_DATA",)
+        pie.right.pie(HO_MT_HoMainPieObject.bl_idname,
+            text="物体面板",icon="OBJECT_DATA",)
+
 
 
         space = find_space(context, "VIEW_3D")
