@@ -289,7 +289,7 @@ class AddonPreference(bpy.types.AddonPreferences):
             main_pie_box = content.box()
             row = main_pie_box.row(align=True)
             row.prop(self, 'hoTools_enableHoMainPie', text='')
-            row.label(text='Ho大饼（空格）')
+            row.label(text='Ho大饼')
             draw_empty_slot(main_pie_box)
 
         _draw_module_box(layout, self, 'hoTools_ui_exicon_expanded', 'ExIcon', 'hoTools_enableExIcon', draw_exicon)

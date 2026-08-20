@@ -205,7 +205,7 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
     col.scale_y = 1.35
 
     col.operator("mesh.faces_select_linked_flat",
-        text="相邻平展",icon="VIEW_PERSPECTIVE",props={"sharpness": 0.2617993950843811},)
+        text="相邻平展",icon="VIEW_PERSPECTIVE",props={"sharpness": 0.25},)
     col.operator("mesh.loop_to_region",
         text="循环线内",icon="VIEW_ORTHO",)
     col.operator("mesh.region_to_loop",
