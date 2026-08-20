@@ -4,7 +4,10 @@ from bpy.props import BoolProperty, EnumProperty
 from mathutils import Matrix, Vector
 from mathutils.geometry import intersect_point_line
 
-from .utils import edit_bmesh, popup_error, selected_verts
+from Utils.mesh_utils import edit_bmesh, selected_verts
+from Utils.ui_utils import popup_error
+
+from ._Core import HoPie
 
 
 ALIGN_TYPE_ITEMS = (
@@ -454,7 +457,7 @@ class HO_MT_align_pie(bpy.types.Menu):
     bl_idname = 'HO_MT_align_pie'
 
     def draw(self, context):
-        pie = self.layout.menu_pie()
+        pie = HoPie.from_pie_layout(self.layout.menu_pie(), context)
         selected = []
         if context.mode == 'EDIT_MESH':
             selected = [
@@ -569,7 +572,7 @@ class HO_MT_uv_align_pie(bpy.types.Menu):
     bl_idname = 'HO_MT_uv_align_pie'
 
     def draw(self, context):
-        pie = self.layout.menu_pie()
+        pie = HoPie.from_pie_layout(self.layout.menu_pie(), context)
         mode = getattr(context.scene, 'ho_align_pie_mode', 'AXES')
         if mode == 'VIEW':
             items = (('左侧', 'U', 'MIN'), ('右侧', 'U', 'MAX'), ('底部', 'V', 'MIN'), ('顶部', 'V', 'MAX'))

@@ -1,13 +1,13 @@
-# HoPieCore 快速用法
+# HoPie Core 快速用法
 
-`HoPieCore.py` 是 HoTools 自己的饼菜单代码层。它包装 Blender 的 `UILayout`，提供通用 operator 和注册基础设施，不保存静态 JSON；具体业务菜单和功能开关仍由各模块自己注册。
+`_Core.py` 是 HoTools 自己的饼菜单代码层。它包装 Blender 的 `UILayout`，提供通用 operator 和布局基础设施，不保存静态 JSON；具体业务菜单和功能开关统一由 `_Register.py` 管理。
 
 ## 创建一个饼
 
 在 `Menu.draw(self, context)` 中：
 
 ```python
-from .HoPieCore import HoPie
+from ._Core import HoPie
 
 pie = HoPie(self.layout, context)
 pie.left.pie("HO_MT_AnotherPie", "网格工具", icon="MESH_DATA")
@@ -83,7 +83,7 @@ def draw_options(layout, context):
 跨模块复用同一逻辑时，也可以使用 Core 的安全辅助函数：
 
 ```python
-from .HoPieCore import draw_prop
+from ._Core import draw_prop
 
 draw_prop(layout, context.space_data.overlay, "show_text", "文本", icon="TEXT", context=context)
 ```

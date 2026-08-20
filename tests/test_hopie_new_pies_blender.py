@@ -44,11 +44,11 @@ class NewPieRegistrationTests(unittest.TestCase):
         hopie = load_hopie()
         hopie.register()
         try:
-            hopie.set_selection_mode_pie_enabled(True)
-            hopie.set_delete_merge_pie_enabled(True)
-            ids = {item.bl_idname for item in hopie.selection_mode_pie.SELECTION_MODE_PIE_CLASSES}
+            hopie.set_pie_enabled('selection_mode', True)
+            hopie.set_pie_enabled('delete_merge', True)
+            ids = {item.bl_idname for item in hopie.SelectionModePie.SELECTION_MODE_PIE_CLASSES}
             self.assertEqual(ids, {'HO_MT_selection_mode_pie'})
-            ids = {item.bl_idname for item in hopie.delete_merge_pie.DELETE_MERGE_PIE_CLASSES}
+            ids = {item.bl_idname for item in hopie.DeleteMergePie.DELETE_MERGE_PIE_CLASSES}
             self.assertEqual(ids, {
                 'ho.merge_to_first',
                 'ho.merge_to_last',
@@ -77,7 +77,7 @@ class NewPieRegistrationTests(unittest.TestCase):
     def test_merge_skips_without_active_vertex(self):
         hopie = load_hopie()
         hopie.register()
-        hopie.set_delete_merge_pie_enabled(True)
+        hopie.set_pie_enabled('delete_merge', True)
         mesh = bpy.data.meshes.new('merge_without_active_mesh')
         mesh.from_pydata([(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)], [(0, 1)], [])
         obj = bpy.data.objects.new('merge_without_active_object', mesh)
@@ -102,8 +102,8 @@ class NewPieRegistrationTests(unittest.TestCase):
         hopie = load_hopie()
         hopie.register()
         try:
-            hopie.set_selection_mode_pie_enabled(True)
-            hopie.set_delete_merge_pie_enabled(True)
+            hopie.set_pie_enabled('selection_mode', True)
+            hopie.set_pie_enabled('delete_merge', True)
             self.assertEqual(
                 len(keymap_items_for_menu('HO_MT_selection_mode_pie')),
                 1,
@@ -115,8 +115,8 @@ class NewPieRegistrationTests(unittest.TestCase):
 
             hopie.selection_mode_pie_keymaps.clear()
             hopie.delete_merge_pie_keymaps.clear()
-            hopie.set_selection_mode_pie_enabled(False)
-            hopie.set_delete_merge_pie_enabled(False)
+            hopie.set_pie_enabled('selection_mode', False)
+            hopie.set_pie_enabled('delete_merge', False)
             self.assertEqual(
                 keymap_items_for_menu('HO_MT_selection_mode_pie'),
                 [],

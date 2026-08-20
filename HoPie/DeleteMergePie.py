@@ -1,6 +1,8 @@
 import bmesh
 import bpy
 
+from ._Core import HoPie
+
 
 def _mesh_operator(pie, operator_id, text, icon, **properties):
     operator = pie.operator(operator_id, text=text, icon=icon)
@@ -76,32 +78,14 @@ class HO_MT_delete_merge_pie(bpy.types.Menu):
         return context.mode == 'EDIT_MESH'
 
     def draw(self, context):
-        pie = self.layout.menu_pie()
-        _mesh_operator(
-            pie,
-            'mesh.delete',
-            '删面',
-            'AREA_DOCK',
-            type='FACE',
-        )
-        _mesh_operator(
-            pie,
-            'mesh.merge',
-            '合到中',
-            'UV_SYNC_SELECT',
-            type='CENTER',
-        )
+        pie = HoPie.from_pie_layout(self.layout.menu_pie(), context)
+        _mesh_operator(pie,'mesh.delete','删面','AREA_DOCK',type='FACE',)
+        _mesh_operator(pie,'mesh.merge','合到中','UV_SYNC_SELECT',type='CENTER',)
         pie.separator()
         _mesh_operator(pie, 'mesh.dissolve_edges', '融并边', 'EDGESEL')
         _mesh_operator(pie, 'mesh.dissolve_verts', '融并顶点', 'FACE_CORNER')
         _mesh_operator(pie, OP_MergeToFirst.bl_idname, '合到首', 'BACK')
-        _mesh_operator(
-            pie,
-            'mesh.delete',
-            '删点',
-            'LAYER_ACTIVE',
-            type='VERT',
-        )
+        _mesh_operator(pie,'mesh.delete','删点','LAYER_ACTIVE',type='VERT',)
         _mesh_operator(pie, OP_MergeToLast.bl_idname, '合到尾', 'FORWARD')
         # PME reserves slots 8 and 9 for the center column below the pie.
         pie.separator()
@@ -110,14 +94,8 @@ class HO_MT_delete_merge_pie(bpy.types.Menu):
         center.separator()
         row = center.row(align=True)
         row.scale_y = 1.5
-        row.operator(
-            'wm.call_menu',
-            text='删除',
-        ).name = 'VIEW3D_MT_edit_mesh_delete'
-        row.operator(
-            'wm.call_menu',
-            text='合并',
-        ).name = 'VIEW3D_MT_edit_mesh_merge'
+        row.operator('wm.call_menu',text='删除',).name = 'VIEW3D_MT_edit_mesh_delete'
+        row.operator('wm.call_menu',text='合并',).name = 'VIEW3D_MT_edit_mesh_merge'
 
 
 DELETE_MERGE_PIE_CLASSES = (

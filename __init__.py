@@ -78,23 +78,23 @@ def updateHoTabState(self, context):
 
 
 def updateAlignPieState(self, context):
-    HoPie.set_align_pie_enabled(self.hoTools_enableAlignPie)
+    HoPie.set_pie_enabled('align', self.hoTools_enableAlignPie)
 
 
 def updateCursorPieState(self, context):
-    HoPie.set_cursor_pie_enabled(self.hoTools_enableCursorPie)
+    HoPie.set_pie_enabled('cursor', self.hoTools_enableCursorPie)
 
 
 def updateSelectionModePieState(self, context):
-    HoPie.set_selection_mode_pie_enabled(self.hoTools_enableSelectionModePie)
+    HoPie.set_pie_enabled('selection_mode', self.hoTools_enableSelectionModePie)
 
 
 def updateDeleteMergePieState(self, context):
-    HoPie.set_delete_merge_pie_enabled(self.hoTools_enableDeleteMergePie)
+    HoPie.set_pie_enabled('delete_merge', self.hoTools_enableDeleteMergePie)
 
 
 def updateMainPieState(self, context):
-    HoPie.set_main_pie_enabled(self.hoTools_enableHoMainPie)
+    HoPie.set_pie_enabled('main', self.hoTools_enableHoMainPie)
 
 
 # 插件内置资源路径相关函数
@@ -325,11 +325,11 @@ def register():
     HoTab.register()
 
     prefs = bpy.context.preferences.addons[__name__].preferences
-    HoPie.set_align_pie_enabled(prefs.hoTools_enableAlignPie)
-    HoPie.set_cursor_pie_enabled(prefs.hoTools_enableCursorPie)
-    HoPie.set_selection_mode_pie_enabled(prefs.hoTools_enableSelectionModePie)
-    HoPie.set_delete_merge_pie_enabled(prefs.hoTools_enableDeleteMergePie)
-    HoPie.set_main_pie_enabled(prefs.hoTools_enableHoMainPie)
+    HoPie.set_pie_enabled('align', prefs.hoTools_enableAlignPie)
+    HoPie.set_pie_enabled('cursor', prefs.hoTools_enableCursorPie)
+    HoPie.set_pie_enabled('selection_mode', prefs.hoTools_enableSelectionModePie)
+    HoPie.set_pie_enabled('delete_merge', prefs.hoTools_enableDeleteMergePie)
+    HoPie.set_pie_enabled('main', prefs.hoTools_enableHoMainPie)
     if prefs.hoTools_OmniNodeFeatures_enable:
         OmniNode.register()
     if prefs.hoTools_enableHoTab:

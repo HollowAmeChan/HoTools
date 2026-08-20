@@ -5,15 +5,19 @@ import bpy
 from bpy.props import BoolProperty
 from mathutils import Matrix, Quaternion, Vector
 
-from .utils import (
+from Utils.mesh_utils import (
     average_locations,
     component_rotation,
-    compensate_children,
-    popup_error,
     selected_verts,
+)
+from Utils.transform_utils import (
+    compensate_children,
     set_cursor_transform,
     set_obj_origin,
 )
+from Utils.ui_utils import popup_error
+
+from ._Core import HoPie
 
 
 class CursorToOrigin(bpy.types.Operator):
@@ -279,7 +283,7 @@ class HO_MT_cursor_pie(bpy.types.Menu):
     bl_idname = 'HO_MT_cursor_pie'
 
     def draw(self, context):
-        pie = self.layout.menu_pie()
+        pie = HoPie.from_pie_layout(self.layout.menu_pie(), context)
 
         if context.mode == 'EDIT_MESH':
             selection = tuple(context.scene.tool_settings.mesh_select_mode)

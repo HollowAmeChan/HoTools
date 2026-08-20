@@ -356,92 +356,6 @@ HO_PIE_CORE_CLASSES = (
 )
 
 
-def register_classes(classes: Any) -> None:
-    """统一注册一组 Blender 类。"""
-    if bpy is None:
-        return
-    for item in classes:
-        try:
-            bpy.utils.register_class(item)
-        except ValueError as error:
-            if "already registered" not in str(error):
-                raise
-
-
-def unregister_classes(classes: Any) -> None:
-    """统一逆序注销一组 Blender 类。"""
-    if bpy is None:
-        return
-    for item in reversed(classes):
-        try:
-            bpy.utils.unregister_class(item)
-        except (RuntimeError, ValueError) as error:
-            if "not registered" not in str(error):
-                raise
-
-
-def register_keymap(
-        keymap_name: str, space_type: str, key_type: str,
-        *, shift: bool = False, alt: bool = False, menu_name: Optional[str] = None,
-        keymap_store: Optional[list] = None, head: bool = True,
-        operator_idname: str = "wm.call_menu_pie",
-        property_name: str = "name", invoke_mode: Optional[str] = None) -> None:
-    """创建一个插件快捷键，并把项目保存到传入的列表。"""
-    if bpy is None:
-        return
-    keyconfig = bpy.context.window_manager.keyconfigs.addon
-    if not keyconfig:
-        return
-    keymap = keyconfig.keymaps.new(
-        name=keymap_name,
-        space_type=space_type,
-        region_type="WINDOW",
-    )
-    item = keymap.keymap_items.new(
-        operator_idname,
-        type=key_type,
-        value="PRESS",
-        shift=shift,
-        alt=alt,
-        head=head,
-    )
-    setattr(item.properties, property_name, menu_name)
-    if invoke_mode is not None:
-        item.properties.invoke_mode = invoke_mode
-    if keymap_store is not None:
-        keymap_store.append((keymap, item))
-
-
-def remove_keymaps(items: list, menu_names: Any = ()) -> None:
-    """删除保存的快捷键，并清理同名旧项目。"""
-    for keymap, item in list(items):
-        try:
-            keymap.keymap_items.remove(item)
-        except (ReferenceError, ValueError):
-            pass
-    items.clear()
-
-    menu_names = set(menu_names)
-    if not menu_names or bpy is None:
-        return
-    keyconfig = bpy.context.window_manager.keyconfigs.addon
-    if not keyconfig:
-        return
-    for keymap in keyconfig.keymaps:
-        for item in list(keymap.keymap_items):
-            if item.idname not in {"wm.call_menu_pie", "ho.hopie_nested_pie"}:
-                continue
-            item_name = getattr(item.properties, "name", "")
-            if not item_name:
-                item_name = getattr(item.properties, "pie_menu_name", "")
-            if item_name not in menu_names:
-                continue
-            try:
-                keymap.keymap_items.remove(item)
-            except (ReferenceError, ValueError):
-                pass
-
-
 def find_space(context: Any, space_type: Optional[str] = None) -> Any:
     """从当前上下文取得空间，必要时回退到区域的 active space。"""
     space = getattr(context, "space_data", None)
@@ -1567,9 +1481,5 @@ __all__ = [
     "draw_prop",
     "ensure_layout",
     "find_space",
-    "register_classes",
-    "register_keymap",
-    "remove_keymaps",
-    "unregister_classes",
     "resolve_path",
 ]

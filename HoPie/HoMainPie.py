@@ -2,9 +2,17 @@
 import bpy
 from bpy.types import Menu, Operator
 
-from ..ModifierTools import _draw_quick_modifier_buttons
+try:
+    from ..ModifierTools import _draw_quick_modifier_buttons
+except ImportError:
+    try:
+        from ModifierTools import _draw_quick_modifier_buttons
+    except ImportError:
+        # Standalone HoPie test loaders do not have the parent HoTools package.
+        def _draw_quick_modifier_buttons(*args, **kwargs):
+            return None
 
-from .HoPieCore import (
+from ._Core import (
     HoPie,
     LayoutBuilder,
     draw_prop,

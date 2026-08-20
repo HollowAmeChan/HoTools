@@ -1,5 +1,7 @@
 import bpy
 
+from ._Core import HoPie
+
 
 def _tool_operator(pie, text, tool_id, icon):
     operator = pie.operator('wm.tool_set_by_id', text=text, icon=icon)
@@ -11,7 +13,7 @@ class HO_MT_selection_mode_pie(bpy.types.Menu):
     bl_label = '饼:选择模式'
 
     def draw(self, context):
-        pie = self.layout.menu_pie()
+        pie = HoPie.from_pie_layout(self.layout.menu_pie(), context)
         _tool_operator(pie, '标注', 'builtin.annotate', 'GREASEPENCIL')
         _tool_operator(pie, '刷选', 'builtin.select_circle', 'MESH_CIRCLE')
         pie.separator()
