@@ -28,7 +28,6 @@ _cursor_pie_enabled = False
 _selection_mode_pie_enabled = False
 _delete_merge_pie_enabled = False
 _main_pie_enabled = False
-_main_pie_edit_mode_only = True
 _core_registered = False
 
 
@@ -161,13 +160,9 @@ def set_main_pie_enabled(enabled):
 
 
 def _register_main_pie_keymap():
-    """按偏好设置把主饼绑定到编辑网格或整个三维视图。"""
-    if _main_pie_edit_mode_only:
-        keymap_name, space_type = 'Mesh', 'EMPTY'
-    else:
-        keymap_name, space_type = '3D View Generic', 'VIEW_3D'
+    """把主饼绑定到整个三维视图和 UV 编辑器。"""
     _register_keymap(
-        keymap_name, space_type, 'SPACE', head=True,
+        '3D View Generic', 'VIEW_3D', 'SPACE', head=True,
         menu_name='HO_MT_HoMainPie', keymap_store=main_pie_keymaps,
         operator_idname='ho.hopie_nested_pie',
         property_name='pie_menu_name', invoke_mode='HOTKEY',
@@ -178,18 +173,6 @@ def _register_main_pie_keymap():
         operator_idname='ho.hopie_nested_pie',
         property_name='pie_menu_name', invoke_mode='HOTKEY',
     )
-
-
-def set_main_pie_edit_mode_only(only_edit_mode):
-    """切换主饼是否只在编辑网格键位表中生效。"""
-    global _main_pie_edit_mode_only
-    only_edit_mode = bool(only_edit_mode)
-    if _main_pie_edit_mode_only == only_edit_mode:
-        return
-    _main_pie_edit_mode_only = only_edit_mode
-    if _main_pie_enabled:
-        _remove_keymaps(main_pie_keymaps, {'HO_MT_HoMainPie'})
-        _register_main_pie_keymap()
 
 
 def preference_keymaps():

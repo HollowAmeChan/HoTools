@@ -146,6 +146,31 @@ def _draw_view_options(layout: bpy.types.UILayout, context):
     draw_prop(row, getattr(space, "uv_editor", None), "show_stretch", "UV 拉伸", icon="COLORSET_04_VEC")
 
 
+def _draw_main_top_right(layout: bpy.types.UILayout, context):
+    """绘制主饼右上角的界面和时间轴快捷项。"""
+    space = find_space(context, "VIEW_3D")
+    screen = getattr(context, "screen", None)
+    preferences = getattr(context, "preferences", None)
+    view_preferences = getattr(preferences, "view", None)
+    scene = getattr(context, "scene", None)
+    render = getattr(scene, "render", None)
+
+    # 第一行：界面显示开关。
+    row = layout.row(align=True)
+    draw_prop(row, view_preferences, "use_translate_interface", "中/英", icon="WORLD")
+    draw_prop(row, space, "show_region_header", "标题栏", icon="MENU_PANEL")
+    draw_prop(row, screen, "show_statusbar", "状态栏", icon="INFO")
+
+    # 第二行：播放控制和场景帧率。
+    row = layout.row(align=True)
+    is_playing = bool(getattr(screen, "is_animation_playing", False))
+    row.operator("screen.animation_play",
+        text="",icon="PAUSE" if is_playing else "PLAY",depress=is_playing,)
+    row.operator("screen.frame_jump",
+        text="",icon="REW",props={"end": False},)
+    draw_prop(row, render, "fps", "帧率", icon="TIME")
+
+
 def _draw_quick_edge_tools(layout: LayoutBuilder, context):
     """绘制快速清除/标记缝合边、锐边和折痕，以及 UV 同步开关。"""
     col = layout.column(align=True)
@@ -251,6 +276,8 @@ class HO_MT_HoMainPie(Menu):
 
         pie.top_left.expand(_draw_view_options,
             width=1.5,height=1.5,height_offset=5.0,)
+        pie.top_right.expand(_draw_main_top_right,
+            height_offset=5.0,)
         pie.finish()
 
 
