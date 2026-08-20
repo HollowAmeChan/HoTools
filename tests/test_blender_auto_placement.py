@@ -10,14 +10,18 @@ import bmesh
 from mathutils import Euler, Vector
 
 
-MESH_TOOLS = Path(__file__).resolve().parents[1] / "MeshTools"
+ADDON_ROOT = Path(__file__).resolve().parents[1]
+OBJECT_TOOLS = ADDON_ROOT / "ObjectTools"
 PACKAGE_NAME = "hotools_auto_placement_test"
+
+if str(ADDON_ROOT) not in sys.path:
+    sys.path.insert(0, str(ADDON_ROOT))
 
 
 def load_placement():
     if PACKAGE_NAME not in sys.modules:
         package = types.ModuleType(PACKAGE_NAME)
-        package.__path__ = [str(MESH_TOOLS)]
+        package.__path__ = [str(OBJECT_TOOLS)]
         sys.modules[PACKAGE_NAME] = package
     placement = importlib.import_module(f"{PACKAGE_NAME}.placement")
     return placement
