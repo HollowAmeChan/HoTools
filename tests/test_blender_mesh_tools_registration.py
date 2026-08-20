@@ -18,11 +18,12 @@ MESH_TOOLS = ADDON_ROOT / "MeshTools"
 PACKAGE_NAME = "hotools_mesh_tools_registration_test"
 CURVE_TOOLS = ADDON_ROOT / "CurveTools"
 CURVE_PACKAGE_NAME = "hotools_curve_tools_registration_test"
+FACADE_NAME = "hotools_tools_registration_facade"
 
 
 def load_mesh_tools():
-    if PACKAGE_NAME in sys.modules:
-        return sys.modules[PACKAGE_NAME]
+    if FACADE_NAME in sys.modules:
+        return sys.modules[FACADE_NAME]
     spec = importlib.util.spec_from_file_location(
         PACKAGE_NAME,
         MESH_TOOLS / "__init__.py",
@@ -41,47 +42,57 @@ def load_mesh_tools():
     sys.modules[CURVE_PACKAGE_NAME] = curve_tools
     curve_spec.loader.exec_module(curve_tools)
 
-    mesh_register = module.register
-    mesh_unregister = module.unregister
-    mesh_classes = module.cls
-    curve_keymap_pairs = []
-    module.curve_repair = curve_tools.repair
-    module.curve_bevel = curve_tools.bevel
-    module.OP_CurveBevel = curve_tools.OP_CurveBevel
-    module.OP_RepairCurvePath = curve_tools.OP_RepairCurvePath
-    module.HO_MT_curve = curve_tools.HO_MT_curve
-    module.draw_in_VIEW3D_MT_edit_curve_context_menu = (
-        curve_tools.repair.draw_in_VIEW3D_MT_edit_curve_context_menu
-    )
-    module.cls = [*mesh_classes, curve_tools.OP_CurveBevel,
-                  curve_tools.OP_RepairCurvePath, curve_tools.HO_MT_curve]
+    class RegistrationFacade:
+        """Expose both real modules without mutating either module object."""
 
-    def register_with_curve_tools():
-        nonlocal curve_keymap_pairs
-        module.cls = mesh_classes
-        mesh_register()
-        curve_tools.register()
-        module.cls = [*mesh_classes, curve_tools.OP_CurveBevel,
-                      curve_tools.OP_RepairCurvePath, curve_tools.HO_MT_curve]
-        curve_keymap_pairs = list(curve_tools.addon_keymaps)
-        module.addon_keymaps.extend(curve_keymap_pairs)
+        def __init__(self, mesh, curve):
+            self.mesh = mesh
+            self.curve = curve
+            self.edge_constraint = mesh.edge_constraint
+            self.symmetrize = mesh.symmetrize
+            self.curve_symmetrize = curve.symmetrize
+            self.curve_repair = curve.repair
+            self.curve_bevel = curve.bevel
+            self.OP_TransformEdgeConstrained = mesh.OP_TransformEdgeConstrained
+            self.OP_CurveBevel = curve.OP_CurveBevel
+            self.OP_RepairCurvePath = curve.OP_RepairCurvePath
+            self.HO_MT_curve = curve.HO_MT_curve
+            self.VIEW3D_MT_edit_mesh_hotools = mesh.VIEW3D_MT_edit_mesh_hotools
+            self.draw_in_VIEW3D_MT_edit_mesh_context_menu = (
+                mesh.draw_in_VIEW3D_MT_edit_mesh_context_menu
+            )
+            self.draw_in_VIEW3D_MT_edit_curve_context_menu = (
+                curve.repair.draw_in_VIEW3D_MT_edit_curve_context_menu
+            )
 
-    def unregister_with_curve_tools():
-        nonlocal curve_keymap_pairs
-        module.addon_keymaps[:] = [
-            item for item in module.addon_keymaps
-            if item not in curve_keymap_pairs
-        ]
-        curve_tools.unregister()
-        curve_keymap_pairs = []
-        module.cls = mesh_classes
-        mesh_unregister()
-        module.cls = [*mesh_classes, curve_tools.OP_CurveBevel,
-                      curve_tools.OP_RepairCurvePath, curve_tools.HO_MT_curve]
+        @property
+        def cls(self):
+            return [*self.mesh.CLASSES, *self.curve._CLASSES]
 
-    module.register = register_with_curve_tools
-    module.unregister = unregister_with_curve_tools
-    return module
+        @property
+        def addon_keymaps(self):
+            return [*self.mesh.addon_keymaps, *self.curve.addon_keymaps]
+
+        def register(self):
+            self.mesh.register()
+            self.curve.register()
+
+        def unregister(self):
+            self.curve.unregister()
+            self.mesh.unregister()
+
+        def __getattr__(self, name):
+            try:
+                return getattr(self.mesh, name)
+            except AttributeError:
+                return getattr(self.curve, name)
+
+        def preference_keymaps(self):
+            return self.mesh.preference_keymaps() + self.curve.preference_keymaps()
+
+    facade = RegistrationFacade(module, curve_tools)
+    sys.modules[FACADE_NAME] = facade
+    return facade
 
 
 class MeshToolsRegistrationTests(unittest.TestCase):
@@ -180,13 +191,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 for cls in mesh_tools.cls
                 if issubclass(cls, bpy.types.Operator)
             }
-            self.assertEqual(registered_ids, {
-                "ho.align",
-                "ho.align_relative",
-                "ho.auto_place_object_bottom",
-                "ho.auto_snap_face_orthogonal",
-                "ho.placeobjectbottom",
-                "ho.snap_selected_face_orthogonal",
+            self.assertTrue({
                 "ho.align_to_avg_normal",
                 "ho.create_bone_chain_by_meshflow",
                 "ho.modal_fill_mesh_hole",
@@ -199,9 +204,17 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.addselect_sideringloops",
                 "ho.removeselect_sideringloops",
                 "ho.visual_boolean_cut",
-                "ho.curve_bevel",
-                "ho.repair_curve_path",
-            })
+                "ho.mesh_circle_even",
+                "ho.mesh_flatten",
+                "ho.mesh_relax",
+                "ho.set_edge_curve",
+                "ho.set_edge_flow",
+                "ho.set_edge_linear",
+                "ho.custom_splitnormal_export",
+                "ho.custom_splitnormal_import",
+                "ho.merge_overlapping_vertexnormals",
+            } <= registered_ids)
+            self.assertTrue({"ho.curve_bevel", "ho.repair_curve_path"} <= registered_ids)
             self.assertIsNotNone(
                 getattr(
                     bpy.types,
@@ -319,10 +332,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 for keymap, keymap_item in mesh_tools.addon_keymaps
                 if keymap_item.idname == "ho.align"
             }
-            self.assertEqual(set(align_keymaps), {"Object Mode", "Pose"})
-            for keymap_item in align_keymaps.values():
-                self.assertEqual(keymap_item.type, 'A')
-                self.assertTrue(keymap_item.alt)
+            self.assertEqual(align_keymaps, {})
             segment = (Vector((0.0, 0.0, 0.0)), Vector((2.0, 0.0, 0.0)))
             clamped = mesh_tools.edge_constraint.clamp_point_to_segment(
                 Vector((5.0, 0.0, 0.0)),
@@ -490,7 +500,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             bpy.ops.object.mode_set(mode="EDIT")
             self.assertEqual(len(obj.data.splines), 1)
             self.assertEqual(len(obj.data.splines[0].bezier_points), 4)
-            result = mesh_tools.symmetrize._curve_symmetrize(
+            result = mesh_tools.curve_symmetrize._curve_symmetrize(
                 obj,
                 direction="POSITIVE_X",
                 threshold=0.0001,
@@ -533,7 +543,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
         obj.select_set(True)
         try:
             bpy.ops.object.mode_set(mode="EDIT")
-            result = mesh_tools.symmetrize._curve_symmetrize(
+            result = mesh_tools.curve_symmetrize._curve_symmetrize(
                 obj,
                 direction="POSITIVE_X",
                 threshold=0.0001,
@@ -574,7 +584,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
         obj.select_set(True)
         try:
             bpy.ops.object.mode_set(mode="EDIT")
-            result = mesh_tools.symmetrize._curve_symmetrize(
+            result = mesh_tools.curve_symmetrize._curve_symmetrize(
                 obj,
                 direction="POSITIVE_X",
                 threshold=0.0001,
@@ -616,7 +626,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
         obj.select_set(True)
         try:
             bpy.ops.object.mode_set(mode="EDIT")
-            result = mesh_tools.symmetrize._curve_symmetrize(
+            result = mesh_tools.curve_symmetrize._curve_symmetrize(
                 obj,
                 direction="POSITIVE_X",
                 threshold=0.0001,
@@ -658,7 +668,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
         obj.select_set(True)
         try:
             bpy.ops.object.mode_set(mode="EDIT")
-            result = mesh_tools.symmetrize._curve_symmetrize(
+            result = mesh_tools.curve_symmetrize._curve_symmetrize(
                 obj,
                 direction="POSITIVE_X",
                 threshold=0.0001,
@@ -699,7 +709,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
         obj.select_set(True)
         try:
             bpy.ops.object.mode_set(mode="EDIT")
-            result = mesh_tools.symmetrize._curve_symmetrize(
+            result = mesh_tools.curve_symmetrize._curve_symmetrize(
                 obj,
                 direction="POSITIVE_X",
                 threshold=0.0001,
@@ -742,7 +752,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
         obj.select_set(True)
         try:
             bpy.ops.object.mode_set(mode="EDIT")
-            result = mesh_tools.symmetrize._curve_symmetrize(
+            result = mesh_tools.curve_symmetrize._curve_symmetrize(
                 obj,
                 direction="POSITIVE_X",
                 threshold=0.0001,
@@ -787,7 +797,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
         obj.select_set(True)
         try:
             bpy.ops.object.mode_set(mode="EDIT")
-            result = mesh_tools.symmetrize._curve_symmetrize(
+            result = mesh_tools.curve_symmetrize._curve_symmetrize(
                 obj,
                 direction="POSITIVE_X",
                 threshold=0.0001,

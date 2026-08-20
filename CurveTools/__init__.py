@@ -3,9 +3,12 @@
 import bpy
 
 from .bevel import OP_CurveBevel
-from .repair import HO_MT_curve, OP_RepairCurvePath
+from .repair import (
+    HO_MT_curve,
+    OP_RepairCurvePath,
+    draw_in_VIEW3D_MT_edit_curve_context_menu,
+)
 from .symmetrize import OP_Symmetrize
-from .repair import draw_in_VIEW3D_MT_edit_curve_context_menu
 
 _CLASSES = (OP_CurveBevel, OP_RepairCurvePath, HO_MT_curve, OP_Symmetrize)
 addon_keymaps = []
@@ -27,7 +30,6 @@ def register():
             OP_Symmetrize.bl_idname, type="X", value="PRESS", alt=True, head=True
         )
         symmetrize_item.properties.flick = True
-        symmetrize_item.properties.objmode = False
         addon_keymaps.append((keymap, symmetrize_item))
         item = keymap.keymap_items.new(
             OP_CurveBevel.bl_idname, type="B", value="PRESS", ctrl=True, head=True

@@ -72,8 +72,11 @@ class ToolModuleBoundaryTests(unittest.TestCase):
     def test_mesh_and_curve_symmetrize_have_separate_ids(self):
         mesh_source = (ROOT / "MeshTools" / "symmetrize.py").read_text(encoding="utf-8")
         curve_source = (ROOT / "CurveTools" / "symmetrize.py").read_text(encoding="utf-8")
-        self.assertIn("bl_idname = 'ho.symmetrize'", mesh_source)
+        self.assertIn('bl_idname = "ho.symmetrize"', mesh_source)
         self.assertIn("bl_idname = 'ho.curve_symmetrize'", curve_source)
+        self.assertNotIn("_curve_", mesh_source)
+        self.assertNotIn("has_custom_normals", curve_source)
+        self.assertNotIn("objmode", curve_source)
         self.assertNotIn("curve_mode", mesh_source)
         self.assertNotIn("mesh_mode", curve_source)
 

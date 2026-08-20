@@ -3,24 +3,36 @@ import bpy
 from . import boolean
 from .align import OP_Align, OP_AlignRelative
 from .bone_chain import OP_CreatBoneChainByMeshFlow
-from .hole_fill import OP_ModalFillMeshHole
 from .edge_constraint import OP_TransformEdgeConstrained
-from . import symmetrize
-from .symmetrize import OP_Symmetrize
-from .select import (
-    OP_EnhancedSelect,
-    OP_SelectLoop,
-    OP_SelectSharpChain,
+from .edge_flow import (
+    EDGE_FLOW_CLASSES,
+    HO_OT_SetEdgeCurve,
+    HO_OT_SetEdgeFlow,
+    HO_OT_SetEdgeLinear,
 )
 from .fill_selection import OP_FillSelection
-from .ring_select import OP_AddSelectSideRingLoops, OP_RemoveSelectSideRingLoops
-from .visual_boolean import OP_VisualBooleanCut
+from .ho_mesh import (
+    HO_MESH_CLASSES,
+    HO_OT_MeshCircleEven,
+    HO_OT_MeshFlatten,
+    HO_OT_MeshRelax,
+)
+from .hole_fill import OP_ModalFillMeshHole
 from .placement import (
     OP_AutoPlaceObjectBottom,
     OP_AutoSnapFaceOrthogonal,
     OP_PlaceObjectBottom,
     OP_SnapSelectedFaceOrthogonal,
 )
+from .select import (
+    OP_EnhancedSelect,
+    OP_SelectLoop,
+    OP_SelectSharpChain,
+)
+from . import symmetrize
+from .symmetrize import OP_Symmetrize
+from .ring_select import OP_AddSelectSideRingLoops, OP_RemoveSelectSideRingLoops
+from .visual_boolean import OP_VisualBooleanCut
 from .view import OP_AlignViewToAvgNormal
 from .custom_normals import (
     OP_CustomSplitNormals_Export,
@@ -37,27 +49,10 @@ def draw_in_DATA_PT_customdata(self, context):
 
 def draw_in_VIEW3D_MT_edit_mesh_merge(self, context):
     self.layout.operator(OP_MergeOverlapping_VertexNormals.bl_idname)
-from .edge_flow import (
-    EDGE_FLOW_CLASSES,
-    HO_OT_SetEdgeCurve,
-    HO_OT_SetEdgeFlow,
-    HO_OT_SetEdgeLinear,
-)
-from .ho_mesh import (
-    HO_MESH_CLASSES,
-    HO_OT_MeshCircleEven,
-    HO_OT_MeshFlatten,
-    HO_OT_MeshRelax,
-)
-def reg_props():
-    return
-
-def ureg_props():
-    return
 
 
 class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
-    """编辑模式右键菜单"""
+    """Mesh editing context menu."""
 
     bl_idname = "VIEW3D_MT_edit_mesh_hotools"
     bl_label = "Hotools Mesh"
@@ -88,39 +83,19 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         layout.operator(OP_ModalFillMeshHole.bl_idname, icon='FACESEL')
         layout.separator()
         layout.operator_context = 'INVOKE_DEFAULT'
-        layout.operator(HO_OT_SetEdgeFlow.bl_idname, text='设置流', icon='MOD_CURVE')
-        layout.operator(HO_OT_SetEdgeCurve.bl_idname, text='设置曲线', icon='CURVE_BEZCURVE')
-        layout.operator(HO_OT_SetEdgeLinear.bl_idname, text='设置直线', icon='IPO_LINEAR')
+        layout.operator(HO_OT_SetEdgeFlow.bl_idname, text='Set Edge Flow', icon='MOD_CURVE')
+        layout.operator(HO_OT_SetEdgeCurve.bl_idname, text='Set Edge Curve', icon='CURVE_BEZCURVE')
+        layout.operator(HO_OT_SetEdgeLinear.bl_idname, text='Set Edge Linear', icon='IPO_LINEAR')
         layout.separator()
-        layout.operator(HO_OT_MeshFlatten.bl_idname, text='平化', icon='MESH_GRID')
-        layout.operator(HO_OT_MeshRelax.bl_idname, text='松弛', icon='MOD_SMOOTH')
-        layout.operator(HO_OT_MeshCircleEven.bl_idname, text='圆化（均匀间距）', icon='MESH_CIRCLE')
+        layout.operator(HO_OT_MeshFlatten.bl_idname, text='Flatten', icon='MESH_GRID')
+        layout.operator(HO_OT_MeshRelax.bl_idname, text='Relax', icon='MOD_SMOOTH')
+        layout.operator(HO_OT_MeshCircleEven.bl_idname, text='Even Circle', icon='MESH_CIRCLE')
+
 
 def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
     self.layout.menu(VIEW3D_MT_edit_mesh_hotools.bl_idname)
 
 
-cls = [
-    OP_Align,
-    OP_AlignRelative,
-    OP_AutoPlaceObjectBottom,
-    OP_PlaceObjectBottom,
-    OP_AutoSnapFaceOrthogonal,
-    OP_SnapSelectedFaceOrthogonal,
-    OP_AlignViewToAvgNormal,
-    OP_CreatBoneChainByMeshFlow,
-    OP_ModalFillMeshHole,
-    OP_TransformEdgeConstrained,
-    OP_Symmetrize,
-    OP_EnhancedSelect,
-    OP_SelectLoop,
-    OP_SelectSharpChain,
-    OP_FillSelection,
-    OP_AddSelectSideRingLoops,
-    OP_RemoveSelectSideRingLoops,
-    OP_VisualBooleanCut,
-    VIEW3D_MT_edit_mesh_hotools,
-]
 _SUPPLEMENTAL_CLASSES = (
     *EDGE_FLOW_CLASSES,
     *HO_MESH_CLASSES,
@@ -128,7 +103,8 @@ _SUPPLEMENTAL_CLASSES = (
     OP_CustomSplitNormals_Import,
     OP_MergeOverlapping_VertexNormals,
 )
-_ROOT_CLASSES = (
+
+CLASSES = [
     OP_AlignViewToAvgNormal,
     OP_CreatBoneChainByMeshFlow,
     OP_ModalFillMeshHole,
@@ -143,12 +119,9 @@ _ROOT_CLASSES = (
     OP_VisualBooleanCut,
     VIEW3D_MT_edit_mesh_hotools,
     *_SUPPLEMENTAL_CLASSES,
-)
-
-
+]
+cls = CLASSES
 addon_keymaps = []
-_registered_classes = []
-_STANDALONE_COMPAT = not __package__.startswith("HoTools.")
 
 
 def preference_keymaps():
@@ -157,11 +130,8 @@ def preference_keymaps():
 
 def register():
     boolean.register()
-    _registered_classes.clear()
-    classes = cls if _STANDALONE_COMPAT else _ROOT_CLASSES
-    for i in classes:
-        bpy.utils.register_class(i)
-        _registered_classes.append(i)
+    for operator_class in CLASSES:
+        bpy.utils.register_class(operator_class)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
     )
@@ -238,22 +208,7 @@ def register():
         keymap_item.properties.objmode = False
         addon_keymaps.append((mesh_keymap, keymap_item))
 
-        for keymap_name in ("Object Mode", "Pose") if _STANDALONE_COMPAT else ():
-            keymap = keyconfig.keymaps.new(
-                name=keymap_name,
-                space_type='EMPTY',
-                region_type='WINDOW',
-            )
-            keymap_item = keymap.keymap_items.new(
-                OP_Align.bl_idname,
-                type='A',
-                value='PRESS',
-                alt=True,
-                head=True,
-            )
-            addon_keymaps.append((keymap, keymap_item))
 
-    reg_props()
 
 
 def unregister():
@@ -266,8 +221,6 @@ def unregister():
     )
     bpy.types.DATA_PT_customdata.remove(draw_in_DATA_PT_customdata)
     bpy.types.VIEW3D_MT_edit_mesh_merge.remove(draw_in_VIEW3D_MT_edit_mesh_merge)
-    for i in reversed(_registered_classes):
-        bpy.utils.unregister_class(i)
-    _registered_classes.clear()
+    for operator_class in reversed(CLASSES):
+        bpy.utils.unregister_class(operator_class)
     boolean.unregister()
-    ureg_props()

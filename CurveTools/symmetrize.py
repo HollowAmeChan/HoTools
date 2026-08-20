@@ -1,4 +1,4 @@
-"""MESHmachine-style symmetrize with the HoTools shortcut workflow."""
+"""Curve-control symmetrize operator and its flick-direction interaction."""
 
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty
@@ -11,7 +11,6 @@ from bpy_extras.view3d_utils import (
 from mathutils import Vector
 
 
-
 AXIS_ITEMS = (
     ('X', 'X', '沿 X 轴对称化'),
     ('Y', 'Y', '沿 Y 轴对称化'),
@@ -20,14 +19,6 @@ AXIS_ITEMS = (
 DIRECTION_ITEMS = (
     ('POSITIVE', '正向', '保留正向一侧'),
     ('NEGATIVE', '负向', '保留负向一侧'),
-)
-NORMAL_METHOD_ITEMS = (
-    ('INDEX', '索引', '按顶点索引配对自定义法线'),
-    ('LOCATION', '位置', '按顶点位置配对自定义法线'),
-)
-FIX_CENTER_ITEMS = (
-    ('CLEAR', '清除', '清除中心接缝法线'),
-    ('TRANSFER', '传递', '传递中心接缝法线'),
 )
 
 
@@ -531,28 +522,16 @@ def _curve_symmetrize(obj, direction, threshold, partial, remove):
 
 class OP_Symmetrize(bpy.types.Operator):
     bl_idname = 'ho.curve_symmetrize'
-    bl_label = '对称化'
-    bl_description = '使用 Alt-X 径向操作对当前网格或曲线进行对称化'
+    bl_label = '曲线对称化'
+    bl_description = '使用 Alt-X 对当前曲线控制点进行对称化'
     bl_options = {'REGISTER', 'UNDO'}
 
-    objmode: BoolProperty(name='对象模式', default=False)  # type: ignore
     flick: BoolProperty(name='径向操作', default=True)  # type: ignore
     axis: EnumProperty(name='轴', items=AXIS_ITEMS, default='X')  # type: ignore
     direction: EnumProperty(name='方向', items=DIRECTION_ITEMS, default='POSITIVE')  # type: ignore
     threshold: FloatProperty(name='阈值', default=0.0001, min=0.0)  # type: ignore
     partial: BoolProperty(name='仅选定', default=False)  # type: ignore
     remove: BoolProperty(name='删除另一侧', default=False)  # type: ignore
-    remove_redundant_center: BoolProperty(name='删除冗余中心', default=True)  # type: ignore
-    is_custom_normal: BoolProperty(default=False, options={'HIDDEN'})  # type: ignore
-    mirror_custom_normals: BoolProperty(name='镜像自定义法线', default=True)  # type: ignore
-    custom_normal_method: EnumProperty(
-        name='自定义法线配对', items=NORMAL_METHOD_ITEMS, default='INDEX'
-    )  # type: ignore
-    fix_center: BoolProperty(name='固定中心接缝', default=False)  # type: ignore
-    fix_center_method: EnumProperty(
-        name='中心修复方法', items=FIX_CENTER_ITEMS, default='CLEAR'
-    )  # type: ignore
-    clear_sharps: BoolProperty(name='清除中心锐边', default=True)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -635,16 +614,6 @@ class OP_Symmetrize(bpy.types.Operator):
 
     def execute(self, context):
         active = context.active_object
-        if active.type == 'CURVE':
-            self.result = _curve_symmetrize(
-                active,
-                direction=f'{self.direction}_{self.axis}',
-                threshold=self.threshold,
-                partial=self.partial,
-                remove=self.remove,
-            )
-            return {'FINISHED'}
-
         self.result = _curve_symmetrize(
             active,
             direction=f'{self.direction}_{self.axis}',
