@@ -238,9 +238,12 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
         text="关联缝合",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
     row.operator("mesh.select_linked",
         text="关联锐边",icon="STRIP_COLOR_05",props={"delimit": {"SHARP"}},)
-
-    col.operator("mesh.faces_select_linked_flat",
+    row = col.row(align=True)
+    row.operator("mesh.faces_select_linked_flat",
         text="相邻平展",icon="VIEW_PERSPECTIVE",props={"sharpness": 0.25},)
+    row.operator("ho.lselect", 
+        text="L选", icon="FILE_VOLUME")
+
     row = col.row(align=True)
     row.operator("mesh.loop_to_region",
         text="边界内",icon="VIEW_ORTHO",)
@@ -251,11 +254,6 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
         text="选择循环",icon="FILE_VOLUME",props={"ring": False},)
     row.operator("mesh.loop_multi_select",
         text="选择并排",icon="ALIGN_JUSTIFY",props={"ring": True},)
-    row = col.row(align=True)
-    row.operator("ho.sselect", 
-        text="S选", icon="SHARPCURVE")
-    row.operator("ho.lselect", 
-        text="L选", icon="FILE_VOLUME")
 
 
 def _draw_mesh_left_tools(layout: LayoutBuilder, context):
