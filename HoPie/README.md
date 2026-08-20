@@ -76,6 +76,8 @@ def draw_options(layout, context):
 
 `prop` 直接读取传入对象的真实 RNA 属性，也支持 `"foo.bar"` 这样的属性路径。属性不存在时会跳过当前项，不会让整个饼报错。
 
+`LayoutBuilder` 在运行时只是 `UILayout` 的轻量包装；它只在类型检查阶段模拟继承 `bpy.types.UILayout`。因此回调标注为 `LayoutBuilder` 时，编辑器可以同时提示 Blender 原生布局方法和 HoPie 的 `item()`、`expression()`、`expand()` 等扩展方法。
+
 需要甩动触发的布尔开关不要使用 `prop()`，改用 `toggle_prop()` 或 `expression()`；前者直接翻转真实 RNA 属性，后者执行一次 Core 表达式。表达式按钮可使用 `C`/`context`、`bpy`、`D`（`bpy.data`）、`E`（当前事件）以及 `A/O/W/S/R` 上下文别名，不提供 Python 内置函数。
 
 跨模块复用同一逻辑时，也可以使用 Core 的安全辅助函数：
@@ -87,6 +89,16 @@ draw_prop(layout, context.space_data.overlay, "show_text", "文本", icon="TEXT"
 ```
 
 HoMainPie 遵循同一约定：视图开关和叠加层属性直接绘制在主饼槽位；只有网格工具这类确实要“进入下一层”的功能才使用 `menu()` 或 `pie()`。
+
+表达式按钮除了 `C`/`context` 外，也提供 `space`、`screen`、`scene` 和 `preferences` 别名；因此可以用一条命令同步切换多个 RNA 布尔属性：
+
+```python
+slot.expression(
+    "space.show_region_header = not space.show_region_header; "
+    "screen.show_statusbar = not screen.show_statusbar",
+    text="标题/状态栏",
+)
+```
 
 ## 常用配置
 

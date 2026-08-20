@@ -31,7 +31,14 @@
 import inspect
 from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Mapping, Optional, Tuple, Union
+
+if TYPE_CHECKING:
+    # 仅供 IDE/类型检查器使用。Blender 的 UILayout 是 RNA 类型，运行时不应
+    # 真的继承它；否则可能触发不可实例化或不可注册的 RNA 类型错误。
+    from bpy.types import UILayout as _UILayoutType
+else:
+    _UILayoutType = object
 
 try:
     import bpy
@@ -268,6 +275,11 @@ class HO_OT_HoPieExpression(_HO_OPERATOR_BASE):
         namespace = {
             "C": context,
             "context": context,
+            # 常用对象提供短别名，表达式不必重复书写 C.space_data/C.screen。
+            "space": getattr(context, "space_data", None),
+            "screen": getattr(context, "screen", None),
+            "scene": getattr(context, "scene", None),
+            "preferences": getattr(context, "preferences", None),
             "bpy": bpy,
             "D": getattr(bpy, "data", None) if bpy is not None else None,
             "E": _HO_PIE_EVENT,
@@ -603,7 +615,7 @@ def _copy_item_options(options: Optional[ItemOptions]) -> ItemOptions:
     return replace(options)
 
 
-class LayoutBuilder:
+class LayoutBuilder(_UILayoutType):
     """UILayout 的小型、可链式包装。
 
     Builder 不持有 Blender 数据，只持有一个 `UILayout`；因此也可以用简单的

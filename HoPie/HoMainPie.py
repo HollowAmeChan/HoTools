@@ -88,7 +88,7 @@ class HO_OT_HoMainPieSetEdgeOverlays(Operator):
     bl_label = "网格边缘显示"
     bl_options = {"REGISTER", "UNDO"}
 
-    enabled: BoolProperty(name="启用", options={"HIDDEN"})
+    enabled: BoolProperty(name="启用", options={"HIDDEN"}) # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -110,7 +110,7 @@ class HO_OT_HoMainPieSetEdgeOverlays(Operator):
         return {"FINISHED"}
 
 
-def _draw_view_options(layout: bpy.types.UILayout, context):
+def _draw_view_options(layout: LayoutBuilder, context):
     """主饼左上角的视图选项和叠加层开关。"""
     space = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
@@ -146,7 +146,7 @@ def _draw_view_options(layout: bpy.types.UILayout, context):
     draw_prop(row, getattr(space, "uv_editor", None), "show_stretch", "UV 拉伸", icon="COLORSET_04_VEC")
 
 
-def _draw_main_top_right(layout: bpy.types.UILayout, context):
+def _draw_main_top_right(layout: LayoutBuilder, context):
     """绘制主饼右上角的界面和时间轴快捷项。"""
     space = find_space(context, "VIEW_3D")
     screen = getattr(context, "screen", None)
@@ -158,8 +158,22 @@ def _draw_main_top_right(layout: bpy.types.UILayout, context):
     # 第一行：界面显示开关。
     row = layout.row(align=True)
     draw_prop(row, view_preferences, "use_translate_interface", "中/英", icon="WORLD")
-    draw_prop(row, space, "show_region_header", "标题栏", icon="MENU_PANEL")
-    draw_prop(row, screen, "show_statusbar", "状态栏", icon="INFO")
+    if (space is not None and screen is not None
+            and hasattr(space, "show_region_header")
+            and hasattr(screen, "show_statusbar")):
+        row.expression(
+            "space.show_region_header = not space.show_region_header; "
+            "screen.show_statusbar = not screen.show_statusbar",
+            text="标题/状态栏",
+            icon="MENU_PANEL",
+            depress=lambda current: bool(
+                getattr(getattr(current, "space_data", None),
+                        "show_region_header", False)
+            ) and bool(
+                getattr(getattr(current, "screen", None),
+                        "show_statusbar", False)
+            ),
+        )
 
     # 第二行：播放控制和场景帧率。
     row = layout.row(align=True)
@@ -225,7 +239,17 @@ def _draw_mesh_left_tools(layout: LayoutBuilder, context):
     _draw_quick_edge_tools(row.column(align=True), context)
 
 
-def _draw_edge_display(layout: bpy.types.UILayout, context):
+def _draw_edge_flow_tools(layout: LayoutBuilder, context):
+    """绘制 Mesh 子饼正右侧的 EdgeFlow 工具区。"""
+    col = layout.column(align=True)
+    col.scale_y = 1.35
+    col.operator("ho.set_edge_flow", text="loop设流",icon="SPHERECURVE")
+    row = col.row(align=True)
+    row.operator("ho.set_edge_curve", text="并排设流",icon="MOD_WAVE")
+    row.operator("ho.set_edge_linear", text="并排设直",icon="FILE_VOLUME")
+
+
+def _draw_edge_display(layout: LayoutBuilder, context):
     """绘制线属性显示选项。"""
     space = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
@@ -249,10 +273,12 @@ class HO_MT_HoMainPieMesh(Menu):
     def draw(self, context):
         pie = HoPie(self.layout, context)
         pie.left.expand(_draw_mesh_left_tools)
+        pie.right.expand(_draw_edge_flow_tools,
+            height=1.5,)
         pie.top.expand(_draw_edge_display,
             height=1.5)
-        # 快速修改器函数内部使用固定四列网格，普通面板和饼菜单展开保持一致。
-        pie.top_right.expand(_draw_quick_modifier_buttons)
+        pie.top_right.expand(_draw_quick_modifier_buttons,
+            height_offset=20.0)
         pie.finish()
 
 

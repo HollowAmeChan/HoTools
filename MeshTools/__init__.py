@@ -22,6 +22,12 @@ from .placement import (
     OP_SnapSelectedFaceOrthogonal,
 )
 from .view import OP_AlignViewToAvgNormal
+from .edge_flow import (
+    EDGE_FLOW_CLASSES,
+    HO_OT_SetEdgeCurve,
+    HO_OT_SetEdgeFlow,
+    HO_OT_SetEdgeLinear,
+)
 from .curve_bevel import OP_CurveBevel
 from .curve_repair import (
     HO_MT_curve,
@@ -66,6 +72,11 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         )
         layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname, icon='ADD')
         layout.operator(OP_ModalFillMeshHole.bl_idname, icon='FACESEL')
+        layout.separator()
+        layout.operator_context = 'INVOKE_DEFAULT'
+        layout.operator(HO_OT_SetEdgeFlow.bl_idname, text='设置流', icon='MOD_CURVE')
+        layout.operator(HO_OT_SetEdgeCurve.bl_idname, text='设置曲线', icon='CURVE_BEZCURVE')
+        layout.operator(HO_OT_SetEdgeLinear.bl_idname, text='设置直线', icon='IPO_LINEAR')
 
 def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
     self.layout.menu(VIEW3D_MT_edit_mesh_hotools.bl_idname)
@@ -96,6 +107,7 @@ cls = [
     HO_MT_curve,
     VIEW3D_MT_edit_mesh_hotools,
 ]
+cls.extend(EDGE_FLOW_CLASSES)
 
 
 addon_keymaps = []
