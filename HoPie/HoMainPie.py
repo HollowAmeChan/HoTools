@@ -80,6 +80,41 @@ class HO_OT_HoMainPieToggleRandomPreview(Operator):
         return {"FINISHED"}
 
 
+class HO_OT_HoMainPieSeparateLoose(Operator):
+    """把当前网格物体按松散块拆成多个物体。"""
+
+    bl_idname = "ho.main_pie_separate_loose"
+    bl_label = "分离松散块"
+    bl_description = "将当前网格物体的互不连接部分分离为独立物体"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        """只允许在物体模式下处理活动网格物体。"""
+        obj = getattr(context, "active_object", None)
+        return (
+            getattr(context, "mode", None) == "OBJECT"
+            and getattr(obj, "type", None) == "MESH"
+        )
+
+    def execute(self, context):
+        """临时进入编辑模式调用 Blender 的松散块分离操作。"""
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            bpy.ops.mesh.select_all(action="SELECT")
+            result = bpy.ops.mesh.separate(type="LOOSE")
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except (RuntimeError, TypeError, ValueError) as error:
+            if getattr(context, "mode", None) == "EDIT_MESH":
+                try:
+                    bpy.ops.object.mode_set(mode="OBJECT")
+                except RuntimeError:
+                    pass
+            self.report({"WARNING"}, f"分离松散块失败：{error}")
+            return {"CANCELLED"}
+        return result
+
+
 def _draw_view_options(layout: LayoutBuilder, context):
     """主饼左上角的视图选项和叠加层开关。"""
     space = find_space(context, "VIEW_3D")
@@ -263,6 +298,48 @@ def _draw_edge_display(layout: LayoutBuilder, context):
         )
 
 
+def _draw_object_export_panel(layout: LayoutBuilder, context):
+    """绘制物体子饼正右侧的导出面板。"""
+    # 导出操作需要文件路径，保持 Blender 文件选择器的默认调用方式。
+    layout.operator_context = "INVOKE_DEFAULT"
+    layout.enabled = (
+        getattr(context, "mode", None) == "OBJECT"
+        and getattr(context, "active_object", None) is not None
+    )
+
+    col = layout.column(align=True)
+    col.scale_x = 1.25
+    col.scale_y = 1.5
+
+    row = col.row(align=True)
+    row.operator("export_scene.fbx",
+        text="FBX导出",icon="EXPORT",)
+    row.operator("ho.final_fbx_export",
+        text="HoFBX导出",icon="EXPORT",)
+
+    row = col.row(align=True)
+    row.operator("wm.obj_export",
+        text="OBJ导出",icon="EXPORT",)
+    row.operator("wm.stl_export",
+        text="STL导出",icon="EXPORT",)
+
+
+def _draw_object_quick_panel(layout: LayoutBuilder, context):
+    """绘制物体子饼左侧的快速操作面板。"""
+    obj = getattr(context, "active_object", None)
+
+    col = layout.column(align=True)
+    col.scale_x = 1
+    col.scale_y = 1.5
+
+    row = col.row(align=True)
+    draw_prop(row, obj, "display_type", "显示方式", icon="SHADING_WIRE")
+    draw_prop(row, obj, "show_in_front", "最前显示", icon="XRAY")
+
+    col.operator(HO_OT_HoMainPieSeparateLoose.bl_idname,
+        text="分离松散块",icon="UNLINKED",)
+
+
 class HO_MT_HoMainPieMesh(Menu):
     """PME 中的网格工具子饼。"""
 
@@ -289,9 +366,8 @@ class HO_MT_HoMainPieObject(Menu):
 
     def draw(self, context):
         pie = HoPie(self.layout, context)
-        object_mode = getattr(context, "mode", None) == 'OBJECT'
-        has_object = getattr(context, "active_object", None) is not None
-        enabled = object_mode and has_object
+        pie.left.expand(_draw_object_quick_panel, height=1)
+        pie.right.expand(_draw_object_export_panel, height=1)
         pie.finish()
 
 
@@ -303,13 +379,11 @@ class HO_MT_HoMainPie(Menu):
 
     def draw(self, context):
         pie = HoPie(self.layout, context)
-        pie.left.pie(HO_MT_HoMainPieMesh.bl_idname,
+        pie.left.pie(HO_MT_HoMainPieObject.bl_idname,
+            text="物体面板",icon="OBJECT_DATA",)
+        pie.right.pie(HO_MT_HoMainPieMesh.bl_idname,
             text="网格工具",icon="MESH_DATA",)
-        pie.right.pie(
-            HO_MT_HoMainPieObject.bl_idname,
-            text="物体面板",
-            icon="OBJECT_DATA",
-        )
+
 
         space = find_space(context, "VIEW_3D")
         overlay = getattr(space, "overlay", None)
@@ -327,6 +401,7 @@ class HO_MT_HoMainPie(Menu):
 
 HO_MAIN_PIE_CLASSES = (
     HO_OT_HoMainPieToggleRandomPreview,
+    HO_OT_HoMainPieSeparateLoose,
     HO_MT_HoMainPieMesh,
     HO_MT_HoMainPieObject,
     HO_MT_HoMainPie,

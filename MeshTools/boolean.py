@@ -362,7 +362,7 @@ def draw_in_VIEW3D_MT_object_context_menu(self, context):
 
 class VIEW3D_MT_object_hotools_bool(bpy.types.Menu):
     bl_idname = "VIEW3D_MT_object_hotools_bool"
-    bl_label = "HoToolsBool"
+    bl_label = "HoBoolTools"
 
     def draw(self, context):
         layout = self.layout

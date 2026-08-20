@@ -584,6 +584,15 @@ class HO_OT_QuickAddLattice(Operator):
     bl_description = "单物体使用本地包围盒，多物体使用全局整体包围盒"
     bl_options = {'REGISTER', 'UNDO'}
 
+    resolution: IntVectorProperty(
+        name="晶格分辨率",
+        description="晶格在 U、V、W 三个方向上的控制点数量",
+        size=3,
+        default=(2, 2, 2),
+        min=2,
+        max=64,
+        options={'SKIP_SAVE'},
+    ) # type: ignore
     _OBJECT_TYPES = {
         'LATTICE', 'MESH', 'CURVE', 'FONT', 'SURFACE',
         'GREASEPENCIL', 'GPENCIL',
@@ -691,6 +700,28 @@ class HO_OT_QuickAddLattice(Operator):
             return None
         return modifier
 
+    @classmethod
+    def _find_existing_lattice(cls, objects):
+        """从选中物体的晶格修改器反查 F9 重做对应的晶格对象。"""
+        candidates = []
+        for obj in objects:
+            modifier_groups = [getattr(obj, "modifiers", ())]
+            grease_pencil_modifiers = getattr(obj, "grease_pencil_modifiers", None)
+            if grease_pencil_modifiers is not None:
+                modifier_groups.append(grease_pencil_modifiers)
+            for modifiers in modifier_groups:
+                for modifier in modifiers:
+                    lattice_object = getattr(modifier, "object", None)
+                    if (
+                        getattr(lattice_object, "type", None) == 'LATTICE'
+                        and lattice_object not in candidates
+                    ):
+                        candidates.append(lattice_object)
+
+        # 一个选中组只对应一个晶格时才能无歧义地更新；多个晶格说明是
+        # 普通的再次调用，应继续创建新的晶格。
+        return candidates[0] if len(candidates) == 1 else None
+
     def _create(self, context, objects, rotation, name):
         """按当前分辨率创建线性晶格并绑定到物体。"""
         bounds = self._bounds(objects, rotation)
@@ -744,19 +775,41 @@ class HO_OT_QuickAddLattice(Operator):
             return None, 0
         return lattice_object, attached
 
+    def _update_lattice(self, lattice_object, context):
+        """更新晶格分辨率，同时保持其世界变换。"""
+        lattice_data = getattr(lattice_object, "data", None)
+        if lattice_object is None or lattice_object.type != 'LATTICE':
+            return False
+        if lattice_data is None:
+            return False
+
+        # 修改控制点数量时保持晶格的世界变换。某些 Blender 版本在
+        # 更新晶格数据后会刷新父子依赖，显式恢复矩阵可避免位置漂移。
+        world_matrix = lattice_object.matrix_world.copy()
+        lattice_data.points_u, lattice_data.points_v, lattice_data.points_w = self.resolution
+        view_layer = getattr(context, "view_layer", None)
+        if view_layer is not None:
+            view_layer.update()
+        lattice_object.matrix_world = world_matrix
+        return True
+
     @classmethod
     def poll(cls, context):
         return bool(cls._selected_objects(context))
-
-    def invoke(self, context, event):
-        """从菜单调用时弹出唯一需要输入的分辨率参数。"""
-        return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
         objects = self._selected_objects(context)
         if not objects:
             self.report({'ERROR'}, "请在物体模式下选择可添加晶格的物体")
             return {'CANCELLED'}
+
+        # F9 重做时，原操作创建的修改器仍连接在选中物体上；通过修改器
+        # 反查晶格比依赖 execute() 内写入的操作器属性可靠。
+        existing_lattice = self._find_existing_lattice(objects)
+        if existing_lattice is not None:
+            self._update_lattice(existing_lattice, context)
+            self.report({'INFO'}, "已更新晶格分辨率")
+            return {'FINISHED'}
 
         if len(objects) == 1:
             rotation = objects[0].matrix_world.to_quaternion()
@@ -782,18 +835,8 @@ class HO_OT_QuickAddLattice(Operator):
         self.report({'INFO'}, f"已添加晶格，影响 {attached} 个物体")
         return {'FINISHED'}
 
-    resolution: IntVectorProperty(
-        name="晶格分辨率",
-        description="晶格在 U、V、W 三个方向上的控制点数量",
-        size=3,
-        default=(2, 2, 2),
-        min=2,
-        max=64,
-        options={'SKIP_SAVE'},
-    )
-
     def draw(self, context):
-        """参数面板只显示分辨率，其余行为保持固定默认值。"""
+        """F9 参数面板只显示分辨率，其余行为保持固定默认值。"""
         self.layout.prop(self, "resolution", text="分辨率")
 
 
@@ -810,7 +853,7 @@ class HO_MT_HoObjectTools(bpy.types.Menu):
     def draw(self, context):
         if getattr(context, "mode", None) != 'OBJECT':
             return
-        self.layout.operator_context = 'INVOKE_DEFAULT'
+        self.layout.operator_context = 'EXEC_DEFAULT'
         self.layout.operator(
             HO_OT_QuickAddLattice.bl_idname,
             text="快速添加晶格",
@@ -847,7 +890,6 @@ def draw_in_VIEW3D_MT_object_context_menu(self, context: bpy.types.Context):
     self.layout.menu(
         HO_MT_HoObjectTools.bl_idname,
         text=HO_MT_HoObjectTools.bl_label,
-        icon='OBJECT_DATA',
     )
 
 
