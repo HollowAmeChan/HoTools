@@ -123,6 +123,42 @@ class HO_OT_HoMainPieSeparateLoose(Operator):
         return result
 
 
+class HO_OT_HoMainPieSetEdgeCrease(Operator):
+    """Directly assign the crease value of the selected mesh edges."""
+
+    bl_idname = "ho.main_pie_set_edge_crease"
+    bl_label = "Set Edge Crease"
+    bl_options = {"REGISTER", "UNDO"}
+
+    value: bpy.props.FloatProperty(default=0.0, min=0.0, max=1.0) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return getattr(context, "mode", None) == "EDIT_MESH" and getattr(
+            getattr(context, "edit_object", None), "type", None
+        ) == "MESH"
+
+    def execute(self, context):
+        obj = getattr(context, "edit_object", None)
+        if getattr(obj, "type", None) != "MESH":
+            return {"CANCELLED"}
+
+        try:
+            import bmesh
+
+            bm = bmesh.from_edit_mesh(obj.data)
+            crease_layer = bm.edges.layers.float.get("crease_edge")
+            if crease_layer is None:
+                crease_layer = bm.edges.layers.float.new("crease_edge")
+            for edge in bm.edges:
+                if edge.select:
+                    edge[crease_layer] = self.value
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
 def _draw_view_options(layout: LayoutBuilder, context):
     """主饼左上角的视图选项和叠加层开关。"""
     space = find_space(context, "VIEW_3D")
@@ -209,15 +245,29 @@ def _draw_quick_edge_tools(layout: LayoutBuilder, context):
     buttons = (
         ("mesh.mark_seam", "COLLECTION_COLOR_01", {"clear": True}),
         ("mesh.mark_sharp", "COLLECTION_COLOR_05", {"clear": True}),
-        ("transform.edge_crease", "COLLECTION_COLOR_07",
-         {"value": -1.0, "release_confirm": True}),
-        ("mesh.mark_seam", "STRIP_COLOR_01", {"clear": False}),
-        ("mesh.mark_sharp", "STRIP_COLOR_05", {"clear": False}),
-        ("transform.edge_crease", "STRIP_COLOR_07",
-         {"value": 1.0, "release_confirm": True}),
     )
     for operator_id, icon, properties in buttons:
         col.operator(operator_id, text="", icon=icon, props=properties)
+
+    col.operator(
+        HO_OT_HoMainPieSetEdgeCrease.bl_idname,
+        text="",
+        icon="COLLECTION_COLOR_07",
+        props={"value": 0.0},
+    )
+
+    for operator_id, icon, properties in (
+        ("mesh.mark_seam", "STRIP_COLOR_01", {"clear": False}),
+        ("mesh.mark_sharp", "STRIP_COLOR_05", {"clear": False}),
+    ):
+        col.operator(operator_id, text="", icon=icon, props=properties)
+
+    col.operator(
+        HO_OT_HoMainPieSetEdgeCrease.bl_idname,
+        text="",
+        icon="STRIP_COLOR_07",
+        props={"value": 1.0},
+    )
 
     tool_settings = getattr(getattr(context, "scene", None), "tool_settings", None)
     if tool_settings is not None and hasattr(tool_settings, "use_uv_select_sync"):
@@ -414,6 +464,7 @@ class HO_MT_HoMainPie(Menu):
 HO_MAIN_PIE_CLASSES = (
     HO_OT_HoMainPieToggleRandomPreview,
     HO_OT_HoMainPieSeparateLoose,
+    HO_OT_HoMainPieSetEdgeCrease,
     HO_MT_HoMainPieMesh,
     HO_MT_HoMainPieObject,
     HO_MT_HoMainPie,
