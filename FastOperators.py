@@ -1,13 +1,13 @@
 import bpy
 import json
 import subprocess
-from mathutils import Vector
+from mathutils import Matrix, Vector
 from collections import defaultdict
 
 import bmesh
 import math
 from bpy.types import Operator
-from bpy.props import FloatProperty
+from bpy.props import FloatProperty, IntVectorProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 
@@ -576,6 +576,248 @@ class OP_MergeOverlapping_VertexNormals(Operator):
         self.report({'INFO'}, f"已合并 {merged_count} 个重叠/近邻顶点的法线")
         return {'FINISHED'}
 
+class HO_OT_QuickAddLattice(Operator):
+    """以固定默认值为物体模式选中项快速添加晶格。"""
+
+    bl_idname = "ho.quick_add_lattice"
+    bl_label = "快速添加晶格"
+    bl_description = "单物体使用本地包围盒，多物体使用全局整体包围盒"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    _OBJECT_TYPES = {
+        'LATTICE', 'MESH', 'CURVE', 'FONT', 'SURFACE',
+        'GREASEPENCIL', 'GPENCIL',
+    }
+    _GREASE_PENCIL_TYPES = {'GREASEPENCIL', 'GPENCIL'}
+
+    @classmethod
+    def _selected_objects(cls, context):
+        """获取物体模式下可添加晶格修改器的选中物体。"""
+        if getattr(context, "mode", None) != 'OBJECT':
+            return []
+        return [
+            obj for obj in getattr(context, "selected_objects", ())
+            if getattr(obj, "type", None) in cls._OBJECT_TYPES
+        ]
+
+    @staticmethod
+    def _object_points(obj):
+        """将物体包围盒角点转换到世界空间。"""
+        bound_box = getattr(obj, "bound_box", ())
+        if not bound_box:
+            return []
+        try:
+            points = [obj.matrix_world @ Vector(corner) for corner in bound_box]
+        except (AttributeError, TypeError, ValueError):
+            return []
+        if not all(math.isfinite(float(value)) for point in points for value in point):
+            return []
+        return points
+
+    @classmethod
+    def _bounds(cls, objects, rotation):
+        """在晶格自身坐标系中计算选中物体的中心和尺寸。"""
+        inverse_rotation = rotation.to_matrix().transposed()
+        points = []
+        for obj in objects:
+            points.extend(
+                inverse_rotation @ point
+                for point in cls._object_points(obj)
+            )
+        if not points:
+            return None
+
+        minimum = Vector(tuple(
+            min(point[index] for point in points)
+            for index in range(3)
+        ))
+        maximum = Vector(tuple(
+            max(point[index] for point in points)
+            for index in range(3)
+        ))
+        center = (minimum + maximum) * 0.5
+        # 退化轴使用一个很小的尺寸，避免生成不可用的晶格。
+        extent = Vector(tuple(
+            value if abs(value) > 1.0e-8 else 0.1
+            for value in (maximum - minimum)
+        ))
+        return center, extent
+
+    @staticmethod
+    def _link_object(context, lattice_object):
+        """将新晶格链接到当前集合。"""
+        collection = getattr(context, "collection", None)
+        if collection is None:
+            collection = getattr(getattr(context, "scene", None), "collection", None)
+        if collection is None:
+            return False
+        collection.objects.link(lattice_object)
+        return True
+
+    @staticmethod
+    def _set_parent(obj, lattice_object):
+        """设置父级，同时保持原物体的世界变换不变。"""
+        world_matrix = obj.matrix_world.copy()
+        obj.parent = lattice_object
+        obj.matrix_parent_inverse = lattice_object.matrix_world.inverted()
+        obj.matrix_world = world_matrix
+
+    @classmethod
+    def _add_modifier(cls, obj, lattice_object, name):
+        """创建兼容不同 Blender 版本的晶格修改器。"""
+        try:
+            if getattr(obj, "type", None) in cls._GREASE_PENCIL_TYPES:
+                grease_pencil_modifiers = getattr(obj, "grease_pencil_modifiers", None)
+                if grease_pencil_modifiers is not None:
+                    try:
+                        modifier = grease_pencil_modifiers.new(
+                            name=name,
+                            type='GP_LATTICE',
+                        )
+                    except (RuntimeError, TypeError, ValueError):
+                        modifier = obj.modifiers.new(
+                            name=name,
+                            type='GREASE_PENCIL_LATTICE',
+                        )
+                else:
+                    modifier = obj.modifiers.new(
+                        name=name,
+                        type='GREASE_PENCIL_LATTICE',
+                    )
+            else:
+                modifier = obj.modifiers.new(name=name, type='LATTICE')
+            modifier.object = lattice_object
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+        return modifier
+
+    def _create(self, context, objects, rotation, name):
+        """按当前分辨率创建线性晶格并绑定到物体。"""
+        bounds = self._bounds(objects, rotation)
+        if bounds is None:
+            return None, 0
+
+        center, extent = bounds
+        lattice_data = bpy.data.lattices.new(name=f"{name}_LP")
+        lattice_object = bpy.data.objects.new(
+            name=lattice_data.name,
+            object_data=lattice_data,
+        )
+        if not self._link_object(context, lattice_object):
+            bpy.data.objects.remove(lattice_object, do_unlink=True)
+            bpy.data.lattices.remove(lattice_data)
+            return None, 0
+
+        lattice_object.rotation_mode = 'QUATERNION'
+        lattice_object.rotation_quaternion = rotation
+        lattice_object.location = rotation @ center
+        lattice_object.scale = extent
+        lattice_data.points_u, lattice_data.points_v, lattice_data.points_w = self.resolution
+        lattice_data.interpolation_type_u = 'KEY_LINEAR'
+        lattice_data.interpolation_type_v = 'KEY_LINEAR'
+        lattice_data.interpolation_type_w = 'KEY_LINEAR'
+
+        # 等待变换更新后再计算父级逆矩阵，避免不同 Blender 版本读到旧矩阵。
+        view_layer = getattr(context, "view_layer", None)
+        if view_layer is not None:
+            view_layer.update()
+
+        attached = 0
+        for index, obj in enumerate(objects, start=1):
+            modifier = self._add_modifier(
+                obj,
+                lattice_object,
+                name=f"Ho Lattice {index}",
+            )
+            if modifier is None:
+                continue
+            try:
+                self._set_parent(obj, lattice_object)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+            attached += 1
+
+        if attached == 0:
+            bpy.data.objects.remove(lattice_object, do_unlink=True)
+            if lattice_data.users == 0:
+                bpy.data.lattices.remove(lattice_data)
+            return None, 0
+        return lattice_object, attached
+
+    @classmethod
+    def poll(cls, context):
+        return bool(cls._selected_objects(context))
+
+    def invoke(self, context, event):
+        """从菜单调用时弹出唯一需要输入的分辨率参数。"""
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        objects = self._selected_objects(context)
+        if not objects:
+            self.report({'ERROR'}, "请在物体模式下选择可添加晶格的物体")
+            return {'CANCELLED'}
+
+        if len(objects) == 1:
+            rotation = objects[0].matrix_world.to_quaternion()
+            lattice_object, attached = self._create(
+                context,
+                objects,
+                rotation,
+                f"HoLattice_{objects[0].name}",
+            )
+        else:
+            rotation = Matrix.Identity(3).to_quaternion()
+            lattice_object, attached = self._create(
+                context,
+                objects,
+                rotation,
+                "HoLattice_Group",
+            )
+
+        if lattice_object is None:
+            self.report({'ERROR'}, "没有物体可以添加晶格修改器")
+            return {'CANCELLED'}
+
+        self.report({'INFO'}, f"已添加晶格，影响 {attached} 个物体")
+        return {'FINISHED'}
+
+    resolution: IntVectorProperty(
+        name="晶格分辨率",
+        description="晶格在 U、V、W 三个方向上的控制点数量",
+        size=3,
+        default=(2, 2, 2),
+        min=2,
+        max=64,
+        options={'SKIP_SAVE'},
+    )
+
+    def draw(self, context):
+        """参数面板只显示分辨率，其余行为保持固定默认值。"""
+        self.layout.prop(self, "resolution", text="分辨率")
+
+
+class HO_MT_HoObjectTools(bpy.types.Menu):
+    """物体模式下的 HoObjectTools 折叠菜单。"""
+
+    bl_idname = "HO_MT_HoObjectTools"
+    bl_label = "HoObjectTools"
+
+    @classmethod
+    def poll(cls, context):
+        return getattr(context, "mode", None) == 'OBJECT'
+
+    def draw(self, context):
+        if getattr(context, "mode", None) != 'OBJECT':
+            return
+        self.layout.operator_context = 'INVOKE_DEFAULT'
+        self.layout.operator(
+            HO_OT_QuickAddLattice.bl_idname,
+            text="快速添加晶格",
+            icon='MOD_LATTICE',
+        )
+
+
 def draw_in_OUTLINER_MT_context_menu(self, context: bpy.types.Context):
     """大纲视图右键菜单"""
     layout: bpy.types.UILayout = self.layout
@@ -596,6 +838,17 @@ def draw_in_VIEW3D_MT_object_convert(self, context: bpy.types.Context):
     layout: bpy.types.UILayout = self.layout
     row = layout.row(align=True)
     row.operator(OP_MeshToImageEmpty.bl_idname)
+
+
+def draw_in_VIEW3D_MT_object_context_menu(self, context: bpy.types.Context):
+    """仅在物体模式的对象右键菜单中显示 HoObjectTools。"""
+    if getattr(context, "mode", None) != 'OBJECT':
+        return
+    self.layout.menu(
+        HO_MT_HoObjectTools.bl_idname,
+        text=HO_MT_HoObjectTools.bl_label,
+        icon='OBJECT_DATA',
+    )
 
 
 def draw_in_VIEW3D_MT_edit_curve_context_menu(self, context: bpy.types.Context):
@@ -629,7 +882,9 @@ cls = [OP_RestartBlender,
        OP_CustomSplitNormals_Import, OP_CustomSplitNormals_Export,
        OP_MeshToImageEmpty,
        OP_AddSelectSideRingLoops, OP_RemoveSelectSideRingLoops,
-       OP_MergeOverlapping_VertexNormals
+       OP_MergeOverlapping_VertexNormals,
+       HO_OT_QuickAddLattice,
+       HO_MT_HoObjectTools,
        ]
 
 
@@ -639,6 +894,9 @@ def register():
     bpy.types.OUTLINER_MT_context_menu.append(draw_in_OUTLINER_MT_context_menu)
     bpy.types.DATA_PT_customdata.append(draw_in_DATA_PT_customdata)
     bpy.types.VIEW3D_MT_object_convert.append(draw_in_VIEW3D_MT_object_convert)
+    bpy.types.VIEW3D_MT_object_context_menu.prepend(
+        draw_in_VIEW3D_MT_object_context_menu
+    )
     bpy.types.VIEW3D_MT_edit_curve_context_menu.append(
         draw_in_VIEW3D_MT_edit_curve_context_menu)
     # bpy.types.TOPBAR_MT_editor_menus.append(draw_in_TOPBAR_MT_editor_menus)
@@ -654,6 +912,9 @@ def unregister():
         bpy.utils.unregister_class(i)
     bpy.types.OUTLINER_MT_context_menu.remove(draw_in_OUTLINER_MT_context_menu)
     bpy.types.DATA_PT_customdata.remove(draw_in_DATA_PT_customdata)
+    bpy.types.VIEW3D_MT_object_context_menu.remove(
+        draw_in_VIEW3D_MT_object_context_menu
+    )
     bpy.types.VIEW3D_MT_edit_curve_context_menu.remove(
         draw_in_VIEW3D_MT_edit_curve_context_menu)
     # bpy.types.TOPBAR_MT_editor_menus.remove(draw_in_TOPBAR_MT_editor_menus)

@@ -28,6 +28,12 @@ from .edge_flow import (
     HO_OT_SetEdgeFlow,
     HO_OT_SetEdgeLinear,
 )
+from .ho_mesh import (
+    HO_MESH_CLASSES,
+    HO_OT_MeshCircleEven,
+    HO_OT_MeshFlatten,
+    HO_OT_MeshRelax,
+)
 from .curve_bevel import OP_CurveBevel
 from .curve_repair import (
     HO_MT_curve,
@@ -77,6 +83,10 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         layout.operator(HO_OT_SetEdgeFlow.bl_idname, text='设置流', icon='MOD_CURVE')
         layout.operator(HO_OT_SetEdgeCurve.bl_idname, text='设置曲线', icon='CURVE_BEZCURVE')
         layout.operator(HO_OT_SetEdgeLinear.bl_idname, text='设置直线', icon='IPO_LINEAR')
+        layout.separator()
+        layout.operator(HO_OT_MeshFlatten.bl_idname, text='平化', icon='MESH_GRID')
+        layout.operator(HO_OT_MeshRelax.bl_idname, text='松弛', icon='MOD_SMOOTH')
+        layout.operator(HO_OT_MeshCircleEven.bl_idname, text='圆化（均匀间距）', icon='MESH_CIRCLE')
 
 def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
     self.layout.menu(VIEW3D_MT_edit_mesh_hotools.bl_idname)
@@ -108,6 +118,7 @@ cls = [
     VIEW3D_MT_edit_mesh_hotools,
 ]
 cls.extend(EDGE_FLOW_CLASSES)
+cls.extend(HO_MESH_CLASSES)
 
 
 addon_keymaps = []

@@ -1,6 +1,5 @@
 """HoMainPie：模式无关的主工作饼菜单。"""
 import bpy
-from bpy.props import BoolProperty
 from bpy.types import Menu, Operator
 
 from ..ModifierTools import _draw_quick_modifier_buttons
@@ -81,35 +80,6 @@ class HO_OT_HoMainPieToggleRandomPreview(Operator):
         return {"FINISHED"}
 
 
-class HO_OT_HoMainPieSetEdgeOverlays(Operator):
-    """一次打开或关闭网格边缘辅助显示。"""
-
-    bl_idname = "ho.main_pie_set_edge_overlays"
-    bl_label = "网格边缘显示"
-    bl_options = {"REGISTER", "UNDO"}
-
-    enabled: BoolProperty(name="启用", options={"HIDDEN"}) # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        return find_space(context, "VIEW_3D") is not None
-
-    def execute(self, context):
-        space = find_space(context, "VIEW_3D")
-        overlay = getattr(space, "overlay", None)
-        if overlay is None:
-            return {"CANCELLED"}
-        for prop_name in (
-            "show_edge_crease",
-            "show_edge_sharp",
-            "show_edge_bevel_weight",
-            "show_edge_seams",
-        ):
-            if hasattr(overlay, prop_name):
-                setattr(overlay, prop_name, self.enabled)
-        return {"FINISHED"}
-
-
 def _draw_view_options(layout: LayoutBuilder, context):
     """主饼左上角的视图选项和叠加层开关。"""
     space = find_space(context, "VIEW_3D")
@@ -157,15 +127,14 @@ def _draw_main_top_right(layout: LayoutBuilder, context):
 
     # 第一行：界面显示开关。
     row = layout.row(align=True)
-    draw_prop(row, view_preferences, "use_translate_interface", "中/英", icon="WORLD")
+    draw_prop(row, view_preferences, "use_translate_interface", "中/英",icon="BLENDER")
     if (space is not None and screen is not None
             and hasattr(space, "show_region_header")
             and hasattr(screen, "show_statusbar")):
         row.expression(
             "space.show_region_header = not space.show_region_header; "
             "screen.show_statusbar = not screen.show_statusbar",
-            text="标题/状态栏",
-            icon="MENU_PANEL",
+            text="标题/状态",
             depress=lambda current: bool(
                 getattr(getattr(current, "space_data", None),
                         "show_region_header", False)
@@ -177,12 +146,15 @@ def _draw_main_top_right(layout: LayoutBuilder, context):
 
     # 第二行：播放控制和场景帧率。
     row = layout.row(align=True)
+    draw_prop(row, render, "fps", "帧率", icon="TIME")
+    row = layout.row(align=True)
+    row.scale_y = 2
+    row.scale_x = 4
     is_playing = bool(getattr(screen, "is_animation_playing", False))
     row.operator("screen.animation_play",
         text="",icon="PAUSE" if is_playing else "PLAY",depress=is_playing,)
     row.operator("screen.frame_jump",
         text="",icon="REW",props={"end": False},)
-    draw_prop(row, render, "fps", "帧率", icon="TIME")
 
 
 def _draw_quick_edge_tools(layout: LayoutBuilder, context):
@@ -216,20 +188,26 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
     """绘制常用的网格关联选择操作。"""
     col = layout.column(align=True)
     col.scale_x = 1.25
-    col.scale_y = 1.35
-
-    col.operator("mesh.faces_select_linked_flat",
-        text="相邻平展",icon="VIEW_PERSPECTIVE",props={"sharpness": 0.25},)
-    col.operator("mesh.loop_to_region",
-        text="循环线内",icon="VIEW_ORTHO",)
-    col.operator("mesh.region_to_loop",
-        text="边界循环",icon="SELECT_SET",)
+    col.scale_y = 1.25
 
     row = col.row(align=True)
     row.operator("mesh.select_linked",
         text="关联缝合",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
     row.operator("mesh.select_linked",
         text="关联锐边",icon="STRIP_COLOR_05",props={"delimit": {"SHARP"}},)
+
+    col.operator("mesh.faces_select_linked_flat",
+        text="相邻平展",icon="VIEW_PERSPECTIVE",props={"sharpness": 0.25},)
+    row = col.row(align=True)
+    row.operator("mesh.loop_to_region",
+        text="边界内",icon="VIEW_ORTHO",)
+    row.operator("mesh.region_to_loop",
+        text="边界",icon="SELECT_SET",)
+    row = col.row(align=True)
+    row.operator("mesh.loop_multi_select",
+        text="选择循环",icon="FILE_VOLUME",props={"ring": False},)
+    row.operator("mesh.loop_multi_select",
+        text="选择并排",icon="ALIGN_JUSTIFY",props={"ring": True},)
 
 
 def _draw_mesh_left_tools(layout: LayoutBuilder, context):
@@ -247,6 +225,11 @@ def _draw_edge_flow_tools(layout: LayoutBuilder, context):
     row = col.row(align=True)
     row.operator("ho.set_edge_curve", text="并排设流",icon="MOD_WAVE")
     row.operator("ho.set_edge_linear", text="并排设直",icon="FILE_VOLUME")
+    row = col.row(align=True)
+    row.operator("ho.mesh_flatten", text="压平", icon="NOCURVE")
+    row.operator("ho.mesh_relax", text="保边松弛", icon="MOD_SMOOTH")
+    row = col.row(align=True)
+    row.operator("ho.mesh_circle_even", text="均匀圆化", icon="MESH_CIRCLE")
 
 
 def _draw_edge_display(layout: LayoutBuilder, context):
@@ -260,8 +243,24 @@ def _draw_edge_display(layout: LayoutBuilder, context):
     draw_prop(grid, overlay, "show_edge_bevel_weight", "倒角",icon="LAYERGROUP_COLOR_05")
     draw_prop(grid, overlay, "show_edge_seams", "缝合",icon="STRIP_COLOR_01")
 
-    grid.operator(HO_OT_HoMainPieSetEdgeOverlays.bl_idname,text="",icon="CHECKMARK").enabled = True
-    grid.operator(HO_OT_HoMainPieSetEdgeOverlays.bl_idname,text="",icon="X").enabled = False
+    if overlay is not None:
+        grid_builder = LayoutBuilder(grid, context)
+        grid_builder.expression(
+            "o=C.space_data.overlay; "
+            "o.show_edge_crease=True; "
+            "o.show_edge_sharp=True; "
+            "o.show_edge_bevel_weight=True; "
+            "o.show_edge_seams=True",
+            text="", icon="CHECKMARK",
+        )
+        grid_builder.expression(
+            "o=C.space_data.overlay; "
+            "o.show_edge_crease=False; "
+            "o.show_edge_sharp=False; "
+            "o.show_edge_bevel_weight=False; "
+            "o.show_edge_seams=False",
+            text="", icon="X",
+        )
 
 
 class HO_MT_HoMainPieMesh(Menu):
@@ -282,6 +281,20 @@ class HO_MT_HoMainPieMesh(Menu):
         pie.finish()
 
 
+class HO_MT_HoMainPieObject(Menu):
+    """主饼右侧的物体工具子饼。"""
+
+    bl_idname = "HO_MT_HoMainPieObject"
+    bl_label = "物体面板"
+
+    def draw(self, context):
+        pie = HoPie(self.layout, context)
+        object_mode = getattr(context, "mode", None) == 'OBJECT'
+        has_object = getattr(context, "active_object", None) is not None
+        enabled = object_mode and has_object
+        pie.finish()
+
+
 class HO_MT_HoMainPie(Menu):
     """HoTools 的编辑模式主工作饼。"""
 
@@ -292,6 +305,11 @@ class HO_MT_HoMainPie(Menu):
         pie = HoPie(self.layout, context)
         pie.left.pie(HO_MT_HoMainPieMesh.bl_idname,
             text="网格工具",icon="MESH_DATA",)
+        pie.right.pie(
+            HO_MT_HoMainPieObject.bl_idname,
+            text="物体面板",
+            icon="OBJECT_DATA",
+        )
 
         space = find_space(context, "VIEW_3D")
         overlay = getattr(space, "overlay", None)
@@ -309,8 +327,8 @@ class HO_MT_HoMainPie(Menu):
 
 HO_MAIN_PIE_CLASSES = (
     HO_OT_HoMainPieToggleRandomPreview,
-    HO_OT_HoMainPieSetEdgeOverlays,
     HO_MT_HoMainPieMesh,
+    HO_MT_HoMainPieObject,
     HO_MT_HoMainPie,
 )
 
