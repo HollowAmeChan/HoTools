@@ -43,11 +43,12 @@ bl_info = {
     "name": "HoTools",
     "author": "Hollow_ame",
     "version": (3, 0, 0),
-    "blender": (4, 5, 0),
-    "location": "Hollow",
-    "description": "https://space.bilibili.com/60340452",
+    "blender": (4, 1, 0),
+    "location": "View3D > Sidebar > HoTools",
+    "description": "面向独立模型师、mod作者、动画创作者的巨型工具集。",
+    "doc_url": "https://hollowamechan.github.io/HotoolsDoc-Quartz/",
+    "support": "COMMUNITY",
     "warning": "",
-    "wiki_url": "",
     "category": "Mesh",
 }
 
@@ -97,15 +98,25 @@ def updateMainPieState(self, context):
     HoPie.set_pie_enabled('main', self.hoTools_enableHoMainPie)
 
 
+def builtin_asset_library_path():
+    return os.path.normpath(os.path.join(os.path.dirname(__file__), "HoAssets"))
+
+
 # 插件内置资源路径相关函数
-def asset_library_exists(path):
+def asset_library_entry(path):
     libs = bpy.context.preferences.filepaths.asset_libraries
     path = os.path.normpath(path)
 
     for lib in libs:
         if os.path.normpath(lib.path) == path:
-            return True
-    return False
+            return lib
+    return None
+
+
+def asset_library_exists(path):
+    return asset_library_entry(path) is not None
+
+
 def register_asset_library(name, path):
     prefs = bpy.context.preferences.filepaths
     libs = prefs.asset_libraries
@@ -119,14 +130,22 @@ def register_asset_library(name, path):
         libs.new(name=name, path=path)
     return True
 
+
+def unregister_asset_library(path):
+    lib = asset_library_entry(path)
+    if lib is None:
+        return False
+    bpy.context.preferences.filepaths.asset_libraries.remove(lib)
+    return True
+
+
 class OP_register_asset_library(Operator):
     bl_idname = "ho.register_asset_library"
     bl_label = "注册内置资源库"
     bl_description = "将Hotools内置资源库注册到Blender资源库中,可在资源浏览器中使用"
 
     def execute(self, context):
-        addon_dir = os.path.dirname(__file__)
-        asset_path = os.path.join(addon_dir, "HoAssets")
+        asset_path = builtin_asset_library_path()
         if asset_library_exists(asset_path):
             self.report({'INFO'}, "HoAssets已经被注册过了")
             return {'CANCELLED'}
@@ -134,6 +153,31 @@ class OP_register_asset_library(Operator):
         register_asset_library("HoTools", asset_path)
         self.report({'INFO'}, "HoTools资产库HoAssets已注册")
         return {'FINISHED'}
+
+
+class OP_unregister_asset_library(Operator):
+    bl_idname = "ho.unregister_asset_library"
+    bl_label = "注销内置资源库"
+    bl_description = "从 Blender 资源库列表中移除 HoTools 内置资源库"
+
+    def execute(self, context):
+        if not unregister_asset_library(builtin_asset_library_path()):
+            self.report({'INFO'}, "HoAssets 尚未注册")
+            return {'CANCELLED'}
+        self.report({'INFO'}, "HoTools 资产库 HoAssets 已注销")
+        return {'FINISHED'}
+
+
+def _draw_asset_library_controls(layout):
+    registered = asset_library_exists(builtin_asset_library_path())
+    status = layout.row(align=True)
+    if not registered:
+        status.alert = True
+        status.label(text=("点击注册以使用内置资产->"))
+        status.operator('ho.register_asset_library', text='注册内置资源库')
+        status.alert = False
+    if registered:
+        status.operator('ho.unregister_asset_library', text='注销内置资源库')
 
 
 def _draw_module_box(layout, prefs, expanded_prop, title, switch_prop=None, draw_content=None):
@@ -186,10 +230,7 @@ class AddonPreference(bpy.types.AddonPreferences):
 
     def _draw_legacy_preferences(self, context):
         layout: bpy.types.UILayout = self.layout
-        row = layout.row(align=True)
-        row.alert = True
-        row.operator("ho.register_asset_library", text="注册内置资源库")
-        row.alert = False
+        _draw_asset_library_controls(layout)
         row = layout.row(align=True)
         row.prop(self, "hoTools_enableExIcon")
         row.prop(self, "hoTools_ExIconSize")
@@ -223,11 +264,13 @@ class AddonPreference(bpy.types.AddonPreferences):
         wm = context.window_manager
         kc = wm.keyconfigs.user
 
-        intro = layout.box()
+        columns = layout.split(factor=0.3, align=False)
+        left = columns.column(align=True)
+        right = columns.column(align=True)
+
+        intro = left.box()
         intro.label(text='HoTools 模块设置')
-        row = intro.row(align=True)
-        row.alert = True
-        row.operator('ho.register_asset_library', text='注册内置资源库')
+        _draw_asset_library_controls(intro)
 
         def draw_exicon(content):
             row = content.row(align=True)
@@ -235,58 +278,39 @@ class AddonPreference(bpy.types.AddonPreferences):
             row.prop(self, 'hoTools_ExiconAlpha')
 
         def draw_hopie(content):
-            def draw_indented(box, draw_content):
-                split = box.split(factor=0.08, align=True)
-                split.column()
-                draw_content(split.column(align=True))
+            has_details = hasattr(context.scene, 'ho_align_pie_mode')
+            if has_details:
+                split = content.split(factor=0.3, align=False)
+                controls = split.column(align=True)
+                details = split.column(align=True)
+            else:
+                controls = content
+                details = None
 
-            def draw_align_mode(column):
-                column.prop(
+            def draw_toggle(prop_name, label):
+                row = controls.row(align=True)
+                row.prop(self, prop_name, text=label, toggle=True)
+
+            draw_toggle('hoTools_enableAlignPie', '对齐饼')
+            draw_toggle('hoTools_enableCursorPie', '光标与原点饼')
+            draw_toggle('hoTools_enableSelectionModePie', '选择模式饼')
+            draw_toggle('hoTools_enableDeleteMergePie', '删除/合并饼')
+            draw_toggle('hoTools_enableHoMainPie', 'Ho大饼')
+
+            if details is not None:
+                settings = details.box()
+                settings.label(text='对齐饼设置')
+                settings.prop(
                     context.scene,
                     'ho_align_pie_mode',
                     text='模式',
                     expand=True,
                 )
 
-            def draw_empty_slot(box):
-                row = box.row()
-                row.scale_y = 0.35
-                row.label(text='')
-
-            align_box = content.box()
-            row = align_box.row(align=True)
-            row.prop(self, 'hoTools_enableAlignPie', text='')
-            row.label(text='对齐饼')
-            draw_indented(align_box, draw_align_mode)
-
-            cursor_box = content.box()
-            row = cursor_box.row(align=True)
-            row.prop(self, 'hoTools_enableCursorPie', text='')
-            row.label(text='光标与原点饼')
-            draw_empty_slot(cursor_box)
-
-            selection_box = content.box()
-            row = selection_box.row(align=True)
-            row.prop(self, 'hoTools_enableSelectionModePie', text='')
-            row.label(text='选择模式饼')
-            draw_empty_slot(selection_box)
-
-            delete_merge_box = content.box()
-            row = delete_merge_box.row(align=True)
-            row.prop(self, 'hoTools_enableDeleteMergePie', text='')
-            row.label(text='删除/合并饼')
-            draw_empty_slot(delete_merge_box)
-
-            main_pie_box = content.box()
-            row = main_pie_box.row(align=True)
-            row.prop(self, 'hoTools_enableHoMainPie', text='')
-            row.label(text='Ho大饼')
-            draw_empty_slot(main_pie_box)
-
-        _draw_module_box(layout, self, 'hoTools_ui_exicon_expanded', 'ExIcon', 'hoTools_enableExIcon', draw_exicon)
-        _draw_module_box(layout, self, 'hoTools_ui_omninode_expanded', 'OmniNode', 'hoTools_OmniNodeFeatures_enable')
-        _draw_module_box(layout, self, 'hoTools_ui_hotab_expanded', 'HoTab', 'hoTools_enableHoTab')
-        _draw_module_box(layout, self, 'hoTools_ui_hopie_expanded', 'HoPie', draw_content=draw_hopie)
+        _draw_module_box(left, self, 'hoTools_ui_exicon_expanded', 'ExIcon', 'hoTools_enableExIcon', draw_exicon)
+        _draw_module_box(left, self, 'hoTools_ui_omninode_expanded', 'OmniNode', 'hoTools_OmniNodeFeatures_enable')
+        _draw_module_box(left, self, 'hoTools_ui_hotab_expanded', 'HoTab', 'hoTools_enableHoTab')
+        _draw_module_box(left, self, 'hoTools_ui_hopie_expanded', 'HoPie', draw_content=draw_hopie)
 
         def draw_keymaps(content):
             for keymap, keymap_item in _preference_keymaps():
@@ -294,10 +318,10 @@ class AddonPreference(bpy.types.AddonPreferences):
                 rna_keymap_ui.draw_kmi([], kc, keymap, keymap_item, content, 0)
 
         if _preference_keymaps():
-            _draw_module_box(layout, self, 'hoTools_ui_keymaps_expanded', '快捷键', draw_content=draw_keymaps)
+            _draw_module_box(right, self, 'hoTools_ui_keymaps_expanded', '快捷键', draw_content=draw_keymaps)
 
 
-cls = [OP_register_asset_library,AddonPreference,]
+cls = [OP_register_asset_library, OP_unregister_asset_library, AddonPreference,]
 
 
 def register():
