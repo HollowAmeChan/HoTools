@@ -168,12 +168,9 @@ def _draw_quick_edge_tools(layout: LayoutBuilder, context):
     tool_settings = getattr(getattr(context, "scene", None), "tool_settings", None)
     if tool_settings is not None and hasattr(tool_settings, "use_uv_select_sync"):
         col.separator()
-        col.prop(
-            tool_settings,
-            "use_uv_select_sync",
-            text="",
-            icon="UV_SYNC_SELECT",
-        )
+        col.prop(tool_settings,"use_uv_select_sync",text="",icon="UV_SYNC_SELECT",)
+        col.operator("uv.pin",text="",icon="PINNED",props={"clear": False},)
+        col.operator("uv.pin",text="",icon="UNPINNED",props={"clear": True},)
 
 
 def _draw_mesh_selection_tools(layout: LayoutBuilder, context):

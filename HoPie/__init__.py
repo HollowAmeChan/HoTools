@@ -172,6 +172,12 @@ def _register_main_pie_keymap():
         operator_idname='ho.hopie_nested_pie',
         property_name='pie_menu_name', invoke_mode='HOTKEY',
     )
+    _register_keymap(
+        'UV Editor', 'EMPTY', 'SPACE', head=True,
+        menu_name='HO_MT_HoMainPie', keymap_store=main_pie_keymaps,
+        operator_idname='ho.hopie_nested_pie',
+        property_name='pie_menu_name', invoke_mode='HOTKEY',
+    )
 
 
 def set_main_pie_edit_mode_only(only_edit_mode):
