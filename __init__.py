@@ -21,7 +21,8 @@ sys.path.append(py_lib_dir)
 sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
 
 
-from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,ModifierTools,HoPie
+from . import VertexColorTools, ShapekeyTools, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,ModifierTools,HoPie
+from . import ProjectTools, ObjectTools, CurveTools
 from . import OmniNode, HoTab
 from bpy.props import BoolProperty, FloatProperty
 
@@ -31,7 +32,9 @@ import rna_keymap_ui
 
 def _preference_keymaps():
     return [
-        *getattr(FastOperators, 'addon_keymaps', []),
+        *ProjectTools.preference_keymaps(),
+        *ObjectTools.preference_keymaps(),
+        *CurveTools.preference_keymaps(),
         *getattr(VertexGroupTools.vertexGroupOperators, 'addon_keymaps', []),
         *MeshTools.preference_keymaps(),
         *HoPie.preference_keymaps(),
@@ -328,7 +331,10 @@ def register():
     for i in cls:
         bpy.utils.register_class(i)
     
-    FastOperators.register()
+    ProjectTools.register()
+    ObjectTools.register()
+    MeshTools.register()
+    CurveTools.register()
     VertexColorTools.register()
     VertexGroupTools.register()
     ShapekeyTools.register()
@@ -341,7 +347,6 @@ def register():
     NameMapping.register()
     exIcon.register()
     UvTools.register()
-    MeshTools.register()
     Checker.register()
     Rbf.register()
     ModTools.register()
@@ -365,7 +370,10 @@ def unregister():
         bpy.utils.unregister_class(i)
 
     ModifierTools.unregister()
-    FastOperators.unregister()
+    CurveTools.unregister()
+    MeshTools.unregister()
+    ObjectTools.unregister()
+    ProjectTools.unregister()
     VertexColorTools.unregister()
     VertexGroupTools.unregister()
     ShapekeyTools.unregister()
@@ -377,7 +385,6 @@ def unregister():
     NameMapping.unregister()
     exIcon.unregister()
     UvTools.unregister()
-    MeshTools.unregister()
     HoPie.unregister()
     Checker.unregister()
     Rbf.unregister()

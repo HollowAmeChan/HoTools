@@ -8,8 +8,6 @@ from bpy.types import Operator
 from bpy.props import EnumProperty
 
 from ..Checker.objectChecker.define import check_object_shape_keys_with_modifiers
-# 复制操作沿用 FastOperators 中已有的注册类，避免改变原有操作 ID。
-from ..FastOperators import OP_CopyALL_modifiers_to_selected
 from ..ShapekeyTools.operators import (
     OP_applyShowingModifiersKeepShapekeys,
     OP_ForceRemoveAll,
@@ -58,6 +56,41 @@ _DEFORM_ONLY_MODIFIER_TYPES = frozenset({
     "WARP",
     "WAVE",
 })
+
+
+class OP_CopyALL_modifiers_to_selected(Operator):
+    """Copy every modifier from the active object to the other selected objects."""
+
+    bl_idname = "ho.copyall_modifiers_to_selected"
+    bl_label = "复制全部修改器到所选"
+    bl_description = "按顺序复制全部修改器到所选物体"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        active_obj = context.active_object
+        selected_objs = context.selected_objects
+
+        if not active_obj:
+            self.report({"ERROR"}, "没有活动物体")
+            return {"CANCELLED"}
+        if len(selected_objs) < 2:
+            self.report({"ERROR"}, "需要选择至少两个物体（源物体+目标物体）")
+            return {"CANCELLED"}
+
+        modifiers = active_obj.modifiers
+        if not modifiers:
+            self.report({"INFO"}, "活动物体没有修改器")
+            return {"FINISHED"}
+
+        try:
+            for modifier in modifiers:
+                bpy.ops.object.modifier_copy_to_selected(modifier=modifier.name)
+        except RuntimeError as error:
+            self.report({"ERROR"}, f"复制失败: {error}")
+            return {"CANCELLED"}
+
+        self.report({"INFO"}, f"成功复制 {len(modifiers)} 个修改器")
+        return {"FINISHED"}
 
 
 def _has_visible_non_deform_modifier(obj) -> bool:
@@ -318,6 +351,7 @@ _CLASSES = (
     OP_DeleteAllModifiers,
     OP_ToggleModifiersViewport,
     OP_ToggleAllModifiersExpanded,
+    OP_CopyALL_modifiers_to_selected,
 )
 
 

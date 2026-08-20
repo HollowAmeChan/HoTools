@@ -10,6 +10,7 @@ from bpy_extras.view3d_utils import (
 )
 from mathutils import Vector
 
+from Utils.symmetrize import symmetrize
 
 
 AXIS_ITEMS = (
@@ -530,7 +531,7 @@ def _curve_symmetrize(obj, direction, threshold, partial, remove):
 
 
 class OP_Symmetrize(bpy.types.Operator):
-    bl_idname = 'ho.curve_symmetrize'
+    bl_idname = 'ho.symmetrize'
     bl_label = '对称化'
     bl_description = '使用 Alt-X 径向操作对当前网格或曲线进行对称化'
     bl_options = {'REGISTER', 'UNDO'}
@@ -562,8 +563,8 @@ class OP_Symmetrize(bpy.types.Operator):
         return (
             context.area is not None
             and context.area.type == 'VIEW_3D'
-            and active.type == 'CURVE'
-            and context.mode == 'EDIT_CURVE'
+            and active.type == 'MESH'
+            and context.mode in {'EDIT_MESH', 'OBJECT'}
         )
 
     def draw(self, context):
@@ -575,7 +576,19 @@ class OP_Symmetrize(bpy.types.Operator):
         row.prop(self, 'axis', expand=True)
         row.prop(self, 'direction', expand=True)
         layout.prop(self, 'threshold')
-        return
+        if context.active_object and context.active_object.type == 'CURVE':
+            return
+        if not self.remove and not self.partial:
+            if self.is_custom_normal:
+                layout.prop(self, 'mirror_custom_normals')
+                if self.mirror_custom_normals:
+                    layout.prop(self, 'custom_normal_method', expand=True)
+                    layout.prop(self, 'fix_center')
+                    if self.fix_center:
+                        layout.prop(self, 'fix_center_method', expand=True)
+                        layout.prop(self, 'clear_sharps')
+            else:
+                layout.prop(self, 'remove_redundant_center')
 
     def modal(self, context, event):
         context.area.tag_redraw()
@@ -635,21 +648,23 @@ class OP_Symmetrize(bpy.types.Operator):
 
     def execute(self, context):
         active = context.active_object
-        if active.type == 'CURVE':
-            self.result = _curve_symmetrize(
-                active,
-                direction=f'{self.direction}_{self.axis}',
-                threshold=self.threshold,
-                partial=self.partial,
-                remove=self.remove,
-            )
-            return {'FINISHED'}
-
-        self.result = _curve_symmetrize(
+        self.is_custom_normal = bool(getattr(active.data, 'has_custom_normals', False))
+        was_object_mode = context.mode == 'OBJECT'
+        if was_object_mode:
+            bpy.ops.object.mode_set(mode='EDIT')
+        self.result = symmetrize(
             active,
             direction=f'{self.direction}_{self.axis}',
             threshold=self.threshold,
             partial=self.partial,
             remove=self.remove,
+            remove_redundant_center=self.remove_redundant_center,
+            mirror_custom_normals=self.mirror_custom_normals,
+            custom_normal_method=self.custom_normal_method,
+            fix_center=self.fix_center,
+            fix_center_method=self.fix_center_method,
+            clear_sharps=self.clear_sharps,
         )
+        if was_object_mode:
+            bpy.ops.object.mode_set(mode='OBJECT')
         return {'FINISHED'}

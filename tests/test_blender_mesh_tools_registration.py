@@ -16,6 +16,8 @@ if str(ADDON_ROOT) not in sys.path:
 
 MESH_TOOLS = ADDON_ROOT / "MeshTools"
 PACKAGE_NAME = "hotools_mesh_tools_registration_test"
+CURVE_TOOLS = ADDON_ROOT / "CurveTools"
+CURVE_PACKAGE_NAME = "hotools_curve_tools_registration_test"
 
 
 def load_mesh_tools():
@@ -29,6 +31,56 @@ def load_mesh_tools():
     module = importlib.util.module_from_spec(spec)
     sys.modules[PACKAGE_NAME] = module
     spec.loader.exec_module(module)
+
+    curve_spec = importlib.util.spec_from_file_location(
+        CURVE_PACKAGE_NAME,
+        CURVE_TOOLS / "__init__.py",
+        submodule_search_locations=[str(CURVE_TOOLS)],
+    )
+    curve_tools = importlib.util.module_from_spec(curve_spec)
+    sys.modules[CURVE_PACKAGE_NAME] = curve_tools
+    curve_spec.loader.exec_module(curve_tools)
+
+    mesh_register = module.register
+    mesh_unregister = module.unregister
+    mesh_classes = module.cls
+    curve_keymap_pairs = []
+    module.curve_repair = curve_tools.repair
+    module.curve_bevel = curve_tools.bevel
+    module.OP_CurveBevel = curve_tools.OP_CurveBevel
+    module.OP_RepairCurvePath = curve_tools.OP_RepairCurvePath
+    module.HO_MT_curve = curve_tools.HO_MT_curve
+    module.draw_in_VIEW3D_MT_edit_curve_context_menu = (
+        curve_tools.repair.draw_in_VIEW3D_MT_edit_curve_context_menu
+    )
+    module.cls = [*mesh_classes, curve_tools.OP_CurveBevel,
+                  curve_tools.OP_RepairCurvePath, curve_tools.HO_MT_curve]
+
+    def register_with_curve_tools():
+        nonlocal curve_keymap_pairs
+        module.cls = mesh_classes
+        mesh_register()
+        curve_tools.register()
+        module.cls = [*mesh_classes, curve_tools.OP_CurveBevel,
+                      curve_tools.OP_RepairCurvePath, curve_tools.HO_MT_curve]
+        curve_keymap_pairs = list(curve_tools.addon_keymaps)
+        module.addon_keymaps.extend(curve_keymap_pairs)
+
+    def unregister_with_curve_tools():
+        nonlocal curve_keymap_pairs
+        module.addon_keymaps[:] = [
+            item for item in module.addon_keymaps
+            if item not in curve_keymap_pairs
+        ]
+        curve_tools.unregister()
+        curve_keymap_pairs = []
+        module.cls = mesh_classes
+        mesh_unregister()
+        module.cls = [*mesh_classes, curve_tools.OP_CurveBevel,
+                      curve_tools.OP_RepairCurvePath, curve_tools.HO_MT_curve]
+
+    module.register = register_with_curve_tools
+    module.unregister = unregister_with_curve_tools
     return module
 
 
@@ -220,7 +272,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             symmetrize_keymaps = [
                 (keymap, keymap_item)
                 for keymap, keymap_item in mesh_tools.addon_keymaps
-                if keymap_item.idname == "ho.symmetrize"
+                if keymap_item.idname in {"ho.symmetrize", "ho.curve_symmetrize"}
             ]
             self.assertEqual(len(symmetrize_keymaps), 2)
             symmetrize_keymaps_by_name = {
@@ -228,6 +280,14 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 for keymap, keymap_item in symmetrize_keymaps
             }
             self.assertEqual(set(symmetrize_keymaps_by_name), {"Mesh", "Curve"})
+            self.assertEqual(
+                symmetrize_keymaps_by_name["Mesh"].idname,
+                "ho.symmetrize",
+            )
+            self.assertEqual(
+                symmetrize_keymaps_by_name["Curve"].idname,
+                "ho.curve_symmetrize",
+            )
             for keymap_item in symmetrize_keymaps_by_name.values():
                 self.assertEqual(keymap_item.type, 'X')
                 self.assertTrue(keymap_item.alt)

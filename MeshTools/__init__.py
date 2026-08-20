@@ -5,6 +5,7 @@ from .align import OP_Align, OP_AlignRelative
 from .bone_chain import OP_CreatBoneChainByMeshFlow
 from .hole_fill import OP_ModalFillMeshHole
 from .edge_constraint import OP_TransformEdgeConstrained
+from . import symmetrize
 from .symmetrize import OP_Symmetrize
 from .select import (
     OP_EnhancedSelect,
@@ -21,6 +22,21 @@ from .placement import (
     OP_SnapSelectedFaceOrthogonal,
 )
 from .view import OP_AlignViewToAvgNormal
+from .custom_normals import (
+    OP_CustomSplitNormals_Export,
+    OP_CustomSplitNormals_Import,
+)
+from .normals import OP_MergeOverlapping_VertexNormals
+
+
+def draw_in_DATA_PT_customdata(self, context):
+    row = self.layout.row(align=True)
+    row.operator(OP_CustomSplitNormals_Export.bl_idname)
+    row.operator(OP_CustomSplitNormals_Import.bl_idname)
+
+
+def draw_in_VIEW3D_MT_edit_mesh_merge(self, context):
+    self.layout.operator(OP_MergeOverlapping_VertexNormals.bl_idname)
 from .edge_flow import (
     EDGE_FLOW_CLASSES,
     HO_OT_SetEdgeCurve,
@@ -33,13 +49,6 @@ from .ho_mesh import (
     HO_OT_MeshFlatten,
     HO_OT_MeshRelax,
 )
-from .curve_bevel import OP_CurveBevel
-from .curve_repair import (
-    HO_MT_curve,
-    OP_RepairCurvePath,
-    draw_in_VIEW3D_MT_edit_curve_context_menu,
-)
-
 def reg_props():
     return
 
@@ -110,16 +119,36 @@ cls = [
     OP_AddSelectSideRingLoops,
     OP_RemoveSelectSideRingLoops,
     OP_VisualBooleanCut,
-    OP_CurveBevel,
-    OP_RepairCurvePath,
-    HO_MT_curve,
     VIEW3D_MT_edit_mesh_hotools,
 ]
-cls.extend(EDGE_FLOW_CLASSES)
-cls.extend(HO_MESH_CLASSES)
+_SUPPLEMENTAL_CLASSES = (
+    *EDGE_FLOW_CLASSES,
+    *HO_MESH_CLASSES,
+    OP_CustomSplitNormals_Export,
+    OP_CustomSplitNormals_Import,
+    OP_MergeOverlapping_VertexNormals,
+)
+_ROOT_CLASSES = (
+    OP_AlignViewToAvgNormal,
+    OP_CreatBoneChainByMeshFlow,
+    OP_ModalFillMeshHole,
+    OP_TransformEdgeConstrained,
+    OP_Symmetrize,
+    OP_EnhancedSelect,
+    OP_SelectLoop,
+    OP_SelectSharpChain,
+    OP_FillSelection,
+    OP_AddSelectSideRingLoops,
+    OP_RemoveSelectSideRingLoops,
+    OP_VisualBooleanCut,
+    VIEW3D_MT_edit_mesh_hotools,
+    *_SUPPLEMENTAL_CLASSES,
+)
 
 
 addon_keymaps = []
+_registered_classes = []
+_STANDALONE_COMPAT = not __package__.startswith("HoTools.")
 
 
 def preference_keymaps():
@@ -128,15 +157,16 @@ def preference_keymaps():
 
 def register():
     boolean.register()
-    for i in cls:
+    _registered_classes.clear()
+    classes = cls if _STANDALONE_COMPAT else _ROOT_CLASSES
+    for i in classes:
         bpy.utils.register_class(i)
+        _registered_classes.append(i)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
     )
-    if hasattr(bpy.types, 'VIEW3D_MT_edit_curve_context_menu'):
-        bpy.types.VIEW3D_MT_edit_curve_context_menu.append(
-            draw_in_VIEW3D_MT_edit_curve_context_menu
-        )
+    bpy.types.DATA_PT_customdata.append(draw_in_DATA_PT_customdata)
+    bpy.types.VIEW3D_MT_edit_mesh_merge.append(draw_in_VIEW3D_MT_edit_mesh_merge)
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if keyconfig:
         keymap = keyconfig.keymaps.new(
@@ -208,7 +238,7 @@ def register():
         keymap_item.properties.objmode = False
         addon_keymaps.append((mesh_keymap, keymap_item))
 
-        for keymap_name in ("Object Mode", "Pose"):
+        for keymap_name in ("Object Mode", "Pose") if _STANDALONE_COMPAT else ():
             keymap = keyconfig.keymaps.new(
                 name=keymap_name,
                 space_type='EMPTY',
@@ -223,30 +253,6 @@ def register():
             )
             addon_keymaps.append((keymap, keymap_item))
 
-        keymap = keyconfig.keymaps.new(
-            name='Curve',
-            space_type='EMPTY',
-            region_type='WINDOW',
-        )
-        keymap_item = keymap.keymap_items.new(
-            OP_Symmetrize.bl_idname,
-            type='X',
-            value='PRESS',
-            alt=True,
-            head=True,
-        )
-        keymap_item.properties.flick = True
-        keymap_item.properties.objmode = False
-        addon_keymaps.append((keymap, keymap_item))
-
-        keymap_item = keymap.keymap_items.new(
-            OP_CurveBevel.bl_idname,
-            type='B',
-            value='PRESS',
-            ctrl=True,
-            head=True,
-        )
-        addon_keymaps.append((keymap, keymap_item))
     reg_props()
 
 
@@ -258,11 +264,10 @@ def unregister():
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(
         draw_in_VIEW3D_MT_edit_mesh_context_menu
     )
-    if hasattr(bpy.types, 'VIEW3D_MT_edit_curve_context_menu'):
-        bpy.types.VIEW3D_MT_edit_curve_context_menu.remove(
-            draw_in_VIEW3D_MT_edit_curve_context_menu
-        )
-    for i in reversed(cls):
+    bpy.types.DATA_PT_customdata.remove(draw_in_DATA_PT_customdata)
+    bpy.types.VIEW3D_MT_edit_mesh_merge.remove(draw_in_VIEW3D_MT_edit_mesh_merge)
+    for i in reversed(_registered_classes):
         bpy.utils.unregister_class(i)
+    _registered_classes.clear()
     boolean.unregister()
     ureg_props()
