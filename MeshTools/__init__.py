@@ -1,7 +1,6 @@
 import bpy
 
 from . import boolean
-from .align import OP_Align, OP_AlignRelative
 from .bone_chain import OP_CreatBoneChainByMeshFlow
 from .edge_constraint import OP_TransformEdgeConstrained
 from .edge_flow import (
@@ -18,12 +17,6 @@ from .ho_mesh import (
     HO_OT_MeshRelax,
 )
 from .hole_fill import OP_ModalFillMeshHole
-from .placement import (
-    OP_AutoPlaceObjectBottom,
-    OP_AutoSnapFaceOrthogonal,
-    OP_PlaceObjectBottom,
-    OP_SnapSelectedFaceOrthogonal,
-)
 from .select import (
     OP_EnhancedSelect,
     OP_SelectLoop,
@@ -59,22 +52,6 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator(
-            OP_AutoPlaceObjectBottom.bl_idname,
-            icon='SNAP_FACE',
-        )
-        layout.operator(
-            OP_PlaceObjectBottom.bl_idname,
-            icon='TRIA_DOWN',
-        )
-        layout.operator(
-            OP_AutoSnapFaceOrthogonal.bl_idname,
-            icon='ORIENTATION_GLOBAL',
-        )
-        layout.operator(
-            OP_SnapSelectedFaceOrthogonal.bl_idname,
-            icon='ORIENTATION_GLOBAL',
-        )
         layout.operator(
             OP_AlignViewToAvgNormal.bl_idname,
             icon='RESTRICT_RENDER_OFF',

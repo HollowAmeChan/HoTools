@@ -257,22 +257,9 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 SimpleNamespace(layout=menu_layout),
                 bpy.context,
             )
-            self.assertIn(
-                "ho.auto_place_object_bottom",
-                menu_layout.operator_ids,
-            )
-            self.assertIn(
-                "ho.placeobjectbottom",
-                menu_layout.operator_ids,
-            )
-            self.assertIn(
-                "ho.auto_snap_face_orthogonal",
-                menu_layout.operator_ids,
-            )
-            self.assertIn(
-                "ho.snap_selected_face_orthogonal",
-                menu_layout.operator_ids,
-            )
+            self.assertIn("ho.align_to_avg_normal", menu_layout.operator_ids)
+            self.assertIn("ho.create_bone_chain_by_meshflow", menu_layout.operator_ids)
+            self.assertIn("ho.modal_fill_mesh_hole", menu_layout.operator_ids)
             self.assertNotIn("ho.symmetrize", menu_layout.operator_ids)
             keymap_items = [
                 keymap_item
@@ -375,61 +362,6 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             self.assertTrue(curve_keymap_item.ctrl)
             self.assertEqual(curve_keymap.keymap_items[0].id, curve_keymap_item.id)
 
-            operator_layout = RecordingLayout()
-            mesh_tools.OP_AutoPlaceObjectBottom.draw(
-                SimpleNamespace(layout=operator_layout),
-                bpy.context,
-            )
-            self.assertEqual(
-                operator_layout.property_ids,
-                ["keep_origin_transform"],
-            )
-            manual_operator_layout = RecordingLayout()
-            mesh_tools.OP_PlaceObjectBottom.draw(
-                SimpleNamespace(layout=manual_operator_layout),
-                bpy.context,
-            )
-            self.assertEqual(
-                manual_operator_layout.property_ids,
-                ["keep_origin_transform"],
-            )
-            auto_snap_layout = RecordingLayout()
-            mesh_tools.OP_AutoSnapFaceOrthogonal.draw(
-                SimpleNamespace(layout=auto_snap_layout),
-                bpy.context,
-            )
-            self.assertEqual(
-                auto_snap_layout.property_ids,
-                ["keep_origin_transform"],
-            )
-            selected_snap_layout = RecordingLayout()
-            mesh_tools.OP_SnapSelectedFaceOrthogonal.draw(
-                SimpleNamespace(layout=selected_snap_layout),
-                bpy.context,
-            )
-            self.assertEqual(
-                selected_snap_layout.property_ids,
-                ["keep_origin_transform"],
-            )
-
-            poll_context = SimpleNamespace(
-                area=SimpleNamespace(type='VIEW_3D'),
-                active_object=SimpleNamespace(type='MESH'),
-                mode='OBJECT',
-            )
-            self.assertFalse(
-                mesh_tools.OP_AutoPlaceObjectBottom.poll(poll_context)
-            )
-            self.assertFalse(
-                mesh_tools.OP_AutoSnapFaceOrthogonal.poll(poll_context)
-            )
-            poll_context.mode = 'EDIT_MESH'
-            self.assertTrue(
-                mesh_tools.OP_AutoPlaceObjectBottom.poll(poll_context)
-            )
-            self.assertTrue(
-                mesh_tools.OP_AutoSnapFaceOrthogonal.poll(poll_context)
-            )
         finally:
             mesh_tools.unregister()
 

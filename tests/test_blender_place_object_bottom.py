@@ -20,11 +20,11 @@ def load_placement():
         return sys.modules[module_name]
 
     package = types.ModuleType(package_name)
-    package.__path__ = [str(ADDON_ROOT / "MeshTools")]
+    package.__path__ = [str(ADDON_ROOT / "ObjectTools")]
     sys.modules[package_name] = package
     spec = importlib.util.spec_from_file_location(
         module_name,
-        ADDON_ROOT / "MeshTools" / "placement.py",
+        ADDON_ROOT / "ObjectTools" / "placement.py",
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module

@@ -69,6 +69,16 @@ class ToolModuleBoundaryTests(unittest.TestCase):
         source = (ROOT / "MeshTools" / "__init__.py").read_text(encoding="utf-8")
         self.assertNotIn("CurveTools", source)
 
+    def test_object_tools_own_object_transform_implementations(self):
+        mesh_source = (ROOT / "MeshTools" / "__init__.py").read_text(encoding="utf-8")
+        object_source = (ROOT / "ObjectTools" / "__init__.py").read_text(encoding="utf-8")
+        self.assertNotIn("from .align", mesh_source)
+        self.assertNotIn("from .placement", mesh_source)
+        self.assertIn("from .align", object_source)
+        self.assertIn("from .placement", object_source)
+        self.assertTrue((ROOT / "ObjectTools" / "align.py").exists())
+        self.assertTrue((ROOT / "ObjectTools" / "placement.py").exists())
+
     def test_mesh_and_curve_symmetrize_have_separate_ids(self):
         mesh_source = (ROOT / "MeshTools" / "symmetrize.py").read_text(encoding="utf-8")
         curve_source = (ROOT / "CurveTools" / "symmetrize.py").read_text(encoding="utf-8")

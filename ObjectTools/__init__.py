@@ -4,8 +4,8 @@ import bpy
 
 from .lattice import HO_MT_HoObjectTools, HO_OT_QuickAddLattice
 from .image_reference import OP_MeshToImageEmpty
-from ..MeshTools.align import OP_Align, OP_AlignRelative
-from ..MeshTools.placement import (
+from .align import OP_Align, OP_AlignRelative
+from .placement import (
     OP_AutoPlaceObjectBottom,
     OP_AutoSnapFaceOrthogonal,
     OP_PlaceObjectBottom,

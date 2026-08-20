@@ -12,7 +12,7 @@ ADDON_ROOT = Path(__file__).resolve().parents[1]
 if str(ADDON_ROOT) not in sys.path:
     sys.path.insert(0, str(ADDON_ROOT))
 
-import MeshTools  # noqa: E402
+import ObjectTools  # noqa: E402
 
 
 def new_empty(name, location=(0.0, 0.0, 0.0)):
@@ -32,11 +32,11 @@ def select_objects(objects, active):
 class AlignTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        MeshTools.register()
+        ObjectTools.register()
 
     @classmethod
     def tearDownClass(cls):
-        MeshTools.unregister()
+        ObjectTools.unregister()
 
     def tearDown(self):
         if bpy.context.mode != 'OBJECT':
@@ -187,7 +187,7 @@ class AlignTests(unittest.TestCase):
         )
         duplicate_data = {'map': {aligner: duplicate}, 'dups': [duplicate]}
 
-        MeshTools.OP_AlignRelative.reparent(
+        ObjectTools.OP_AlignRelative.reparent(
             op,
             duplicate_data,
             target,
