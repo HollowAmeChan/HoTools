@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import bmesh
 import bpy
@@ -40,6 +41,131 @@ def keymap_items_for_menu(menu_name):
 
 
 class NewPieRegistrationTests(unittest.TestCase):
+    def test_main_pie_owns_mesh_selection_operators(self):
+        hopie = load_hopie()
+        ids = {item.bl_idname for item in hopie.HoMainPie.HO_MAIN_PIE_CLASSES}
+        self.assertIn('ho.vertexgrouptools_select_oneside', ids)
+        self.assertIn('ho.vertexgrouptools_select_mirror', ids)
+
+    def test_mesh_selection_tools_end_with_side_and_mirror_row(self):
+        hopie = load_hopie()
+
+        class RecordingRow:
+            def __init__(self):
+                self.operators = []
+                self.labels = []
+
+            def operator(self, idname, text=None, props=None, **_kwargs):
+                self.operators.append((idname, text, props))
+                return None
+
+            def label(self, text=None, icon=None, **_kwargs):
+                self.labels.append((text, icon))
+
+        class RecordingLayout:
+            def __init__(self):
+                self.rows = []
+
+            def column(self, **_kwargs):
+                return self
+
+            def row(self, **_kwargs):
+                row = RecordingRow()
+                self.rows.append(row)
+                return row
+
+        layout = RecordingLayout()
+        hopie.HoMainPie._draw_mesh_selection_tools(layout, None)
+
+        self.assertEqual(
+            layout.rows[-1].operators,
+            [
+                (
+                    'ho.vertexgrouptools_select_oneside',
+                    '左半',
+                    {'reverse': True},
+                ),
+                (
+                    'ho.vertexgrouptools_select_oneside',
+                    '右半',
+                    {'reverse': False},
+                ),
+                ('ho.vertexgrouptools_select_mirror', '选择镜像', None),
+            ],
+        )
+
+        rotated_layout = RecordingLayout()
+        rotated_context = SimpleNamespace(
+            mode='EDIT_MESH',
+            active_object=SimpleNamespace(
+                type='MESH',
+                rotation_mode='XYZ',
+                rotation_euler=(0.0, 0.0, 0.25),
+            ),
+        )
+        hopie.HoMainPie._draw_mesh_selection_tools(
+            rotated_layout,
+            rotated_context,
+        )
+        self.assertEqual(
+            rotated_layout.rows[-1].labels,
+            [('物体有旋转：半选按本地 X 轴', 'WARNING_LARGE')],
+        )
+
+    def test_main_pie_mesh_side_and_mirror_selection(self):
+        hopie = load_hopie()
+        hopie.register()
+        hopie.set_pie_enabled('main', True)
+
+        mesh = bpy.data.meshes.new('main_pie_side_selection_mesh')
+        mesh.from_pydata(
+            [(-1.0, 0.0, 0.0), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)],
+            [(0, 1), (1, 2)],
+            [],
+        )
+        obj = bpy.data.objects.new('main_pie_side_selection_object', mesh)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+
+        def selected_indices():
+            bm = bmesh.from_edit_mesh(mesh)
+            return {vert.index for vert in bm.verts if vert.select}
+
+        try:
+            bpy.ops.object.mode_set(mode='EDIT')
+
+            self.assertEqual(
+                bpy.ops.ho.vertexgrouptools_select_oneside(reverse=True),
+                {'FINISHED'},
+            )
+            self.assertEqual(selected_indices(), {0})
+
+            self.assertEqual(
+                bpy.ops.ho.vertexgrouptools_select_oneside(reverse=False),
+                {'FINISHED'},
+            )
+            self.assertEqual(selected_indices(), {2})
+
+            bpy.ops.ho.vertexgrouptools_select_oneside(reverse=True)
+            self.assertEqual(
+                bpy.ops.ho.vertexgrouptools_select_mirror(extend=False),
+                {'FINISHED'},
+            )
+            self.assertEqual(selected_indices(), {2})
+
+            bpy.ops.ho.vertexgrouptools_select_oneside(reverse=True)
+            self.assertEqual(
+                bpy.ops.ho.vertexgrouptools_select_mirror(extend=True),
+                {'FINISHED'},
+            )
+            self.assertEqual(selected_indices(), {0, 2})
+        finally:
+            if bpy.context.mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.data.objects.remove(obj, do_unlink=True)
+            hopie.unregister()
+
     def test_registration_and_keymaps(self):
         hopie = load_hopie()
         hopie.register()

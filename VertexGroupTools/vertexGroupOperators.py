@@ -1814,46 +1814,6 @@ class OP_VertexGroupTools_FloodFill_VG_weight(Operator):
 
         return {'FINISHED'}
 
-class OP_VertexGroupTools_Select_Vertices_halfside(Operator):
-    """选择一半的网格"""
-    bl_idname = "ho.vertexgrouptools_select_oneside"
-    bl_label = "选择一半的"
-    bl_description = "编辑模式下,选择一半的网格"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    reverse:BoolProperty(default=False,name="是否翻转(选择x-)") # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
-
-    def execute(self, context):
-        obj = context.active_object
-
-        bpy.ops.mesh.select_mode(use_extend=False, use_expand=False, type='VERT')
-
-        mesh = bmesh.from_edit_mesh(obj.data)
-        mesh.faces.ensure_lookup_table()  # 刷新索引表
-        mesh.edges.ensure_lookup_table()
-        mesh.verts.ensure_lookup_table() 
-        # 取消所有顶点的选择
-        for v in mesh.verts:
-            v.select_set(False)
-
-        for v in mesh.verts:
-            if not self.reverse:
-                if v.co.x > 0.0001:
-                    v.select_set(True)
-            else:
-                if v.co.x < -0.0001:
-                    v.select_set(True)
-
-        mesh.select_flush_mode()
-        bmesh.update_edit_mesh(obj.data)
-        obj.update_from_editmode()
-        return {'FINISHED'}
-
 class OP_VertexGroupTools_Select_Vertices_by_WeightValue(Operator):
     bl_idname = "ho.vertexgrouptools_select_by_weightvalue"
     bl_label = "选择小于"
@@ -2403,32 +2363,6 @@ class OP_DebugBoneWeightGroupRefresh(Operator):
         self.report({'INFO'}, "Debug 已刷新")
         return {'FINISHED'}
 
-class OP_VertexGroupTools_select_mirror(Operator):
-    bl_idname = "ho.vertexgrouptools_select_mirror"
-    bl_label = "选择镜像"
-    bl_options = {'REGISTER', 'UNDO'}
-    bl_description = "编辑模式下,按住shift触发时加选另一边,否则选择另一边"
-
-    extend: bpy.props.BoolProperty(
-        name="Extend",
-        default=False
-    )  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
-
-    def invoke(self, context, event):
-        # 根据 Shift 决定默认行为
-        self.extend = event.shift
-        return self.execute(context)
-
-    def execute(self, context):
-        bpy.ops.mesh.select_mirror('EXEC_DEFAULT', extend=self.extend)
-        return {'FINISHED'}
-
-
 def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     scene = context.scene
     box = layout.box()
@@ -2458,11 +2392,6 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     col = layout.column(align=True)
     col.scale_y = 2.0
     row = col.row(align=True)
-    op = row.operator(OP_VertexGroupTools_Select_Vertices_halfside.bl_idname,text="左半")
-    op.reverse = True
-    op = row.operator(OP_VertexGroupTools_Select_Vertices_halfside.bl_idname,text="右半")
-    op.reverse = False
-    op = row.operator(OP_VertexGroupTools_select_mirror.bl_idname,text="选择镜像")
     op2 = row.operator(OP_VertexGroupTools_Select_Vertices_by_WeightValue.bl_idname,text="选择小于")
     op2.value = scene.hoVertexGroupTools_select_by_weightvalue
     row.prop(scene,"hoVertexGroupTools_select_by_weightvalue",text="")
@@ -2664,14 +2593,13 @@ cls = [
     OP_VertexGroupTools_SoftWeight,OP_VertexGroupTools_SharpenWeight,
     OP_VertexGroupTools_Switch_VG_byCursor,
     OP_VertexGroupTools_Change_VG_weight,OP_VertexGroupTools_FloodFill_VG_weight,
-    OP_VertexGroupTools_Select_Vertices_halfside,OP_VertexGroupTools_Select_Vertices_by_WeightValue,
+    OP_VertexGroupTools_Select_Vertices_by_WeightValue,
     OP_VertexGroupTools_Max_VG_Limit,
     OP_SelectNonWeightVertices,
     OP_GenegateNoneMirroredGroup,
     OP_RemoveNoneWeightGroup,
     OP_VertexGroupTools_SoftWeight_AllBone,OP_VertexGroupTools_SharpenWeight_AllBone,
     OP_DebugBoneWeightGroupSwitch,OP_DebugBoneWeightGroupClear,OP_DebugBoneWeightGroupRefresh,
-    OP_VertexGroupTools_select_mirror,
 ]
 
 

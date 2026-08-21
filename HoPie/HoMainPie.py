@@ -159,6 +159,105 @@ class HO_OT_HoMainPieSetEdgeCrease(Operator):
         return {"FINISHED"}
 
 
+class HO_OT_HoMainPieSelectHalf(Operator):
+    """Select the vertices on one side of the mesh's local X axis."""
+
+    bl_idname = "ho.vertexgrouptools_select_oneside"
+    bl_label = "选择一半"
+    bl_description = "编辑模式下，选择物体局部 X 轴一侧的顶点"
+    bl_options = {"REGISTER", "UNDO"}
+
+    reverse: bpy.props.BoolProperty(
+        default=False,
+        name="选择左半",
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = getattr(context, "active_object", None)
+        return getattr(obj, "type", None) == "MESH" and obj.mode == "EDIT"
+
+    def execute(self, context):
+        import bmesh
+
+        obj = context.active_object
+        bpy.ops.mesh.select_mode(
+            use_extend=False,
+            use_expand=False,
+            type="VERT",
+        )
+
+        mesh = bmesh.from_edit_mesh(obj.data)
+        mesh.verts.ensure_lookup_table()
+        for vert in mesh.verts:
+            vert.select_set(False)
+
+        if self.reverse:
+            for vert in mesh.verts:
+                if vert.co.x < -0.0001:
+                    vert.select_set(True)
+        else:
+            for vert in mesh.verts:
+                if vert.co.x > 0.0001:
+                    vert.select_set(True)
+
+        mesh.select_flush_mode()
+        bmesh.update_edit_mesh(obj.data)
+        obj.update_from_editmode()
+        return {"FINISHED"}
+
+
+class HO_OT_HoMainPieSelectMirror(Operator):
+    """Replace the selection with its mirror, or extend it while Shift is held."""
+
+    bl_idname = "ho.vertexgrouptools_select_mirror"
+    bl_label = "选择镜像"
+    bl_description = "编辑模式下选择镜像；按住 Shift 点击时加选镜像"
+    bl_options = {"REGISTER", "UNDO"}
+
+    extend: bpy.props.BoolProperty(
+        name="加选",
+        default=False,
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = getattr(context, "active_object", None)
+        return getattr(obj, "type", None) == "MESH" and obj.mode == "EDIT"
+
+    def invoke(self, context, event):
+        self.extend = event.shift
+        return self.execute(context)
+
+    def execute(self, context):
+        bpy.ops.mesh.select_mirror("EXEC_DEFAULT", extend=self.extend)
+        return {"FINISHED"}
+
+
+def _object_has_local_rotation(obj, tolerance=1e-6):
+    """Return whether the object's local rotation transform is non-identity."""
+    if obj is None:
+        return False
+
+    rotation_mode = getattr(obj, "rotation_mode", "XYZ")
+    if rotation_mode == "QUATERNION":
+        rotation = getattr(obj, "rotation_quaternion", None)
+        if rotation is None:
+            return False
+        return (
+            abs(abs(float(rotation[0])) - 1.0) > tolerance
+            or any(abs(float(value)) > tolerance for value in rotation[1:])
+        )
+    if rotation_mode == "AXIS_ANGLE":
+        rotation = getattr(obj, "rotation_axis_angle", None)
+        return rotation is not None and abs(float(rotation[0])) > tolerance
+
+    rotation = getattr(obj, "rotation_euler", None)
+    return rotation is not None and any(
+        abs(float(value)) > tolerance for value in rotation
+    )
+
+
 def _draw_view_options(layout: LayoutBuilder, context):
     """主饼左上角的视图选项和叠加层开关。"""
     space = find_space(context, "VIEW_3D")
@@ -304,6 +403,27 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
         text="选择循环",icon="FILE_VOLUME",props={"ring": False},)
     row.operator("mesh.loop_multi_select",
         text="选择并排",icon="ALIGN_JUSTIFY",props={"ring": True},)
+
+    row = col.row(align=True)
+    row.scale_y = 1.5
+    row.operator("ho.vertexgrouptools_select_oneside",
+        text="左半",props={"reverse": True},)
+    row.operator("ho.vertexgrouptools_select_oneside",
+        text="右半",props={"reverse": False},)
+    row.operator("ho.vertexgrouptools_select_mirror",
+        text="选择镜像",)
+
+    obj = getattr(context, "active_object", None)
+    if (
+        getattr(context, "mode", None) == "EDIT_MESH"
+        and getattr(obj, "type", None) == "MESH"
+        and _object_has_local_rotation(obj)
+    ):
+        warning = col.row(align=True)
+        warning.label(
+            text="物体有旋转：半选按本地 X 轴",
+            icon="WARNING_LARGE",
+        )
 
 
 def _draw_mesh_left_tools(layout: LayoutBuilder, context):
@@ -465,6 +585,8 @@ HO_MAIN_PIE_CLASSES = (
     HO_OT_HoMainPieToggleRandomPreview,
     HO_OT_HoMainPieSeparateLoose,
     HO_OT_HoMainPieSetEdgeCrease,
+    HO_OT_HoMainPieSelectHalf,
+    HO_OT_HoMainPieSelectMirror,
     HO_MT_HoMainPieMesh,
     HO_MT_HoMainPieObject,
     HO_MT_HoMainPie,
