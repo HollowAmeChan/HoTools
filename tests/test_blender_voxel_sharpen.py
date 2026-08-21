@@ -108,8 +108,15 @@ result = bpy.ops.ho.vertexgrouptools_sharpen_weight_allbone(
 assert result == {'FINISHED'}, result
 after_locked = [group_b.weight(index) for index in range(4)]
 assert after_locked == before_locked
+
+def weight_or_zero(group, vertex_index):
+    for assignment in mesh_data.vertices[vertex_index].groups:
+        if assignment.group == group.index:
+            return assignment.weight
+    return 0.0
+
 for index in range(3):
-    assert abs(group_a.weight(index) + group_b.weight(index) - 1.0) < 1e-6
+    assert abs(weight_or_zero(group_a, index) + weight_or_zero(group_b, index) - 1.0) < 1e-6
 
 bpy.ops.object.mode_set(mode="OBJECT")
 operators.unregister()

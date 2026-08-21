@@ -103,7 +103,7 @@ def reg_props():
     bpy.types.Scene.hoVertexGroupTools_OnlyAffectBoneGroup = BoolProperty(name="仅影响骨骼权重组",default=True,description="仅影响骨骼权重组，非骨骼权重组将被忽略。对于通用操作此开关会被忽略")
     bpy.types.Scene.hoVertexGroupTools_isAutoNormalizeWeight = BoolProperty(name="Ho自动归一化",default=True,description="仅控制Hotools拓展中对权重的直接操作的是否自动归一化（不包括限制组、清除小于）")
     bpy.types.Scene.hoVertexGroupTools_sharpen_strength = FloatProperty(
-        name="锐化强度", default=1.0, min=0.0, max=5.0
+        name="锐化强度", default=0.5, min=0.0, max=2.0
     )
     bpy.types.Scene.hoVertexGroupTools_sharpen_resolution_mode = EnumProperty(
         name="体素分辨率模式",
@@ -124,6 +124,11 @@ def reg_props():
     )
     bpy.types.Scene.hoVertexGroupTools_sharpen_topology_hops = IntProperty(
         name="拓扑步数", default=2, min=0, max=8
+    )
+    bpy.types.Scene.hoVertexGroupTools_sharpen_show_advanced = BoolProperty(
+        name="显示锐化高级属性",
+        description="显示锐化和锐化全部的体素参数",
+        default=False,
     )
 
     bpy.types.Scene.hoVertexGroupTools_remove_max = FloatProperty(name="最大值",description="顶点在此组中的权重，若小于等于这个值，则会被移除顶点组",default=0,min=0,max=1)
@@ -159,6 +164,7 @@ def ureg_props():
     del bpy.types.Scene.hoVertexGroupTools_sharpen_blur_radius
     del bpy.types.Scene.hoVertexGroupTools_sharpen_iterations
     del bpy.types.Scene.hoVertexGroupTools_sharpen_topology_hops
+    del bpy.types.Scene.hoVertexGroupTools_sharpen_show_advanced
     
     del bpy.types.Scene.hoVertexGroupTools_remove_max
     del bpy.types.Scene.hoVertexGroupTools_vg_increment1
@@ -1789,7 +1795,7 @@ class OP_VertexGroupTools_SharpenWeight(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     strength: FloatProperty(
-        name="锐化强度", default=1.0, min=0.0, max=5.0
+        name="锐化强度", default=0.5, min=0.0, max=2.0
     )  # type: ignore
     resolution_mode: EnumProperty(
         name="体素分辨率模式",
@@ -1890,7 +1896,7 @@ class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     strength: FloatProperty(
-        name="锐化强度", default=1.0, min=0.0, max=5.0
+        name="锐化强度", default=0.5, min=0.0, max=2.0
     )  # type: ignore
     resolution_mode: EnumProperty(
         name="体素分辨率模式",
@@ -2760,27 +2766,9 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     op2 = row.operator(OP_VertexGroupTools_FloodFill_VG_weight.bl_idname,text="侵蚀")
     op2.reverse = True
     row = col.row(align=True)
-    row.operator(OP_VertexGroupTools_SoftWeight.bl_idname,text="柔化"
-                    )
-    row = col.row(align=True)
-    row.operator(OP_VertexGroupTools_SoftWeight_AllBone.bl_idname,text="柔化全部")
+    row.operator(OP_VertexGroupTools_SoftWeight.bl_idname, text="柔化")
+    row.operator(OP_VertexGroupTools_SoftWeight_AllBone.bl_idname, text="柔化全部")
 
-    # Voxel sharpening controls. Manual mode exposes an explicit resolution;
-    # the remaining controls are shared by the single-group and all-bone ops.
-    row = col.row(align=True)
-    row.prop(scene, "hoVertexGroupTools_sharpen_strength", text="强度")
-    row.prop(scene, "hoVertexGroupTools_sharpen_resolution_mode", text="")
-    if scene.hoVertexGroupTools_sharpen_resolution_mode == 'MANUAL':
-        row.prop(scene, "hoVertexGroupTools_sharpen_voxel_resolution", text="分辨率")
-    else:
-        row.label(text="自动分辨率")
-    row = col.row(align=True)
-    row.prop(scene, "hoVertexGroupTools_sharpen_blur_radius", text="模糊")
-    row.prop(scene, "hoVertexGroupTools_sharpen_iterations", text="迭代")
-    row.prop(scene, "hoVertexGroupTools_sharpen_topology_hops", text="拓扑")
-
-    # Assign scene settings explicitly so both buttons use the same advanced
-    # controls while still leaving the operator redo panel functional.
     sharpen_row = col.row(align=True)
     sharpen_op = sharpen_row.operator(
         OP_VertexGroupTools_SharpenWeight.bl_idname, text="锐化"
@@ -2800,6 +2788,26 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     all_sharpen_op.blur_radius = scene.hoVertexGroupTools_sharpen_blur_radius
     all_sharpen_op.iterations = scene.hoVertexGroupTools_sharpen_iterations
     all_sharpen_op.topology_hops = scene.hoVertexGroupTools_sharpen_topology_hops
+    sharpen_row.prop(
+        scene,
+        "hoVertexGroupTools_sharpen_show_advanced",
+        text="",
+        icon="PREFERENCES",
+        toggle=True,
+    )
+
+    if scene.hoVertexGroupTools_sharpen_show_advanced:
+        row = col.row(align=True)
+        row.prop(scene, "hoVertexGroupTools_sharpen_strength", text="强度")
+        row.prop(scene, "hoVertexGroupTools_sharpen_resolution_mode", text="")
+        if scene.hoVertexGroupTools_sharpen_resolution_mode == 'MANUAL':
+            row.prop(scene, "hoVertexGroupTools_sharpen_voxel_resolution", text="分辨率")
+        else:
+            row.label(text="自动分辨率")
+        row = col.row(align=True)
+        row.prop(scene, "hoVertexGroupTools_sharpen_blur_radius", text="模糊")
+        row.prop(scene, "hoVertexGroupTools_sharpen_iterations", text="迭代")
+        row.prop(scene, "hoVertexGroupTools_sharpen_topology_hops", text="拓扑")
 
     # #测试
     # row.template_list("HO_UL_VertexGroup_AdvancedList", "",

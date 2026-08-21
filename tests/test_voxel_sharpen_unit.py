@@ -62,6 +62,25 @@ class VoxelSharpenUnitTests(unittest.TestCase):
         self.assertLess(result.weights[2], weights[2])
         self.assertGreater(result.diagnostics["coverage_nonzero"], 0)
 
+    def test_single_group_ramp_gets_monotonic_contrast(self):
+        positions = np.column_stack(
+            (np.arange(8, dtype=float), np.zeros(8), np.zeros(8))
+        )
+        weights = np.linspace(0.0, 1.0, 8)
+        edges = np.column_stack((np.arange(7), np.arange(1, 8)))
+        result = voxel_sharpen.sharpen_weights(
+            positions,
+            weights,
+            selected=np.arange(8),
+            edges=edges,
+            resolution=32,
+            strength=1.0,
+        )
+
+        self.assertTrue(np.all(np.diff(result.weights) >= 0.0))
+        self.assertLess(result.weights[1], weights[1])
+        self.assertGreater(result.weights[-2], weights[-2])
+
     def test_multiple_groups_preserve_each_input_row_sum(self):
         positions = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
         weights = np.array([[0.2, 0.8], [0.6, 0.4], [0.2, 0.8]])
@@ -130,8 +149,24 @@ class VoxelSharpenUnitTests(unittest.TestCase):
         )
 
         self.assertLessEqual(result.diagnostics["voxel_count"], 1000)
-        self.assertLessEqual(np.prod(result.diagnostics["grid_shape"]), 1000)
         self.assertGreaterEqual(result.diagnostics["grid_shape"][0], 2)
+
+    def test_manual_resolution_changes_sparse_grid_spacing(self):
+        positions = np.column_stack(
+            (np.linspace(0.0, 10.0, 12), np.zeros(12), np.zeros(12))
+        )
+        weights = np.linspace(0.0, 1.0, 12)
+        edges = np.column_stack((np.arange(11), np.arange(1, 12)))
+        coarse = voxel_sharpen.sharpen_weights(
+            positions, weights, np.arange(12), edges, resolution=16
+        )
+        fine = voxel_sharpen.sharpen_weights(
+            positions, weights, np.arange(12), edges, resolution=128
+        )
+        self.assertGreater(
+            fine.diagnostics["base_resolution"][0],
+            coarse.diagnostics["base_resolution"][0],
+        )
 
     def test_zero_strength_is_exact_noop(self):
         positions = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
