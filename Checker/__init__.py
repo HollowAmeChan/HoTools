@@ -45,6 +45,12 @@ class PL_ObjectChecker(Panel):
 cls = [PL_ObjectChecker]
 
 
+def refresh_all(context=None):
+    """Refresh the active Checker overlay preview."""
+    context = context or bpy.context
+    overlayPreview.CheckerOverlayModule.refresh_draw(context)
+
+
 def register():
     objectChecker.register()
     meshMirrorChecker.register()

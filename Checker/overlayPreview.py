@@ -1,12 +1,15 @@
 from array import array
+import heapq
 import math
 from pathlib import Path
+import random
 import sys
 
+import bmesh
 import bpy
 import gpu
 from bpy.app.handlers import persistent
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import Operator, Panel
 from gpu_extras.batch import batch_for_shader
 
@@ -115,6 +118,9 @@ class CheckerOverlayCommon:
     def clear_overlay_cache():
         CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
         CheckerOverlayCommon.OVERLAY_CACHE_DIRTY = True
+        weight_preview = globals().get("WeightOverlayPreview")
+        if weight_preview is not None:
+            weight_preview.clear_cache()
 
     @staticmethod
     def set_overlay_cache_clean():
@@ -2369,6 +2375,258 @@ class ObjectScaleOverlayPreview:
         layout.label(text="红色：存在负数缩放")
         layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
 
+class WeightOverlayPreview:
+    positions = []
+    colors = []
+    batch = None
+    try:
+        shader = gpu.shader.from_builtin("SMOOTH_COLOR")
+    except Exception:
+        # Background Blender sessions have no GPU drawing context. Weight
+        # operations must still be usable when the optional debug overlay is
+        # unavailable.
+        shader = None
+
+    @staticmethod
+    def get_weights(v, mesh, bm, deform_layer, index):
+        if bm is not None and deform_layer is not None:
+            return v[deform_layer]
+        return {g.group: g.weight for g in mesh.vertices[index].groups}
+
+    @staticmethod
+    def get_world_pos(obj, v, bm):
+        world_pos = obj.matrix_world @ v.co
+        return world_pos + v.normal * 0.0005
+
+    @staticmethod
+    def build_bone_colors(obj):
+        random.seed(0)
+        return {
+            vg.index: (random.random(), random.random(), random.random())
+            for vg in obj.vertex_groups
+        }
+
+    @staticmethod
+    def DRAW_multiGroup(weights, bone_colors, limit):
+        if not weights:
+            return None
+        top = heapq.nlargest(limit, weights.items(), key=lambda x: x[1])
+        total = sum(w for _, w in top)
+        if total == 0:
+            return None
+        r = g = b = 0.0
+        for group_index, weight in top:
+            weight /= total
+            color = bone_colors.get(group_index, (0, 0, 0))
+            r += color[0] * weight
+            g += color[1] * weight
+            b += color[2] * weight
+        return (r, g, b, 0.6)
+
+    @staticmethod
+    def DRAW_noneBoneWeightGroup(weights):
+        return (1, 0, 0, 0.6) if not weights else (0, 1, 0, 0.6)
+
+    @staticmethod
+    def DRAW_unlimitedBoneWeightGroup(weights, limit):
+        if len(weights) > limit:
+            return (1, 0, 0, 0.6)
+        if len(weights) == limit:
+            return (0, 1, 0, 0.6)
+        return (0, 0, 1, 0.6)
+
+    @staticmethod
+    def DRAW_unnormalizedBoneWeightGroup(weights):
+        return (1, 1, 0, 0.6) if abs(sum(weights.values()) - 1.0) > 0.001 else (0, 1, 0, 0.6)
+
+    @staticmethod
+    def DRAW_strictUnnormalizedBoneWeightGroup(weights, eps=1e-6):
+        if not weights:
+            return (0, 1, 0, 0.6)
+        if abs(sum(weights.values()) - 1.0) > 0.001:
+            return (1, 0, 0, 0.6)
+        if any(weight <= eps for weight in weights.values()):
+            return (1, 0, 0, 0.6)
+        return (0, 1, 0, 0.6)
+
+    @staticmethod
+    def build_data(obj, mode="MULTI", limit=4):
+        WeightOverlayPreview.positions.clear()
+        WeightOverlayPreview.colors.clear()
+
+        mesh = obj.data
+        bm = bmesh.from_edit_mesh(mesh) if obj.mode == "EDIT" else None
+        if bm:
+            bm.faces.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+            bm.verts.ensure_lookup_table()
+        deform_layer = bm.verts.layers.deform.active if bm else None
+        bone_colors = WeightOverlayPreview.build_bone_colors(obj)
+
+        mesh.calc_loop_triangles()
+        vertex_colors = {}
+        verts = bm.verts if bm else mesh.vertices
+        for vertex in verts:
+            index = vertex.index
+            weights = WeightOverlayPreview.get_weights(
+                vertex, mesh, bm, deform_layer, index
+            )
+            if mode == "MULTI":
+                color = WeightOverlayPreview.DRAW_multiGroup(weights, bone_colors, limit)
+            elif mode == "NONE":
+                color = WeightOverlayPreview.DRAW_noneBoneWeightGroup(weights)
+            elif mode == "LIMIT":
+                color = WeightOverlayPreview.DRAW_unlimitedBoneWeightGroup(weights, limit)
+            elif mode == "UNNORMALIZED":
+                color = WeightOverlayPreview.DRAW_unnormalizedBoneWeightGroup(weights)
+            elif mode == "STRICT_UNNORMALIZED":
+                color = WeightOverlayPreview.DRAW_strictUnnormalizedBoneWeightGroup(weights)
+            else:
+                color = None
+            vertex_colors[index] = color or (0, 0, 0, 0)
+
+        for triangle in mesh.loop_triangles:
+            for loop_index in triangle.loops:
+                vertex_index = mesh.loops[loop_index].vertex_index
+                vertex = bm.verts[vertex_index] if bm else mesh.vertices[vertex_index]
+                WeightOverlayPreview.positions.append(
+                    WeightOverlayPreview.get_world_pos(obj, vertex, bm)
+                )
+                WeightOverlayPreview.colors.append(vertex_colors[vertex_index])
+
+        if WeightOverlayPreview.positions and WeightOverlayPreview.shader is not None:
+            WeightOverlayPreview.batch = batch_for_shader(
+                WeightOverlayPreview.shader,
+                "TRIS",
+                {
+                    "pos": WeightOverlayPreview.positions,
+                    "color": WeightOverlayPreview.colors,
+                },
+            )
+        else:
+            WeightOverlayPreview.batch = None
+
+    @staticmethod
+    def draw(context=None):
+        context = context or bpy.context
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            return
+        if getattr(context, "region_data", None) is None:
+            return
+        if not WeightOverlayPreview.batch or WeightOverlayPreview.shader is None:
+            return
+        shader = WeightOverlayPreview.shader
+        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.depth_mask_set(False)
+        gpu.state.blend_set("ALPHA")
+        try:
+            shader.bind()
+            WeightOverlayPreview.batch.draw(shader)
+        finally:
+            gpu.state.blend_set("NONE")
+            gpu.state.depth_mask_set(True)
+            gpu.state.depth_test_set("NONE")
+
+    MODE_TO_CHECK = {
+        "WEIGHT_COLOR": "MULTI",
+        "WEIGHT_NO_BONE": "NONE",
+        "WEIGHT_GROUP_COUNT": "LIMIT",
+        "WEIGHT_NORMALIZED": "UNNORMALIZED",
+    }
+
+    @staticmethod
+    def draw_color_legend(layout, mode_id, scene):
+        """Draw the color meanings inside the active mode's settings box."""
+        legends = {
+            "WEIGHT_COLOR": (
+                ("黑色/透明", "没有有效权重可用于混合"),
+            ),
+            "WEIGHT_NO_BONE": (
+                ("红色", "顶点没有任何顶点组权重"),
+                ("绿色", "顶点至少有一个顶点组权重"),
+            ),
+            "WEIGHT_GROUP_COUNT": (
+                ("蓝色", "权重组数量少于限制值"),
+                ("绿色", "权重组数量等于限制值"),
+                ("红色", "权重组数量超过限制值"),
+            ),
+        }
+        if mode_id == "WEIGHT_NORMALIZED":
+            if bool(getattr(scene, "ho_checker_overlay_weight_check_zero", False)):
+                legends[mode_id] = (
+                    ("绿色", "权重总和约等于 1，且没有零权重成员"),
+                    ("红色", "权重总和不为 1，或存在零权重成员"),
+                )
+            else:
+                legends[mode_id] = (
+                    ("绿色", "权重总和约等于 1"),
+                    ("黄色", "权重总和不等于 1"),
+                )
+
+        for color_name, meaning in legends.get(mode_id, ()):
+            row = layout.row(align=True)
+            row.alert = color_name == "红色"
+            row.label(text=f"{color_name}：{meaning}")
+            row.alert = False
+
+    @staticmethod
+    def mode_for_scene(scene):
+        mode_id = CheckerOverlayPreview.current_mode_id(scene)
+        return WeightOverlayPreview.MODE_TO_CHECK.get(mode_id, "MULTI")
+
+    @staticmethod
+    def clear_cache():
+        WeightOverlayPreview.positions.clear()
+        WeightOverlayPreview.colors.clear()
+        WeightOverlayPreview.batch = None
+
+    @staticmethod
+    def rebuild_cache(context=None):
+        context = context or bpy.context
+        scene = CheckerOverlayCommon.get_scene(context)
+        obj = getattr(context, "active_object", None)
+        if (
+            scene is None
+            or not bool(getattr(scene, "ho_checker_overlay_show", False))
+            or not obj
+            or obj.type != "MESH"
+        ):
+            WeightOverlayPreview.clear_cache()
+            return
+
+        mode = WeightOverlayPreview.mode_for_scene(scene)
+        if mode == "UNNORMALIZED" and bool(
+            getattr(scene, "ho_checker_overlay_weight_check_zero", False)
+        ):
+            mode = "STRICT_UNNORMALIZED"
+        limit = max(
+            1,
+            int(getattr(scene, "ho_checker_overlay_weight_group_limit", 4)),
+        )
+        WeightOverlayPreview.build_data(obj, mode=mode, limit=limit)
+
+    @staticmethod
+    def draw_panel(layout, context):
+        scene = getattr(context, "scene", None)
+        if scene is None:
+            return
+        mode_id = CheckerOverlayPreview.current_mode_id(scene)
+        if mode_id in {"WEIGHT_COLOR", "WEIGHT_GROUP_COUNT"}:
+            layout.prop(
+                scene,
+                "ho_checker_overlay_weight_group_limit",
+                text="最多组数",
+            )
+        elif mode_id == "WEIGHT_NORMALIZED":
+            layout.prop(
+                scene,
+                "ho_checker_overlay_weight_check_zero",
+                text="检查零权重",
+                toggle=True,
+            )
+        layout.separator()
+        WeightOverlayPreview.draw_color_legend(layout, mode_id, scene)
 
 class CheckerOverlayPreview:
     """
@@ -2541,11 +2799,27 @@ class CheckerOverlayPreview:
             max=1.0,
             update=CheckerOverlayPreview.on_alpha_update,
         )
+        bpy.types.Scene.ho_checker_overlay_weight_group_limit = IntProperty(
+            name="权重最多组数",
+            description="用于权重彩色和组数量检查的最多权重组数",
+            default=4,
+            min=1,
+            max=32,
+            update=CheckerOverlayPreview.on_mode_update,
+        )
+        bpy.types.Scene.ho_checker_overlay_weight_check_zero = BoolProperty(
+            name="检查零权重",
+            description="归一化检查时将已存储的零权重组成员视为错误；无权重顶点仍由无骨控制检查",
+            default=False,
+            update=CheckerOverlayPreview.on_mode_update,
+        )
 
     @staticmethod
     def unregister_props():
         for prop_name in (
             "ho_checker_overlay_uv_grid_alpha",
+            "ho_checker_overlay_weight_check_zero",
+            "ho_checker_overlay_weight_group_limit",
             "ho_checker_overlay_nonplanar_quad_threshold",
             "ho_checker_overlay_island_uv_mode",
             "ho_checker_overlay_uv_grid_resolution",
@@ -2612,7 +2886,7 @@ class OP_Hotools_CheckerOverlayRefresh(Operator):
     """
 
     bl_idname = "ho.checker_overlay_refresh"
-    bl_label = "刷新检查预览"
+    bl_label = "刷新所有检查预览"
     bl_options = {"REGISTER"}
 
     @classmethod
@@ -2621,7 +2895,10 @@ class OP_Hotools_CheckerOverlayRefresh(Operator):
         return bool(scene and getattr(scene, "ho_checker_overlay_show", False))
 
     def execute(self, context):
-        CheckerOverlayModule.refresh_draw(context)
+        # The Checker refresh button is the single entry point for the active
+        # overlay preview, including the weight-check modes.
+        from . import refresh_all
+        refresh_all(context)
         return {"FINISHED"}
 
 
@@ -2734,6 +3011,38 @@ class CheckerOverlayModule:
             refresh=ObjectScaleOverlayPreview.rebuild_cache,
             draw=ObjectScaleOverlayPreview.draw,
             draw_panel=ObjectScaleOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "WEIGHT_COLOR",
+            label="权重-彩色",
+            description="按顶点组权重混合显示颜色",
+            refresh=WeightOverlayPreview.rebuild_cache,
+            draw=WeightOverlayPreview.draw,
+            draw_panel=WeightOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "WEIGHT_NO_BONE",
+            label="权重-无骨控制",
+            description="没有权重的顶点显示为红色",
+            refresh=WeightOverlayPreview.rebuild_cache,
+            draw=WeightOverlayPreview.draw,
+            draw_panel=WeightOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "WEIGHT_GROUP_COUNT",
+            label="权重-组数量",
+            description="权重组数量不足显示蓝色，超过限制显示红色",
+            refresh=WeightOverlayPreview.rebuild_cache,
+            draw=WeightOverlayPreview.draw,
+            draw_panel=WeightOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "WEIGHT_NORMALIZED",
+            label="权重-归一化",
+            description="权重和未归一化显示为红色，可选检查零权重成员",
+            refresh=WeightOverlayPreview.rebuild_cache,
+            draw=WeightOverlayPreview.draw,
+            draw_panel=WeightOverlayPreview.draw_panel,
         )
 
     @staticmethod
