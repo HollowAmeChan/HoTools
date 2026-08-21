@@ -23,7 +23,7 @@ class OP_FillSelection(bpy.types.Operator):
     def execute(self, context):
         bpy.ops.mesh.hide()
         bpy.ops.view3d.select(location=self.location)
-        bpy.ops.mesh.select_linked()
+        bpy.ops.mesh.select_linked(delimit={'NORMAL'})
         bpy.ops.mesh.reveal()
         return {'FINISHED'}
 
