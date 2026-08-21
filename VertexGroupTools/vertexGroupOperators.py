@@ -134,8 +134,12 @@ def reg_props():
     bpy.types.Scene.hoVertexGroupTools_remove_max = FloatProperty(name="最大值",description="顶点在此组中的权重，若小于等于这个值，则会被移除顶点组",default=0,min=0,max=1)
     bpy.types.Scene.hoVertexGroupTools_vg_increment1 = FloatProperty(name="权重增减量1",default=0.05,min=0,max=1)
     bpy.types.Scene.hoVertexGroupTools_vg_increment2 = FloatProperty(name="权重增减量2",default=0.1,min=0,max=1)
+    bpy.types.Scene.hoVertexGroupTools_vg_increment_show_values = BoolProperty(
+        name="显示权重增减值",
+        description="显示加减权重操作的数值参数",
+        default=False,
+    )
     bpy.types.Scene.hoVertexGroupTools_select_by_weightvalue = FloatProperty(name="选中权重小于",default=0.05,min=0,max=1)
-    bpy.types.Scene.hoVertexGroupTools_max_vg_number = IntProperty(name="最多权重数",default=4)
     bpy.types.Scene.hoVertexGroupTools_debug_groupnum_limit = IntProperty(name="debug最多骨权重数",default=4)
 
     bpy.types.Scene.hoVertexGroupTools_control_vg_listener = bpy.props.BoolProperty(
@@ -169,8 +173,8 @@ def ureg_props():
     del bpy.types.Scene.hoVertexGroupTools_remove_max
     del bpy.types.Scene.hoVertexGroupTools_vg_increment1
     del bpy.types.Scene.hoVertexGroupTools_vg_increment2
+    del bpy.types.Scene.hoVertexGroupTools_vg_increment_show_values
     del bpy.types.Scene.hoVertexGroupTools_select_by_weightvalue
-    del bpy.types.Scene.hoVertexGroupTools_max_vg_number
     del bpy.types.Scene.hoVertexGroupTools_debug_groupnum_limit
 
     if vertex_group_listener in bpy.app.handlers.depsgraph_update_post:
@@ -2205,11 +2209,23 @@ class OP_VertexGroupTools_Max_VG_Limit(Operator):
     bl_options = {'REGISTER', 'UNDO'}
     bl_description = "对全部顶点进行处理"
 
-    num_max:IntProperty(default=4) # type: ignore
+    num_max: IntProperty(
+        name="最多权重组数",
+        description="每个顶点最多保留的权重组数量",
+        default=4,
+        min=1,
+        max=64,
+    )  # type: ignore
     
     @classmethod
     def poll(cls, context):
         return  True
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        self.layout.prop(self, "num_max", text="最多权重组数")
 
     def execute(self, context):
         
@@ -2708,42 +2724,25 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     layout = box
     
     col = layout.column(align=True)
-    row = col.row(align=True)
-    row.prop(scene, "hoVertexGroupTools_remove_max",
-             icon_only=True, slider=True)
-    row.operator(OP_VertexGroupTools_RemoveGroupVertex_by_value.bl_idname, text="从所有组中移除")
-    
-    col = col.column(align=True)
-    row = col.row(align=True)
-    op1 = row.operator(OP_VertexGroupTools_Max_VG_Limit.bl_idname,text="限制顶点权重组数量")
-    op1.num_max = scene.hoVertexGroupTools_max_vg_number
-    row.scale_x = 0.5
-    row.prop(scene,"hoVertexGroupTools_max_vg_number",text="",icon_only=True)
-
-
-    row = layout.row(align=True)
-    row.operator(OP_VertexGroupTools_ExtractGroupValues_SelectedVertex.bl_idname,
-                 text="复制顶点权重", icon="COPYDOWN")
-    row.operator(OP_VertexGroupTools_ApplyGroupValues_SelectedVertex.bl_idname,
-                 text="粘贴顶点权重", icon="PASTEDOWN")
-    
-
-    col = layout.column(align=True)
     col.scale_y = 2.0
+    row = col.row(align=True)
+    row.operator(OP_VertexGroupTools_Max_VG_Limit.bl_idname,text="限组数")
+    row.operator(OP_VertexGroupTools_RemoveGroupVertex_by_value.bl_idname, text="阈值全移除")
+    row.prop(scene, "hoVertexGroupTools_remove_max", icon_only=True, slider=True)
+
     row = col.row(align=True)
     op2 = row.operator(OP_VertexGroupTools_Select_Vertices_by_WeightValue.bl_idname,text="选择小于")
     op2.value = scene.hoVertexGroupTools_select_by_weightvalue
     row.prop(scene,"hoVertexGroupTools_select_by_weightvalue",text="")
 
+    col = layout.column(align=True)
+    col.scale_y = 2.0
     row = col.row(align=True)
     op1 = row.operator(OP_VertexGroupTools_balanceVertexGroupWeight.bl_idname,text="组内翻转",icon="MOD_MIRROR")
-    op2 = row.operator(OP_VertexGroupTools_mirror_to_other_group.bl_idname,text="同步到对称骨",icon="FUND")
-
+    op2 = row.operator(OP_VertexGroupTools_mirror_to_other_group.bl_idname,text="同步到对称骨",icon="BONE_DATA")
     row = col.row(align=True)
-    row.operator("object.vertex_group_remove_from", text="从组移除",
-                 icon="CANCEL")
-    row.operator(OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex.bl_idname,
-                 text="规格所选", icon="FUND")
+    row.operator("object.vertex_group_remove_from", text="从组移除",icon="CANCEL")
+    row.operator(OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex.bl_idname,text="规格所选", icon="RECORD_ON")
     
     col = layout.column(align=True)
     col.scale_y = 2.0
@@ -2754,8 +2753,14 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     op_sub = row.operator(OP_VertexGroupTools_Change_VG_weight.bl_idname, text="-")
     op_sub.value1 = -scene.hoVertexGroupTools_vg_increment1
     op_sub.value2 = -scene.hoVertexGroupTools_vg_increment2
-    row.prop(scene,"hoVertexGroupTools_vg_increment1",text="")
-    row.prop(scene,"hoVertexGroupTools_vg_increment2",text="")
+    row.prop(scene,"hoVertexGroupTools_vg_increment_show_values",text="",icon="PREFERENCES",toggle=True,)
+    if scene.hoVertexGroupTools_vg_increment_show_values:
+        value_row = col.row(align=True)
+        value_row.prop(scene, "hoVertexGroupTools_vg_increment1", text="增量")
+        value_row.prop(scene, "hoVertexGroupTools_vg_increment2", text="shift增量")
+    row = col.row(align=True)
+    row.operator(OP_VertexGroupTools_ExtractGroupValues_SelectedVertex.bl_idname,text="复制", icon="COPYDOWN")
+    row.operator(OP_VertexGroupTools_ApplyGroupValues_SelectedVertex.bl_idname,text="粘贴", icon="PASTEDOWN")
 
 
     col = layout.column(align=True)
@@ -2808,12 +2813,6 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
         row.prop(scene, "hoVertexGroupTools_sharpen_blur_radius", text="模糊")
         row.prop(scene, "hoVertexGroupTools_sharpen_iterations", text="迭代")
         row.prop(scene, "hoVertexGroupTools_sharpen_topology_hops", text="拓扑")
-
-    # #测试
-    # row.template_list("HO_UL_VertexGroup_AdvancedList", "",
-    #                   obj,"vertex_groups",
-    #                   obj.vertex_groups,"active_index",
-    #                   rows=8)
     
 def _draw_ActiveVertex_weight(layout:bpy.types.UILayout,context:bpy.types.Context):
     # 活动顶点情况
