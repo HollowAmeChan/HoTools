@@ -727,16 +727,10 @@ void main()
         if scene is None:
             return
 
-        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
-        if active_mode is not None:
-            layout.label(text=f"当前模式：{active_mode['label']}")
-
         if scene.ho_checker_overlay_visual_mode == "CUSTOM_IMAGE":
-            layout.label(text="显示样式")
             layout.prop(scene, "ho_checker_overlay_visual_mode", text="")
             layout.prop(scene, "ho_checker_overlay_custom_image_path", text="图片路径")
         else:
-            layout.label(text="显示样式")
             layout.prop(scene, "ho_checker_overlay_visual_mode", text="")
             layout.prop(scene, "ho_checker_overlay_uv_grid_resolution", text="像素密度")
         layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
@@ -967,11 +961,6 @@ void main()
         scene = getattr(context, "scene", None)
         if scene is None:
             return
-
-        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
-        if active_mode is not None:
-            layout.label(text=f"当前模式：{active_mode['label']}")
-
         layout.label(text="白色：正常")
         layout.label(text="黑色：镜像")
         layout.label(text="灰色：未定义")
@@ -1167,10 +1156,6 @@ void main()
         if scene is None:
             return
 
-        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
-        if active_mode is not None:
-            layout.label(text=f"当前模式：{active_mode['label']}")
-
         layout.prop(scene, "ho_checker_overlay_island_uv_mode", text="显示通道")
         layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
 
@@ -1348,10 +1333,6 @@ void main()
         scene = getattr(context, "scene", None)
         if scene is None:
             return
-
-        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
-        if active_mode is not None:
-            layout.label(text=f"当前模式：{active_mode['label']}")
 
         layout.label(text="第一象限 0-1：绿色")
         layout.label(text="其他象限：固定随机色")
@@ -1575,10 +1556,6 @@ void main()
         if scene is None:
             return
 
-        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
-        if active_mode is not None:
-            layout.label(text=f"当前模式：{active_mode['label']}")
-
         layout.label(text="绿色：接近当前中位密度")
         layout.label(text="蓝色：UV 相对偏大")
         layout.label(text="红色：UV 相对偏小")
@@ -1756,10 +1733,6 @@ class UVAreaDistortionOverlayPreview:
         if scene is None:
             return
 
-        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
-        if active_mode is not None:
-            layout.label(text=f"当前模式：{active_mode['label']}")
-
         layout.label(text="绿色：接近当前岛面积比例")
         layout.label(text="红色：岛内局部面积变化较大")
         layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
@@ -1896,10 +1869,6 @@ class NgonOverlayPreview:
         scene = getattr(context, "scene", None)
         if scene is None:
             return
-
-        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
-        if active_mode is not None:
-            layout.label(text=f"当前模式：{active_mode['label']}")
 
         layout.label(text="红色：五边面或更多边面")
         layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
@@ -2107,10 +2076,6 @@ class NonPlanarQuadOverlayPreview:
         if scene is None:
             return
 
-        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
-        if active_mode is not None:
-            layout.label(text=f"当前模式：{active_mode['label']}")
-
         layout.label(text="红色：对角线空间间距过大")
         layout.prop(scene, "ho_checker_overlay_nonplanar_quad_threshold", text="对角线阈值", slider=True)
         layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
@@ -2259,10 +2224,6 @@ void main()
         if scene is None:
             return
 
-        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
-        if active_mode is not None:
-            layout.label(text=f"当前模式：{active_mode['label']}")
-
         layout.label(text="绿色：正面")
         layout.label(text="红色：反面")
         layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
@@ -2403,11 +2364,6 @@ class ObjectScaleOverlayPreview:
         scene = getattr(context, "scene", None)
         if scene is None:
             return
-
-        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
-        if active_mode is not None:
-            layout.label(text=f"当前模式：{active_mode['label']}")
-
         layout.label(text="绿色：物体缩放为 1")
         layout.label(text="蓝色：存在非 1 缩放")
         layout.label(text="红色：存在负数缩放")

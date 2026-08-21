@@ -8,7 +8,14 @@ try:
 except ImportError:
     bpy = None
 
-from . import AlignPie, CursorPie, DeleteMergePie, HoMainPie, SelectionModePie
+from . import (
+    AlignPie,
+    ArmatureModPie,
+    CursorPie,
+    DeleteMergePie,
+    HoMainPie,
+    SelectionModePie,
+)
 from ._Core import HO_PIE_CORE_CLASSES
 
 
@@ -81,7 +88,11 @@ def remove_keymaps(items: list, menu_names: Any = ()) -> None:
         return
     for keymap in keyconfig.keymaps:
         for item in list(keymap.keymap_items):
-            if item.idname not in {"wm.call_menu_pie", "ho.hopie_nested_pie"}:
+            if item.idname not in {
+                    "wm.call_menu_pie",
+                    "ho.hopie_nested_pie",
+                    "ho.armature_mode_pie",
+            }:
                 continue
             item_name = getattr(item.properties, "name", "")
             if not item_name:
@@ -99,12 +110,18 @@ cursor_pie_keymaps = []
 selection_mode_pie_keymaps = []
 delete_merge_pie_keymaps = []
 main_pie_keymaps = []
+armature_mode_pie_keymaps = []
+# Short-name alias kept for callers that use the module's ArmatureModPie name.
+armature_mod_pie_keymaps = armature_mode_pie_keymaps
 
 _align_pie_enabled = False
 _cursor_pie_enabled = False
 _selection_mode_pie_enabled = False
 _delete_merge_pie_enabled = False
 _main_pie_enabled = False
+_armature_mode_pie_enabled = False
+# Alias for the ArmatureModPie feature name.
+_armature_mod_pie_enabled = False
 _core_registered = False
 
 
@@ -168,6 +185,17 @@ def _register_main_keymaps(store):
     )
 
 
+def _register_armature_mode_keymaps(store):
+    for keymap_name in ('Object Mode', 'Armature', 'Pose'):
+        register_keymap(
+            keymap_name, 'EMPTY', 'TAB',
+            menu_name='HO_MT_armature_mode_pie', keymap_store=store,
+            head=True,
+            operator_idname='ho.armature_mode_pie',
+            property_name='pie_menu_name',
+        )
+
+
 _PIE_SPECS = {
     'align': _PieSpec(
         '_align_pie_enabled',
@@ -204,10 +232,19 @@ _PIE_SPECS = {
         ('HO_MT_HoMainPie',),
         _register_main_keymaps,
     ),
+    'armature_mode': _PieSpec(
+        '_armature_mode_pie_enabled',
+        ArmatureModPie.ARMATURE_MODE_PIE_CLASSES,
+        armature_mode_pie_keymaps,
+        ('HO_MT_armature_mode_pie',),
+        _register_armature_mode_keymaps,
+    ),
 }
 
 
 def set_pie_enabled(name: str, enabled: bool) -> None:
+    if name == 'armature_mod':
+        name = 'armature_mode'
     spec = _PIE_SPECS[name]
     enabled = bool(enabled)
     current = bool(globals()[spec.state_name])
@@ -222,10 +259,15 @@ def set_pie_enabled(name: str, enabled: bool) -> None:
         if current:
             unregister_classes(spec.classes)
     globals()[spec.state_name] = enabled
+    if name == 'armature_mode':
+        globals()['_armature_mod_pie_enabled'] = enabled
 
 
 def disable_all_pies() -> None:
-    for name in ('main', 'delete_merge', 'selection_mode', 'cursor', 'align'):
+    for name in (
+        'main', 'delete_merge', 'selection_mode', 'cursor', 'align',
+        'armature_mode',
+    ):
         set_pie_enabled(name, False)
 
 
@@ -236,6 +278,7 @@ def preference_keymaps():
         *selection_mode_pie_keymaps,
         *delete_merge_pie_keymaps,
         *main_pie_keymaps,
+        *armature_mode_pie_keymaps,
     ]
 
 
@@ -262,6 +305,8 @@ __all__ = [
     'selection_mode_pie_keymaps',
     'delete_merge_pie_keymaps',
     'main_pie_keymaps',
+    'armature_mode_pie_keymaps',
+    'armature_mod_pie_keymaps',
     'set_pie_enabled',
     'disable_all_pies',
     'preference_keymaps',

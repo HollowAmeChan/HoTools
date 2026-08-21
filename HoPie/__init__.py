@@ -1,6 +1,13 @@
 """HoPie public API."""
 
-from . import AlignPie, CursorPie, DeleteMergePie, HoMainPie, SelectionModePie
+from . import (
+    AlignPie,
+    ArmatureModPie,
+    CursorPie,
+    DeleteMergePie,
+    HoMainPie,
+    SelectionModePie,
+)
 from . import _Register as _register_module
 from ._Core import (
     DialogSettings,
@@ -19,6 +26,8 @@ from ._Core import (
 )
 from ._Register import (
     align_pie_keymaps,
+    armature_mod_pie_keymaps,
+    armature_mode_pie_keymaps,
     cursor_pie_keymaps,
     delete_merge_pie_keymaps,
     main_pie_keymaps,
@@ -37,6 +46,8 @@ def __getattr__(name):
         '_selection_mode_pie_enabled',
         '_delete_merge_pie_enabled',
         '_main_pie_enabled',
+        '_armature_mode_pie_enabled',
+        '_armature_mod_pie_enabled',
         '_core_registered',
     }:
         return getattr(_register_module, name)
@@ -45,6 +56,7 @@ def __getattr__(name):
 
 __all__ = [
     'AlignPie',
+    'ArmatureModPie',
     'CursorPie',
     'DeleteMergePie',
     'HoMainPie',
@@ -63,6 +75,8 @@ __all__ = [
     'ensure_layout',
     'find_space',
     'align_pie_keymaps',
+    'armature_mode_pie_keymaps',
+    'armature_mod_pie_keymaps',
     'cursor_pie_keymaps',
     'delete_merge_pie_keymaps',
     'main_pie_keymaps',

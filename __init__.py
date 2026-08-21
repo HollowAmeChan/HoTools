@@ -101,6 +101,10 @@ def updateMainPieState(self, context):
     HoPie.set_pie_enabled('main', self.hoTools_enableHoMainPie)
 
 
+def updateArmatureModePieState(self, context):
+    HoPie.set_pie_enabled('armature_mode', self.hoTools_enableArmatureModePie)
+
+
 def builtin_asset_library_path():
     return os.path.normpath(os.path.join(os.path.dirname(__file__), "HoAssets"))
 
@@ -221,6 +225,7 @@ class AddonPreference(bpy.types.AddonPreferences):
     hoTools_enableSelectionModePie: BoolProperty(name="选择模式饼菜单", default=True, update=updateSelectionModePieState)  # type: ignore
     hoTools_enableDeleteMergePie: BoolProperty(name="删除与合并饼菜单", default=True, update=updateDeleteMergePieState)  # type: ignore
     hoTools_enableHoMainPie: BoolProperty(name="Ho大饼", default=True, update=updateMainPieState)  # type: ignore
+    hoTools_enableArmatureModePie: BoolProperty(name="骨架模式饼", default=False, update=updateArmatureModePieState)  # type: ignore
     hoTools_ui_exicon_expanded: BoolProperty(name='展开 ExIcon', default=False)  # type: ignore
     hoTools_ui_omninode_expanded: BoolProperty(name='展开 OmniNode', default=False)  # type: ignore
     hoTools_ui_hotab_expanded: BoolProperty(name='展开 HoTab', default=False)  # type: ignore
@@ -299,6 +304,7 @@ class AddonPreference(bpy.types.AddonPreferences):
             draw_toggle('hoTools_enableSelectionModePie', '选择模式饼')
             draw_toggle('hoTools_enableDeleteMergePie', '删除/合并饼')
             draw_toggle('hoTools_enableHoMainPie', 'Ho大饼')
+            draw_toggle('hoTools_enableArmatureModePie', '骨架模式饼')
 
             if details is not None:
                 settings = details.box()
@@ -359,6 +365,7 @@ def register():
     HoPie.set_pie_enabled('selection_mode', prefs.hoTools_enableSelectionModePie)
     HoPie.set_pie_enabled('delete_merge', prefs.hoTools_enableDeleteMergePie)
     HoPie.set_pie_enabled('main', prefs.hoTools_enableHoMainPie)
+    HoPie.set_pie_enabled('armature_mode', prefs.hoTools_enableArmatureModePie)
     if prefs.hoTools_OmniNodeFeatures_enable:
         OmniNode.register()
     if prefs.hoTools_enableHoTab:
