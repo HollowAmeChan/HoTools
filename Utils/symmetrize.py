@@ -24,14 +24,24 @@ def _classify(verts, axis, direction, threshold):
     return original, mirror, center
 
 
-def _clear_center_sharps(obj, center, axis):
+def _center_vertices(bm, axis, threshold, selected_only=False):
+    component = 'XYZ'.index(axis)
+    return {
+        vert
+        for vert in bm.verts
+        if vert.is_valid
+        and (not selected_only or vert.select)
+        and abs(vert.co[component]) <= threshold
+    }
+
+
+def _clear_center_sharps(obj, axis, threshold, selected_only=False):
+    bm = bmesh.from_edit_mesh(obj.data)
+    center = _center_vertices(bm, axis, threshold, selected_only)
     if not center:
         return
-    bm = bmesh.from_edit_mesh(obj.data)
-    bm.verts.ensure_lookup_table()
-    center_set = set(center)
     for edge in bm.edges:
-        if edge.is_valid and all(v.index in center_set for v in edge.verts):
+        if edge.is_valid and all(vert in center for vert in edge.verts):
             edge.smooth = True
             edge.seam = False
     bmesh.update_edit_mesh(obj.data)
@@ -48,16 +58,18 @@ def _remove_vertices(obj, indices):
         bmesh.update_edit_mesh(obj.data)
 
 
-def _remove_redundant_center_edges(obj, center):
+def _remove_redundant_center_edges(
+    obj, axis, threshold, selected_only=False
+):
+    bm = bmesh.from_edit_mesh(obj.data)
+    center = _center_vertices(bm, axis, threshold, selected_only)
     if not center:
         return
-    center_set = set(center)
-    bm = bmesh.from_edit_mesh(obj.data)
     edges = [
         edge for edge in bm.edges
         if edge.is_valid
         and edge.is_manifold
-        and all(vert.index in center_set for vert in edge.verts)
+        and all(vert in center for vert in edge.verts)
         and abs(edge.calc_face_angle()) < 1e-5
     ]
     if edges:
@@ -99,7 +111,7 @@ def symmetrize(
     if remove:
         _remove_vertices(obj, mirror)
         if clear_sharps and fix_center:
-            _clear_center_sharps(obj, center, axis)
+            _clear_center_sharps(obj, axis, threshold, partial)
         return {
             'original': original,
             'mirror': mirror,
@@ -114,9 +126,9 @@ def symmetrize(
         bpy.ops.mesh.select_all(action='DESELECT')
 
     if remove_redundant_center:
-        _remove_redundant_center_edges(obj, center)
+        _remove_redundant_center_edges(obj, axis, threshold, partial)
     if fix_center and clear_sharps:
-        _clear_center_sharps(obj, center, axis)
+        _clear_center_sharps(obj, axis, threshold, partial)
 
     return {
         'original': original,
