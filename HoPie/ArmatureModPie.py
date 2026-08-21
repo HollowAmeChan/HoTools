@@ -16,7 +16,7 @@ class HO_OT_armature_mode_pie(bpy.types.Operator):
     bl_label = '饼:骨架模式'
     bl_options = {'INTERNAL'}
 
-    pie_menu_name: StringProperty(default='HO_MT_armature_mode_pie', options={'SKIP_SAVE'})
+    pie_menu_name: StringProperty(default='HO_MT_armature_mode_pie', options={'SKIP_SAVE'}) # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -63,9 +63,16 @@ class HO_MT_armature_mode_pie(bpy.types.Menu):
 
     def draw(self, context):
         pie = HoPie.from_pie_layout(self.layout.menu_pie(), context)
-        _mode_operator(pie.left, 'OBJECT', '物体模式', 'OBJECT_DATA')
-        _mode_operator(pie.right, 'POSE', '姿态模式', 'POSE_HLT')
-        _mode_operator(pie.bottom, 'EDIT', '编辑模式', 'EDITMODE_HLT')
+        mode = getattr(context, 'mode', 'OBJECT')
+        if mode == 'OBJECT':
+            _mode_operator(pie.top, 'POSE', '姿态模式', 'POSE_HLT')
+            _mode_operator(pie.bottom, 'EDIT', '编辑模式', 'EDITMODE_HLT')
+        elif mode == 'POSE':
+            _mode_operator(pie.top, 'OBJECT', '物体模式', 'OBJECT_DATA')
+            _mode_operator(pie.bottom, 'EDIT', '编辑模式', 'EDITMODE_HLT')
+        else:
+            _mode_operator(pie.top, 'OBJECT', '物体模式', 'OBJECT_DATA')
+            _mode_operator(pie.bottom, 'POSE', '姿态模式', 'POSE_HLT')
         pie.finish()
 
 
