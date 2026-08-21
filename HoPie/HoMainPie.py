@@ -204,6 +204,11 @@ class HO_OT_HoMainPieSelectHalf(Operator):
         mesh.select_flush_mode()
         bmesh.update_edit_mesh(obj.data)
         obj.update_from_editmode()
+        if _object_has_local_rotation(obj):
+            self.report(
+                {"WARNING"},
+                "当前物体有旋转，已选择本地 X 轴一侧",
+            )
         return {"FINISHED"}
 
 
@@ -231,6 +236,11 @@ class HO_OT_HoMainPieSelectMirror(Operator):
 
     def execute(self, context):
         bpy.ops.mesh.select_mirror("EXEC_DEFAULT", extend=self.extend)
+        if _object_has_local_rotation(context.active_object):
+            self.report(
+                {"WARNING"},
+                "当前物体有旋转，已按本地 X 轴镜像选择",
+            )
         return {"FINISHED"}
 
 
@@ -412,18 +422,6 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
         text="右半",props={"reverse": False},)
     row.operator("ho.vertexgrouptools_select_mirror",
         text="选择镜像",)
-
-    obj = getattr(context, "active_object", None)
-    if (
-        getattr(context, "mode", None) == "EDIT_MESH"
-        and getattr(obj, "type", None) == "MESH"
-        and _object_has_local_rotation(obj)
-    ):
-        warning = col.row(align=True)
-        warning.label(
-            text="物体有旋转：半选按本地 X 轴",
-            icon="WARNING_LARGE",
-        )
 
 
 def _draw_mesh_left_tools(layout: LayoutBuilder, context):

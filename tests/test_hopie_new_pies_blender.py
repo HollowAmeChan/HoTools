@@ -53,14 +53,10 @@ class NewPieRegistrationTests(unittest.TestCase):
         class RecordingRow:
             def __init__(self):
                 self.operators = []
-                self.labels = []
 
             def operator(self, idname, text=None, props=None, **_kwargs):
                 self.operators.append((idname, text, props))
                 return None
-
-            def label(self, text=None, icon=None, **_kwargs):
-                self.labels.append((text, icon))
 
         class RecordingLayout:
             def __init__(self):
@@ -92,24 +88,6 @@ class NewPieRegistrationTests(unittest.TestCase):
                 ),
                 ('ho.vertexgrouptools_select_mirror', '选择镜像', None),
             ],
-        )
-
-        rotated_layout = RecordingLayout()
-        rotated_context = SimpleNamespace(
-            mode='EDIT_MESH',
-            active_object=SimpleNamespace(
-                type='MESH',
-                rotation_mode='XYZ',
-                rotation_euler=(0.0, 0.0, 0.25),
-            ),
-        )
-        hopie.HoMainPie._draw_mesh_selection_tools(
-            rotated_layout,
-            rotated_context,
-        )
-        self.assertEqual(
-            rotated_layout.rows[-1].labels,
-            [('物体有旋转：半选按本地 X 轴', 'WARNING_LARGE')],
         )
 
     def test_main_pie_mesh_side_and_mirror_selection(self):
@@ -160,6 +138,47 @@ class NewPieRegistrationTests(unittest.TestCase):
                 {'FINISHED'},
             )
             self.assertEqual(selected_indices(), {0, 2})
+
+            obj.rotation_euler[2] = 0.25
+            reports = []
+            half_operator = SimpleNamespace(
+                reverse=True,
+                report=lambda level, message: reports.append((level, message)),
+            )
+            self.assertEqual(
+                hopie.HoMainPie.HO_OT_HoMainPieSelectHalf.execute(
+                    half_operator,
+                    bpy.context,
+                ),
+                {'FINISHED'},
+            )
+            self.assertEqual(
+                reports,
+                [(
+                    {'WARNING'},
+                    '当前物体有旋转，已选择本地 X 轴一侧',
+                )],
+            )
+
+            reports.clear()
+            mirror_operator = SimpleNamespace(
+                extend=False,
+                report=lambda level, message: reports.append((level, message)),
+            )
+            self.assertEqual(
+                hopie.HoMainPie.HO_OT_HoMainPieSelectMirror.execute(
+                    mirror_operator,
+                    bpy.context,
+                ),
+                {'FINISHED'},
+            )
+            self.assertEqual(
+                reports,
+                [(
+                    {'WARNING'},
+                    '当前物体有旋转，已按本地 X 轴镜像选择',
+                )],
+            )
         finally:
             if bpy.context.mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode='OBJECT')
