@@ -12,10 +12,12 @@ import time
 from mathutils import Vector
 import heapq
 import random
+import math
 from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
 from bpy.app.handlers import persistent
 from Utils import bone_utils
+from .voxel_sharpen import VoxelSharpenError, sharpen_weights
 # TODO:自动归一化需要改成支持仅选中中的顶点，以及全部顶点两个模式，因为有的功能作用于全部顶点有的不是，有的甚至还是开关切换的
 
 
@@ -100,6 +102,29 @@ def reg_props():
 
     bpy.types.Scene.hoVertexGroupTools_OnlyAffectBoneGroup = BoolProperty(name="仅影响骨骼权重组",default=True,description="仅影响骨骼权重组，非骨骼权重组将被忽略。对于通用操作此开关会被忽略")
     bpy.types.Scene.hoVertexGroupTools_isAutoNormalizeWeight = BoolProperty(name="Ho自动归一化",default=True,description="仅控制Hotools拓展中对权重的直接操作的是否自动归一化（不包括限制组、清除小于）")
+    bpy.types.Scene.hoVertexGroupTools_sharpen_strength = FloatProperty(
+        name="锐化强度", default=1.0, min=0.0, max=5.0
+    )
+    bpy.types.Scene.hoVertexGroupTools_sharpen_resolution_mode = EnumProperty(
+        name="体素分辨率模式",
+        items=(
+            ('AUTO', "自动", "按选中顶点数量估算分辨率"),
+            ('MANUAL', "手动", "使用明确指定的体素分辨率"),
+        ),
+        default='AUTO',
+    )
+    bpy.types.Scene.hoVertexGroupTools_sharpen_voxel_resolution = IntProperty(
+        name="体素分辨率", default=64, min=8, max=512
+    )
+    bpy.types.Scene.hoVertexGroupTools_sharpen_blur_radius = IntProperty(
+        name="模糊半径", default=1, min=0, max=8
+    )
+    bpy.types.Scene.hoVertexGroupTools_sharpen_iterations = IntProperty(
+        name="锐化迭代", default=1, min=1, max=8
+    )
+    bpy.types.Scene.hoVertexGroupTools_sharpen_topology_hops = IntProperty(
+        name="拓扑步数", default=2, min=0, max=8
+    )
 
     bpy.types.Scene.hoVertexGroupTools_remove_max = FloatProperty(name="最大值",description="顶点在此组中的权重，若小于等于这个值，则会被移除顶点组",default=0,min=0,max=1)
     bpy.types.Scene.hoVertexGroupTools_vg_increment1 = FloatProperty(name="权重增减量1",default=0.05,min=0,max=1)
@@ -128,6 +153,12 @@ def ureg_props():
 
     del bpy.types.Scene.hoVertexGroupTools_OnlyAffectBoneGroup
     del bpy.types.Scene.hoVertexGroupTools_isAutoNormalizeWeight
+    del bpy.types.Scene.hoVertexGroupTools_sharpen_strength
+    del bpy.types.Scene.hoVertexGroupTools_sharpen_resolution_mode
+    del bpy.types.Scene.hoVertexGroupTools_sharpen_voxel_resolution
+    del bpy.types.Scene.hoVertexGroupTools_sharpen_blur_radius
+    del bpy.types.Scene.hoVertexGroupTools_sharpen_iterations
+    del bpy.types.Scene.hoVertexGroupTools_sharpen_topology_hops
     
     del bpy.types.Scene.hoVertexGroupTools_remove_max
     del bpy.types.Scene.hoVertexGroupTools_vg_increment1
@@ -1478,7 +1509,9 @@ class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
 
         return {'FINISHED'}
     
-class OP_VertexGroupTools_SharpenWeight(Operator):
+# Kept unregistered as a migration reference; the public class below is the
+# topology-gated voxel implementation.
+class _Legacy_OP_VertexGroupTools_SharpenWeight(Operator):
     #TODO:存在收缩出孤岛的问题
     bl_idname = "ho.vertexgrouptools_sharpen_weight"
     bl_label = "锐化权重"
@@ -1561,7 +1594,9 @@ class OP_VertexGroupTools_SharpenWeight(Operator):
 
         return {'FINISHED'}
 
-class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
+# Kept unregistered as a migration reference; the public class below is the
+# topology-gated voxel implementation.
+class _Legacy_OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
     #TODO:存在收缩出孤岛的问题
     bl_idname = "ho.vertexgrouptools_sharpen_weight_allbone"
     bl_label = "锐化骨骼顶点组权重"
@@ -1678,6 +1713,304 @@ class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
             DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
 
         return {'FINISHED'}
+
+def _voxel_sharpen_resolution(mode, requested, selected_count):
+    """Choose a bounded grid density without changing the selected domain."""
+    requested = max(8, min(int(requested), 512))
+    if mode == 'MANUAL':
+        return requested
+    # AUTO scales with the amount of authored data and remains capped by the
+    # advanced setting. It is intentionally not based on unselected geometry.
+    estimate = 8 + int(math.ceil(math.sqrt(max(int(selected_count), 1)) * 4.0))
+    return max(16, min(requested, estimate))
+
+
+def _collect_selected_voxel_data(bm, deform_layer, group_indices):
+    """Read only selected vertices and selected-selected topology edges."""
+    selected_verts = [vert for vert in bm.verts if vert.select]
+    if not selected_verts:
+        return [], [], [], []
+
+    local_index = {int(vert.index): row for row, vert in enumerate(selected_verts)}
+    positions = [
+        (float(vert.co.x), float(vert.co.y), float(vert.co.z))
+        for vert in selected_verts
+    ]
+    weights = [
+        [float(vert[deform_layer].get(group_index, 0.0)) for group_index in group_indices]
+        for vert in selected_verts
+    ]
+    edge_set = set()
+    for vert in selected_verts:
+        first = local_index[int(vert.index)]
+        for edge in vert.link_edges:
+            other = edge.other_vert(vert)
+            second = local_index.get(int(other.index))
+            if second is None or first == second:
+                continue
+            edge_set.add((min(first, second), max(first, second)))
+    return selected_verts, positions, weights, sorted(edge_set)
+
+
+def _write_selected_voxel_data(selected_verts, deform_layer, group_indices, values):
+    """Write selected rows and remove tiny values instead of creating zeros."""
+    scalar = len(group_indices) == 1
+    for row, vert in enumerate(selected_verts):
+        deform = vert[deform_layer]
+        row_values = values[row] if not scalar else (values[row],)
+        for group_index, value in zip(group_indices, row_values):
+            value = float(value)
+            if value <= 1.0e-8:
+                if group_index in deform:
+                    del deform[group_index]
+            else:
+                deform[group_index] = max(0.0, min(1.0, value))
+
+
+def _voxel_operator_parameters(operator, scene):
+    return {
+        "resolution": _voxel_sharpen_resolution(
+            operator.resolution_mode,
+            operator.voxel_resolution,
+            operator._selected_count,
+        ),
+        "strength": float(operator.strength),
+        "blur_radius": int(operator.blur_radius),
+        "iterations": int(operator.iterations),
+        "topology_hops": int(operator.topology_hops),
+        "max_voxels": int(operator.max_voxels),
+    }
+
+
+class OP_VertexGroupTools_SharpenWeight(Operator):
+    bl_idname = "ho.vertexgrouptools_sharpen_weight"
+    bl_label = "锐化权重"
+    bl_description = "在选中顶点及其选中拓扑范围内进行体素级锐化"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    strength: FloatProperty(
+        name="锐化强度", default=1.0, min=0.0, max=5.0
+    )  # type: ignore
+    resolution_mode: EnumProperty(
+        name="体素分辨率模式",
+        items=(
+            ('AUTO', "自动", "按选中顶点数量估算分辨率"),
+            ('MANUAL', "手动", "使用明确指定的体素分辨率"),
+        ),
+        default='AUTO',
+    )  # type: ignore
+    voxel_resolution: IntProperty(
+        name="体素分辨率", default=64, min=8, max=512
+    )  # type: ignore
+    blur_radius: IntProperty(
+        name="模糊半径", default=1, min=0, max=8
+    )  # type: ignore
+    iterations: IntProperty(
+        name="锐化迭代", default=1, min=1, max=8
+    )  # type: ignore
+    topology_hops: IntProperty(
+        name="拓扑步数", default=2, min=0, max=8
+    )  # type: ignore
+    max_voxels: IntProperty(
+        name="Maximum voxels", default=250000, min=27, max=8000000,
+        options={'HIDDEN'},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
+
+    def execute(self, context):
+        obj = context.edit_object
+        mesh = obj.data
+        bm = bmesh.from_edit_mesh(mesh)
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        deform_layer = bm.verts.layers.deform.verify()
+        vertex_group = obj.vertex_groups.active
+        if vertex_group is None:
+            self.report({'WARNING'}, "没有活动的顶点组")
+            return {'CANCELLED'}
+        if getattr(vertex_group, "lock_weight", False):
+            self.report({'WARNING'}, "活动顶点组已锁定")
+            return {'CANCELLED'}
+
+        group_indices = [int(vertex_group.index)]
+        selected, positions, weights, edges = _collect_selected_voxel_data(
+            bm, deform_layer, group_indices
+        )
+        if not selected:
+            self.report({'WARNING'}, "没有选中的顶点")
+            return {'CANCELLED'}
+
+        self._selected_count = len(selected)
+        parameters = _voxel_operator_parameters(self, context.scene)
+        try:
+            result = sharpen_weights(
+                positions,
+                weights,
+                range(len(selected)),
+                edges,
+                resolution=parameters["resolution"],
+                strength=parameters["strength"],
+                blur_radius=parameters["blur_radius"],
+                iterations=parameters["iterations"],
+                topology_hops=parameters["topology_hops"],
+                max_voxels=parameters["max_voxels"],
+                normalize=False,
+            )
+        except (VoxelSharpenError, ValueError, OverflowError) as exc:
+            self.report({'ERROR'}, f"体素锐化失败: {exc}")
+            return {'CANCELLED'}
+
+        _write_selected_voxel_data(selected, deform_layer, group_indices, result.weights)
+        bmesh.update_edit_mesh(mesh)
+        if getattr(context.scene, "hoVertexGroupTools_isAutoNormalizeWeight", False):
+            bpy.ops.ho.vertexgrouptools_normalize_selectedvertex_groupvalues()
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)
+        diagnostics = result.diagnostics
+        self.report(
+            {'INFO'},
+            "体素锐化完成: %d 顶点, %d 拓扑组件, 分辨率 %s"
+            % (
+                diagnostics["selected_count"],
+                diagnostics["component_count"],
+                diagnostics["base_resolution"],
+            ),
+        )
+        return {'FINISHED'}
+
+
+class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
+    bl_idname = "ho.vertexgrouptools_sharpen_weight_allbone"
+    bl_label = "锐化全部"
+    bl_description = "对选中顶点的未锁定骨骼组进行拓扑约束的体素级锐化"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    strength: FloatProperty(
+        name="锐化强度", default=1.0, min=0.0, max=5.0
+    )  # type: ignore
+    resolution_mode: EnumProperty(
+        name="体素分辨率模式",
+        items=(
+            ('AUTO', "自动", "按选中顶点数量估算分辨率"),
+            ('MANUAL', "手动", "使用明确指定的体素分辨率"),
+        ),
+        default='AUTO',
+    )  # type: ignore
+    voxel_resolution: IntProperty(
+        name="体素分辨率", default=64, min=8, max=512
+    )  # type: ignore
+    blur_radius: IntProperty(
+        name="模糊半径", default=1, min=0, max=8
+    )  # type: ignore
+    iterations: IntProperty(
+        name="锐化迭代", default=1, min=1, max=8
+    )  # type: ignore
+    topology_hops: IntProperty(
+        name="拓扑步数", default=2, min=0, max=8
+    )  # type: ignore
+    max_voxels: IntProperty(
+        name="Maximum voxels", default=250000, min=27, max=8000000,
+        options={'HIDDEN'},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
+
+    def execute(self, context):
+        obj = context.edit_object
+        mesh = obj.data
+        bm = bmesh.from_edit_mesh(mesh)
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        deform_layer = bm.verts.layers.deform.verify()
+
+        armature = bone_utils.find_armature_for_object(obj)
+        if armature is None:
+            self.report({'WARNING'}, "未找到唯一的绑定骨架")
+            return {'CANCELLED'}
+        bone_groups = [
+            group for group in obj.vertex_groups
+            if group.name in armature.data.bones
+        ]
+        free_groups = [
+            group for group in bone_groups
+            if not getattr(group, "lock_weight", False)
+        ]
+        if not free_groups:
+            self.report({'WARNING'}, "没有可锐化的未锁定骨骼组")
+            return {'CANCELLED'}
+
+        group_indices = [int(group.index) for group in free_groups]
+        selected, positions, weights, edges = _collect_selected_voxel_data(
+            bm, deform_layer, group_indices
+        )
+        if not selected:
+            self.report({'WARNING'}, "没有选中的顶点")
+            return {'CANCELLED'}
+
+        self._selected_count = len(selected)
+        parameters = _voxel_operator_parameters(self, context.scene)
+        auto_normalize = bool(
+            getattr(context.scene, "hoVertexGroupTools_isAutoNormalizeWeight", False)
+        )
+        normalization_target = "input_sum"
+        if auto_normalize:
+            locked_groups = [
+                group for group in bone_groups
+                if getattr(group, "lock_weight", False)
+            ]
+            normalization_target = [
+                max(
+                    0.0,
+                    1.0 - sum(
+                        float(vert[deform_layer].get(group.index, 0.0))
+                        for group in locked_groups
+                    ),
+                )
+                for vert in selected
+            ]
+        try:
+            result = sharpen_weights(
+                positions,
+                weights,
+                range(len(selected)),
+                edges,
+                resolution=parameters["resolution"],
+                strength=parameters["strength"],
+                blur_radius=parameters["blur_radius"],
+                iterations=parameters["iterations"],
+                topology_hops=parameters["topology_hops"],
+                max_voxels=parameters["max_voxels"],
+                normalize=auto_normalize,
+                normalization_target=normalization_target,
+            )
+        except (VoxelSharpenError, ValueError, OverflowError) as exc:
+            self.report({'ERROR'}, f"体素锐化失败: {exc}")
+            return {'CANCELLED'}
+
+        _write_selected_voxel_data(selected, deform_layer, group_indices, result.weights)
+        bmesh.update_edit_mesh(mesh)
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)
+        diagnostics = result.diagnostics
+        self.report(
+            {'INFO'},
+            "全部体素锐化完成: %d 顶点, %d 组, %d 拓扑组件, 分辨率 %s"
+            % (
+                diagnostics["selected_count"],
+                diagnostics["group_count"],
+                diagnostics["component_count"],
+                diagnostics["base_resolution"],
+            ),
+        )
+        return {'FINISHED'}
+
 
 class OP_VertexGroupTools_Change_VG_weight(Operator):
     """改变顶点权重"""
@@ -2429,11 +2762,44 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     row = col.row(align=True)
     row.operator(OP_VertexGroupTools_SoftWeight.bl_idname,text="柔化"
                     )
-    row.operator(OP_VertexGroupTools_SharpenWeight.bl_idname,text="锐化"
-                    )
     row = col.row(align=True)
     row.operator(OP_VertexGroupTools_SoftWeight_AllBone.bl_idname,text="柔化全部")
-    row.operator(OP_VertexGroupTools_SharpenWeight_AllBone.bl_idname,text="锐化全部")
+
+    # Voxel sharpening controls. Manual mode exposes an explicit resolution;
+    # the remaining controls are shared by the single-group and all-bone ops.
+    row = col.row(align=True)
+    row.prop(scene, "hoVertexGroupTools_sharpen_strength", text="强度")
+    row.prop(scene, "hoVertexGroupTools_sharpen_resolution_mode", text="")
+    if scene.hoVertexGroupTools_sharpen_resolution_mode == 'MANUAL':
+        row.prop(scene, "hoVertexGroupTools_sharpen_voxel_resolution", text="分辨率")
+    else:
+        row.label(text="自动分辨率")
+    row = col.row(align=True)
+    row.prop(scene, "hoVertexGroupTools_sharpen_blur_radius", text="模糊")
+    row.prop(scene, "hoVertexGroupTools_sharpen_iterations", text="迭代")
+    row.prop(scene, "hoVertexGroupTools_sharpen_topology_hops", text="拓扑")
+
+    # Assign scene settings explicitly so both buttons use the same advanced
+    # controls while still leaving the operator redo panel functional.
+    sharpen_row = col.row(align=True)
+    sharpen_op = sharpen_row.operator(
+        OP_VertexGroupTools_SharpenWeight.bl_idname, text="锐化"
+    )
+    sharpen_op.strength = scene.hoVertexGroupTools_sharpen_strength
+    sharpen_op.resolution_mode = scene.hoVertexGroupTools_sharpen_resolution_mode
+    sharpen_op.voxel_resolution = scene.hoVertexGroupTools_sharpen_voxel_resolution
+    sharpen_op.blur_radius = scene.hoVertexGroupTools_sharpen_blur_radius
+    sharpen_op.iterations = scene.hoVertexGroupTools_sharpen_iterations
+    sharpen_op.topology_hops = scene.hoVertexGroupTools_sharpen_topology_hops
+    all_sharpen_op = sharpen_row.operator(
+        OP_VertexGroupTools_SharpenWeight_AllBone.bl_idname, text="锐化全部"
+    )
+    all_sharpen_op.strength = scene.hoVertexGroupTools_sharpen_strength
+    all_sharpen_op.resolution_mode = scene.hoVertexGroupTools_sharpen_resolution_mode
+    all_sharpen_op.voxel_resolution = scene.hoVertexGroupTools_sharpen_voxel_resolution
+    all_sharpen_op.blur_radius = scene.hoVertexGroupTools_sharpen_blur_radius
+    all_sharpen_op.iterations = scene.hoVertexGroupTools_sharpen_iterations
+    all_sharpen_op.topology_hops = scene.hoVertexGroupTools_sharpen_topology_hops
 
     # #测试
     # row.template_list("HO_UL_VertexGroup_AdvancedList", "",
