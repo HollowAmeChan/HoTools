@@ -241,9 +241,9 @@ class FBXExporter:
     def clean_export_weights(mesh_objects):
         """对将导出的形变网格做权重清理：删微小权重 → 钳制骨权重组数 → 归一化。
 
-        三步全部走 Blender 原生算子的 group_select_mode='BONE_DEFORM'：只处理与形变骨
-        对应的顶点组，非骨骼组（形态键遮罩、GN 属性组等）一律不动——这就是“先判定是不是
-        骨骼权重”的落点。须在 OBJECT 模式调用；会临时切换 active 物体，由导出流程统一恢复，
+        清理和归一化使用 Blender 原生算子，组数限制使用 bone_utils 的多骨架形变组过滤：
+        只处理与形变骨对应的顶点组，非骨骼组（形态键遮罩、GN 属性组等）一律不动——这就是
+        “先判定是不是骨骼权重”的落点。须在 OBJECT 模式调用；会临时切换 active 物体，由导出流程统一恢复，
         且本步随导出末尾 undo 回滚，工程不留痕。返回实际处理的网格数。
 
         执行前临时关闭会干扰结果的开关，结束后恢复：
@@ -282,12 +282,13 @@ class FBXExporter:
                     print(f"[HoTools FBX] vertex_group_clean 失败 {ob.name}: {exc}")
                 # 2. 钳制每顶点最多 N 个骨权重组
                 try:
-                    bpy.ops.object.vertex_group_limit_total(
-                        group_select_mode='BONE_DEFORM',
-                        limit=FBXExporter.WEIGHT_MAX_GROUPS,
+                    # Blender 4.5 移除了该算子的 BONE_DEFORM 枚举，使用统一的骨架过滤逻辑。
+                    bone_utils.limit_deform_weights(
+                        ob,
+                        FBXExporter.WEIGHT_MAX_GROUPS,
                     )
-                except RuntimeError as exc:
-                    print(f"[HoTools FBX] vertex_group_limit_total 失败 {ob.name}: {exc}")
+                except (RuntimeError, ValueError) as exc:
+                    print(f"[HoTools FBX] limit_deform_weights 失败 {ob.name}: {exc}")
                 # 3. 归一化骨骼权重
                 try:
                     bpy.ops.object.vertex_group_normalize_all(

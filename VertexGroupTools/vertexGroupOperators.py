@@ -2227,7 +2227,7 @@ class OP_VertexGroupTools_Max_VG_Limit(Operator):
             bpy.ops.object.mode_set(mode='EDIT')
 
         if len(obj.vertex_groups):
-            bpy.ops.object.vertex_group_limit_total(limit=self.num_max,group_select_mode='BONE_DEFORM')
+            bone_utils.limit_deform_weights(obj, self.num_max, selected_only=True)
 
         _refresh_checker(context)
 
