@@ -415,13 +415,13 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
         text="选择并排",icon="ALIGN_JUSTIFY",props={"ring": True},)
 
     row = col.row(align=True)
-    row.scale_y = 1.5
+    row.scale_y = 2
     row.operator("ho.vertexgrouptools_select_oneside",
-        text="左半",props={"reverse": True},)
+        text="左半",props={"reverse": True},icon="TRIA_LEFT",)
     row.operator("ho.vertexgrouptools_select_oneside",
-        text="右半",props={"reverse": False},)
+        text="右半",props={"reverse": False},icon="TRIA_RIGHT",)
     row.operator("ho.vertexgrouptools_select_mirror",
-        text="选择镜像",)
+        text="选择镜像",icon="ARROW_LEFTRIGHT",)
 
 
 def _draw_mesh_left_tools(layout: LayoutBuilder, context):
