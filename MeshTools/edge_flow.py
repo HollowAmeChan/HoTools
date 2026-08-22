@@ -25,7 +25,7 @@ def _walk_boundary(start_edge, limit_to_edges=None):
     visited = set()
     candidates = [start_edge]
     while True:
-        for candidate in candidates:
+        for candidate in sorted(candidates, key=lambda item: item.index):
             for vert in candidate.verts:
                 if len(vert.link_edges) > 2:
                     for edge in vert.link_edges:
@@ -34,11 +34,11 @@ def _walk_boundary(start_edge, limit_to_edges=None):
                         if limit_to_edges is None or edge in limit_to_edges:
                             edge_loop.add(edge)
             visited.add(candidate)
-        candidates = edge_loop - visited
+        candidates = sorted(edge_loop - visited, key=lambda item: item.index)
         if len(visited) == len(edge_loop):
             break
 
-    raw = list(edge_loop)
+    raw = sorted(edge_loop, key=lambda item: item.index)
     start_edge = raw.pop()
     ordered = deque([start_edge])
     add = ordered.append
@@ -81,7 +81,7 @@ def _walk_ngon(start_edge, limit_to_edges=None):
 def _walk_edge_loop(start_edge, limit_to_edges=None):
     edge_loop = deque([start_edge])
     add = edge_loop.append
-    for loop in start_edge.link_loops:
+    for loop in sorted(start_edge.link_loops, key=lambda item: item.index):
         start_valence = len(loop.vert.link_edges)
         if start_valence <= 4:
             while True:
@@ -117,10 +117,12 @@ def _get_edge_loop(bm, start_edge, limit_to_edges=None):
 
 
 def _get_edge_loops(bm, edges):
+    bm.edges.ensure_lookup_table()
     remaining = set(edges)
     result = []
     while remaining:
-        edge = remaining.pop()
+        edge = min(remaining, key=lambda item: item.index)
+        remaining.remove(edge)
         loop = _get_edge_loop(bm, edge, remaining)
         result.append(loop)
         remaining.difference_update(loop.edges)
@@ -296,54 +298,65 @@ class _EdgeLoop:
         apply_blend(end_count, reverse=True)
 
     def set_flow(self, tension, min_angle):
+        # Calculate every destination from the same geometry snapshot. The
+        # previous in-place update made results depend on the unordered edge
+        # set traversal, especially when adjacent selected edges shared verts.
+        targets_by_vertex = {}
         for edge in self.edges:
             if edge.is_boundary or len(edge.link_loops) < 2:
                 continue
-            targets = {}
             for loop in edge.link_loops:
                 ring1 = loop.link_loop_next.link_loop_next
                 ring2 = loop.link_loop_radial_prev.link_loop_prev.link_loop_prev
                 center = edge.other_vert(loop.vert)
-                p2 = ring1.vert
-                p3 = ring2.link_loop_radial_next.vert
+                p2_vertex = ring1.vert
+                p3_vertex = ring2.link_loop_radial_next.vert
+                p2 = p2_vertex.co.copy()
+                p3 = p3_vertex.co.copy()
 
                 if not ring1.edge.is_boundary:
                     final = ring1.link_loop_radial_next.link_loop_next
-                    p1 = next(vertex for vertex in final.edge.verts if vertex != p2).co.copy()
-                    p1_direction = p1 - p2.co
-                    center_direction = center.co - p2.co
+                    p1 = next(vertex for vertex in final.edge.verts if vertex != p2_vertex).co.copy()
+                    p1_direction = p1 - p2
+                    center_direction = center.co - p2
                     if (
                         p1_direction.length <= 1.0e-12
                         or center_direction.length <= 1.0e-12
                         or p1_direction.angle(center_direction) < min_angle
                     ):
-                        p1 = p2.co - (p3.co - p2.co) * 0.5
+                        p1 = p2 - (p3 - p2) * 0.5
                 else:
-                    p1 = p2.co - (p3.co - p2.co)
+                    p1 = p2 - (p3 - p2)
 
                 if not ring2.edge.is_boundary:
                     final = ring2.link_loop_radial_prev.link_loop_prev
-                    p4 = next(vertex for vertex in final.edge.verts if vertex != p3).co.copy()
-                    p4_direction = p4 - p3.co
-                    center_direction = center.co - p3.co
+                    p4 = next(vertex for vertex in final.edge.verts if vertex != p3_vertex).co.copy()
+                    p4_direction = p4 - p3
+                    center_direction = center.co - p3
                     if (
                         p4_direction.length <= 1.0e-12
                         or center_direction.length <= 1.0e-12
                         or p4_direction.angle(center_direction) < min_angle
                     ):
-                        p4 = p3.co - (p2.co - p3.co) * 0.5
+                        p4 = p3 - (p2 - p3) * 0.5
                 else:
-                    p3 = ring2.edge.other_vert(p3)
-                    p4 = p3.co - (p2.co - p3.co)
-                targets[center] = (p1, p2.co.copy(), p3.co.copy(), p4)
-
-            for vertex, (p1, p2, p3, p4) in targets.items():
+                    p3 = ring2.edge.other_vert(p3_vertex).co.copy()
+                    p4 = p3 - (p2 - p3)
                 if (p1 - p2).length <= 1.0e-12 or (p3 - p4).length <= 1.0e-12:
                     continue
                 distance = (p2 - p3).length * 0.5
                 p1 = p2 + distance * (p1 - p2).normalized()
                 p4 = p3 + distance * (p4 - p3).normalized()
-                vertex.co = _hermite_3d(p1, p2, p3, p4, 0.5, -tension)
+                target = _hermite_3d(p1, p2, p3, p4, 0.5, -tension)
+                targets_by_vertex.setdefault(center, []).append(target)
+
+        for vertex, targets in targets_by_vertex.items():
+            if not vertex.is_valid:
+                continue
+            target = Vector((0.0, 0.0, 0.0))
+            for position in targets:
+                target += position
+            vertex.co = target / len(targets)
 
 
 # -----------------------------------------------------------------------------
