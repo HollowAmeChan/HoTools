@@ -394,9 +394,9 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
 
     row = col.row(align=True)
     row.operator("mesh.select_linked",
-        text="关联缝合",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
+        text="关联缝合(UV岛)",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
     row.operator("mesh.select_linked",
-        text="关联锐边",icon="STRIP_COLOR_05",props={"delimit": {"SHARP"}},)
+        text="关联锐边(光滑组)",icon="STRIP_COLOR_05",props={"delimit": {"SHARP"}},)
     row = col.row(align=True)
     row.operator("mesh.faces_select_linked_flat",
         text="相邻平展",icon="VIEW_PERSPECTIVE",props={"sharpness": 0.25},)
@@ -413,6 +413,10 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
         text="选择循环",icon="FILE_VOLUME",props={"ring": False},)
     row.operator("mesh.loop_multi_select",
         text="选择并排",icon="ALIGN_JUSTIFY",props={"ring": True},)
+
+    row = col.row(align=True)
+    row.operator("mesh.edges_select_sharp",text="锐利边缘",icon="STRIP_COLOR_05",)
+    row.operator("mesh.select_nth",text="间隔性弃选",icon="SELECT_SUBTRACT",props={"skip": 1, "nth": 1, "offset": 0},)
 
     row = col.row(align=True)
     row.scale_y = 2
