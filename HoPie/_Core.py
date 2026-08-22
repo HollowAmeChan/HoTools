@@ -1244,8 +1244,30 @@ class LayoutBuilder(_UILayoutType):
     draw = expand
 
 
+class _DeferredSlotResult:
+    """Proxy for a value returned by a deferred slot layout call."""
+
+    __slots__ = ("_slot", "_token")
+
+    def __init__(self, slot: "SlotBuilder", token: int) -> None:
+        object.__setattr__(self, "_slot", slot)
+        object.__setattr__(self, "_token", token)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return lambda *args, **kwargs: self._slot._deferred_method(
+            name, self._token, *args, **kwargs)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        self._slot._deferred_set(self._token, name, value)
+
+
 class SlotBuilder(LayoutBuilder):
-    """一个有名字的饼槽位。"""
+    """A named pie slot whose layout calls can be declared in any order."""
 
     _BUILDER_FIELDS = LayoutBuilder._BUILDER_FIELDS | {
         "name", "index",
@@ -1259,8 +1281,87 @@ class SlotBuilder(LayoutBuilder):
         self.index = index
         self._pie = pie
         self._activated = False
+        self._deferred_enabled = True
+        self._deferred_replaying = False
+        self._deferred_commands = []
+        self._deferred_serial = 0
+
+    def __getattribute__(self, name: str) -> Any:
+        """Record public LayoutBuilder calls until HoPie.finish()."""
+        if name.startswith("_") or name in {
+                "layout", "context", "operator_context", "metadata",
+                "name", "index", "raw_layout",
+        }:
+            return object.__getattribute__(self, name)
+        try:
+            deferred = object.__getattribute__(self, "_deferred_enabled")
+            replaying = object.__getattribute__(self, "_deferred_replaying")
+        except AttributeError:
+            deferred = False
+            replaying = False
+        value = object.__getattribute__(self, name)
+        if deferred and not replaying and callable(value) and hasattr(
+                LayoutBuilder, name):
+            return lambda *args, **kwargs: self._deferred_method(
+                name, None, *args, **kwargs)
+        return value
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if (not name.startswith("_")
+                and getattr(self, "_deferred_enabled", False)
+                and not getattr(self, "_deferred_replaying", False)
+                and name not in {"layout", "context", "operator_context",
+                                 "metadata", "name", "index"}):
+            self._deferred_set(None, name, value)
+            return
+        super().__setattr__(name, value)
+
+    def _deferred_method(self, name: str, target: Optional[int] = None,
+                         *args: Any, **kwargs: Any) -> Any:
+        self._deferred_serial += 1
+        token = self._deferred_serial
+        self._deferred_commands.append(
+            ("call", token, target, name, args, kwargs))
+        return _DeferredSlotResult(self, token)
+
+    def _deferred_set(self, target: Optional[int], name: str,
+                      value: Any) -> None:
+        self._deferred_commands.append(("set", target, name, value))
+
+    def _flush_deferred(self) -> None:
+        if not self._deferred_commands:
+            return
+        self._deferred_enabled = False
+        self._deferred_replaying = True
+        values: Dict[int, Any] = {}
+        try:
+            self._before_draw()
+            for command in self._deferred_commands:
+                if command[0] == "call":
+                    _, token, target, name, args, kwargs = command
+                    owner = self if target is None else values[target]
+                    if owner is self:
+                        result = getattr(LayoutBuilder, name)(
+                            self, *args, **kwargs)
+                    else:
+                        result = getattr(owner, name)(*args, **kwargs)
+                    values[token] = result
+                else:
+                    _, target, name, value = command
+                    owner = self if target is None else values[target]
+                    setattr(owner, name, value)
+        finally:
+            self._deferred_commands.clear()
+            self._deferred_replaying = False
 
     def _before_draw(self) -> None:
+        if self._deferred_replaying:
+            if not self._activated and self._pie is not None:
+                self._pie._activate_slot(self)
+                self._activated = True
+            return
+        if self._deferred_enabled:
+            return
         if self._pie is None or self._activated:
             return
         self._pie._activate_slot(self)
@@ -1390,6 +1491,15 @@ class HoPie(LayoutBuilder):
         """结束饼的声明并补齐未使用的方向槽位。"""
         if self._finished:
             return self
+        # Blender's menu_pie layout is sequential, but callers should not
+        # have to remember that implementation detail. Replay each slot in
+        # the canonical order after all slot declarations have been collected.
+        for name in self.SLOT_NAMES:
+            self._slots[name]._flush_deferred()
+        for name in self.EXTRA_SLOT_NAMES:
+            slot = self._centers.get(name)
+            if slot is not None:
+                slot._flush_deferred()
         if not self._center_started:
             while self._next_slot < 8:
                 self.layout.separator()

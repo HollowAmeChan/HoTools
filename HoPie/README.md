@@ -29,7 +29,7 @@ pie.finish()
 | `bottom_left` / `bottom_right` | 左下 / 右下 |
 | `top_center` / `bottom_center` | 中心最顶 / 中心最底 |
 
-`center` 是 `top_center` 的别名，`center_secondary` 是 `bottom_center` 的别名。也可以用 `pie[0]` 到 `pie[9]` 访问。槽位按上表顺序绘制，空位由 `finish()` 自动补齐；也可以使用 `with HoPie(...) as pie:` 自动结束。
+`center` 是 `top_center` 的别名，`center_secondary` 是 `bottom_center` 的别名。也可以用 `pie[0]` 到 `pie[9]` 访问。槽位声明不要求按上表顺序书写，`finish()` 会按固定顺序回放并补齐空位；也可以使用 `with HoPie(...) as pie:` 自动结束。
 
 ## 三种入口
 

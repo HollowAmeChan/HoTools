@@ -19,6 +19,8 @@ from ._Core import (
     find_space,
 )
 
+from ..MeshTools.parallel_manifold_subdivide import OP_ParallelManifoldSubdivide
+
 
 _RANDOM_PREVIEW_RESTORE = "MATERIAL"
 
@@ -455,6 +457,7 @@ def _draw_edge_flow_tools(layout: LayoutBuilder, context):
     col.scale_y = 1.35
     col.operator("ho.set_edge_flow", text="loop设流",icon="SPHERECURVE")
     col.operator("ho.parallel_manifold_subdivide", text="并排流形细分", icon="MOD_SUBSURF")
+    col.operator("ho.slide_edge_loop_cut", text="滑边环切", icon="EDGESEL")
     row = col.row(align=True)
     row.operator("ho.set_edge_curve", text="并排设流",icon="MOD_WAVE")
     row.operator("ho.set_edge_linear", text="并排设直",icon="FILE_VOLUME")
@@ -537,6 +540,15 @@ def _draw_object_quick_panel(layout: LayoutBuilder, context):
     col.operator(HO_OT_HoMainPieSeparateLoose.bl_idname,
         text="分离松散块",icon="UNLINKED",)
 
+def _draw_mesh_down_tools(layout: LayoutBuilder, context):
+    """绘制网格子饼下方的工具面板。"""
+    col = layout.column(align=True)
+    col.scale_x = 1.25
+    col.scale_y = 1.25
+
+    row = col.row(align=True)
+    row.operator(OP_ParallelManifoldSubdivide.bl_idname,
+            text="并排流形细分",icon="FILE_VOLUME",)
 
 class HO_MT_HoMainPieMesh(Menu):
     """PME 中的网格工具子饼。"""
@@ -552,7 +564,9 @@ class HO_MT_HoMainPieMesh(Menu):
         pie.top.expand(_draw_edge_display,
             height=1.5)
         pie.top_right.expand(_draw_quick_modifier_buttons,
-            height_offset=20.0)
+            height_offset=30.0)
+        pie.bottom.expand(_draw_mesh_down_tools,
+            height=1.5)
         pie.finish()
 
 

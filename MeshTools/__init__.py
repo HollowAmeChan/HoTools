@@ -32,6 +32,8 @@ from .custom_normals import (
     OP_CustomSplitNormals_Import,
 )
 from .normals import OP_MergeOverlapping_VertexNormals
+from .parallel_manifold_subdivide import OP_ParallelManifoldSubdivide
+from .slide_edge_loop_cut import OP_SlideEdgeLoopCut
 
 
 def draw_in_DATA_PT_customdata(self, context):
@@ -60,13 +62,15 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         layout.operator(OP_ModalFillMeshHole.bl_idname, icon='FACESEL')
         layout.separator()
         layout.operator_context = 'INVOKE_DEFAULT'
-        layout.operator(HO_OT_SetEdgeFlow.bl_idname, text='Set Edge Flow', icon='MOD_CURVE')
-        layout.operator(HO_OT_SetEdgeCurve.bl_idname, text='Set Edge Curve', icon='CURVE_BEZCURVE')
-        layout.operator(HO_OT_SetEdgeLinear.bl_idname, text='Set Edge Linear', icon='IPO_LINEAR')
+        layout.operator(HO_OT_SetEdgeFlow.bl_idname, icon='MOD_CURVE')
+        layout.operator(HO_OT_SetEdgeCurve.bl_idname, icon='CURVE_BEZCURVE')
+        layout.operator(HO_OT_SetEdgeLinear.bl_idname, icon='IPO_LINEAR')
+        layout.operator(OP_ParallelManifoldSubdivide.bl_idname, icon='MOD_SUBSURF')
+        layout.operator(OP_SlideEdgeLoopCut.bl_idname, icon='EDGESEL')
         layout.separator()
-        layout.operator(HO_OT_MeshFlatten.bl_idname, text='Flatten', icon='MESH_GRID')
-        layout.operator(HO_OT_MeshRelax.bl_idname, text='Relax', icon='MOD_SMOOTH')
-        layout.operator(HO_OT_MeshCircleEven.bl_idname, text='Even Circle', icon='MESH_CIRCLE')
+        layout.operator(HO_OT_MeshFlatten.bl_idname, icon='MESH_GRID')
+        layout.operator(HO_OT_MeshRelax.bl_idname, icon='MOD_SMOOTH')
+        layout.operator(HO_OT_MeshCircleEven.bl_idname, icon='MESH_CIRCLE')
 
 
 def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
@@ -93,6 +97,8 @@ CLASSES = [
     OP_FillSelection,
     OP_AddSelectSideRingLoops,
     OP_RemoveSelectSideRingLoops,
+    OP_ParallelManifoldSubdivide,
+    OP_SlideEdgeLoopCut,
     OP_VisualBooleanCut,
     VIEW3D_MT_edit_mesh_hotools,
     *_SUPPLEMENTAL_CLASSES,
