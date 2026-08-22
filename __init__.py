@@ -54,6 +54,65 @@ def _preference_user_keymaps(context):
     return resolved
 
 
+def _preference_space_playback_keymaps(context):
+    """Return Blender's unmodified Space bindings for animation playback."""
+    wm = getattr(context, "window_manager", None)
+    keyconfigs = getattr(wm, "keyconfigs", None)
+    kc = getattr(keyconfigs, "user", None)
+    if kc is None:
+        return []
+
+    result = []
+    for keymap in getattr(kc, "keymaps", ()):
+        if (
+                getattr(keymap, "name", None) != "Frames"
+                or getattr(keymap, "space_type", None) != "EMPTY"
+                or getattr(keymap, "region_type", None) != "WINDOW"
+        ):
+            continue
+        for item in getattr(keymap, "keymap_items", ()):
+            if (
+                    getattr(item, "idname", None) != "screen.animation_play"
+                    or getattr(item, "type", None) != "SPACE"
+                    or getattr(item, "value", None) != "PRESS"
+            ):
+                continue
+            if any(
+                    getattr(item, modifier, 0) != 0
+                    for modifier in ("any", "shift", "ctrl", "alt", "oskey", "hyper")
+            ):
+                continue
+            if getattr(item, "key_modifier", "NONE") not in {"NONE", ""}:
+                continue
+            result.append((keymap, item))
+    return result
+
+
+def _draw_space_playback_warning(layout, context):
+    """Draw editable Blender playback bindings in the HoMainPie settings."""
+    keymaps = _preference_space_playback_keymaps(context)
+    warning = layout.row(align=True)
+    warning.alert = True
+    warning.label(
+        text="禁用原生空格播放以使用",
+        icon="ERROR",
+    )
+
+    if not keymaps:
+        empty = layout.row()
+        empty.enabled = False
+        empty.label(text="未找到 Blender Frames 空格播放快捷键")
+        return
+
+    wm = getattr(context, "window_manager", None)
+    kc = getattr(getattr(wm, "keyconfigs", None), "user", None)
+    if kc is None:
+        return
+    for keymap, item in keymaps:
+        layout.context_pointer_set("keymap", keymap)
+        rna_keymap_ui.draw_kmi([], kc, keymap, item, layout, 0)
+
+
 bl_info = {
     "name": "HoTools",
     "author": "Hollow_ame",
@@ -318,6 +377,12 @@ class AddonPreference(bpy.types.AddonPreferences):
             draw_toggle('hoTools_enableDeleteMergePie', '删除/合并饼')
             draw_toggle('hoTools_enableHoMainPie', 'Ho大饼')
             draw_toggle('hoTools_enableArmatureModePie', '骨架模式饼')
+
+            if self.hoTools_enableHoMainPie:
+                main_settings = details if details is not None else controls
+                main_box = main_settings.box()
+                main_box.label(text='Ho大饼设置')
+                _draw_space_playback_warning(main_box, context)
 
             if details is not None:
                 settings = details.box()
