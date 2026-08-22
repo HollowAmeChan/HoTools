@@ -151,6 +151,37 @@ def _find_face_for_split(first_vertex, second_vertex, boundary_ids):
     )
 
 
+def _make_cell_specs(raw_cells):
+    """Freeze the identifiers needed after transverse edges are split."""
+    cells = []
+    edge_lookup = {}
+    seen_faces = set()
+    for face, first, second, edge_a, edge_b in raw_cells:
+        face_ids = tuple(vertex.index for vertex in face.verts)
+        face_key = frozenset(face_ids)
+        if face_key in seen_faces:
+            raise ValueError("目标四边面重复")
+        seen_faces.add(face_key)
+        boundary_ids = tuple(vertex.index for vertex in first.verts)
+        edge_a_key = _edge_key(edge_a)
+        edge_b_key = _edge_key(edge_b)
+        for edge_key, edge in ((edge_a_key, edge_a), (edge_b_key, edge_b)):
+            previous = edge_lookup.get(edge_key)
+            if previous is not None and previous is not edge:
+                raise ValueError("共享横向边索引不一致")
+            edge_lookup[edge_key] = edge
+        cells.append({
+            "face_ids": face_ids,
+            "boundary_ids": boundary_ids,
+            "edge_a_key": edge_a_key,
+            "edge_b_key": edge_b_key,
+            "edge_a_start": edge_a.verts[0].index,
+            "edge_b_start": edge_b.verts[0].index,
+            "edge_b_end": edge_b.verts[1].index,
+        })
+    return cells, edge_lookup
+
+
 class OP_ParallelManifoldSubdivide(Operator):
     bl_idname = "ho.parallel_manifold_subdivide"
     bl_label = "并排流形细分"
@@ -162,7 +193,6 @@ class OP_ParallelManifoldSubdivide(Operator):
         description="在目标并排面之间插入的边数",
         default=1,
         min=1,
-        max=32,
         soft_max=8,
     )  # type: ignore
     iterations: IntProperty(
@@ -170,7 +200,6 @@ class OP_ParallelManifoldSubdivide(Operator):
         description="以等价切线数量合并执行，避免重复刷新拓扑",
         default=1,
         min=1,
-        max=8,
         soft_max=8,
     )  # type: ignore
     flow_mix: FloatProperty(
@@ -197,61 +226,111 @@ class OP_ParallelManifoldSubdivide(Operator):
         self.layout.prop(self, "flow_mix")
 
     def _effective_cuts(self):
-        cuts = max(1, min(int(self.cuts), 32))
-        iterations = max(1, min(int(self.iterations), 8))
-        total = 1
-        for _ in range(iterations):
-            total *= cuts + 1
-            if total > 33:
-                return 32
-        return max(1, total - 1)
+        cuts = max(1, int(self.cuts))
+        iterations = max(1, int(self.iterations))
+        return cuts * iterations
+
+    def _preflight(self, context):
+        """Validate the complete local operation before touching topology."""
+        active = getattr(context, "active_object", None)
+        if getattr(active, "type", None) != "MESH":
+            return None, "当前活动对象不是网格"
+        mode = getattr(context, "mode", None) or getattr(active, "mode", None)
+        if mode not in {"EDIT_MESH", "EDIT"}:
+            return None, "请在网格编辑模式下运行"
+
+        try:
+            bm = bmesh.from_edit_mesh(active.data)
+            bm.verts.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()
+            bm.verts.index_update()
+            bm.edges.index_update()
+            raw_cells = _target_cells(bm)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+            return None, "无法读取当前编辑网格：%s" % error
+
+        if not raw_cells:
+            return None, "没有找到由选中并排边夹住的四边面"
+
+        try:
+            cells, edge_lookup = _make_cell_specs(raw_cells)
+        except ValueError as error:
+            return None, str(error)
+
+        if not cells:
+            return None, "没有可处理的目标面"
+        cuts = self._effective_cuts()
+        valid_vertex_indices = set(range(len(bm.verts)))
+        for cell in cells:
+            if len(cell["face_ids"]) != 4 or len(set(cell["face_ids"])) != 4:
+                return None, "目标面不是有效四边面"
+            if len(set(cell["boundary_ids"])) != 2:
+                return None, "目标并排边端点无效"
+            if not set(cell["face_ids"]).issuperset(cell["boundary_ids"]):
+                return None, "选中并排边不属于目标面"
+            for vertex_id in (
+                *cell["face_ids"],
+                *cell["boundary_ids"],
+                cell["edge_a_start"],
+                cell["edge_b_start"],
+                cell["edge_b_end"],
+            ):
+                if vertex_id not in valid_vertex_indices:
+                    return None, "目标边引用了无效顶点"
+
+        for edge_key, edge in edge_lookup.items():
+            if not edge.is_valid:
+                return None, "横向边在预检查期间已失效"
+            if len(edge.verts) != 2 or edge_key != _edge_key(edge):
+                return None, "横向边端点索引不稳定"
+            if len(edge.link_faces) not in {1, 2}:
+                return None, "存在非流形横向边"
+            start, end = edge.verts
+            if (end.co - start.co).length_squared <= 1.0e-12:
+                return None, "存在零长度横向边"
+            if any(not face.is_valid for face in edge.link_faces):
+                return None, "横向边包含失效邻接面"
+
+        for face, first, second, _edge_a, _edge_b in raw_cells:
+            for edge in (first, second):
+                if not edge.is_valid or len(edge.link_faces) not in {1, 2}:
+                    return None, "选中的并排边不是有效流形边"
+            if not face.is_valid or len(face.verts) != 4:
+                return None, "目标面在预检查期间已失效"
+
+        return {
+            "active": active,
+            "bm": bm,
+            "raw_cells": raw_cells,
+            "cells": cells,
+            "edge_lookup": edge_lookup,
+            "selected_original": {
+                _edge_key(edge)
+                for cell in raw_cells
+                for edge in cell[1:3]
+                if edge.is_valid
+            },
+            "cuts": cuts,
+        }, None
 
     def _run_pass(self, context):
-        active = context.active_object
-        bm = bmesh.from_edit_mesh(active.data)
-        bm.verts.ensure_lookup_table()
-        bm.edges.ensure_lookup_table()
-        bm.faces.ensure_lookup_table()
-        bm.verts.index_update()
-        bm.edges.index_update()
-
-        raw_cells = _target_cells(bm)
-        if not raw_cells:
-            self.report({"WARNING"}, "没有找到由选中并排边夹住的四边面")
+        preflight, reason = self._preflight(context)
+        if preflight is None:
+            self.report({"WARNING"}, "预检查失败：%s" % reason)
             return {"CANCELLED"}, set()
-
-        cells = []
-        edge_lookup = {}
-        for face, first, second, edge_a, edge_b in raw_cells:
-            face_ids = tuple(vertex.index for vertex in face.verts)
-            boundary_ids = tuple(vertex.index for vertex in first.verts)
-            edge_a_key = _edge_key(edge_a)
-            edge_b_key = _edge_key(edge_b)
-            edge_lookup[edge_a_key] = edge_a
-            edge_lookup[edge_b_key] = edge_b
-            cells.append({
-                "face_ids": face_ids,
-                "boundary_ids": boundary_ids,
-                "edge_a_key": edge_a_key,
-                "edge_b_key": edge_b_key,
-                "edge_a_start": edge_a.verts[0].index,
-                "edge_b_start": edge_b.verts[0].index,
-                "edge_b_end": edge_b.verts[1].index,
-            })
-
-        selected_original = {
-            _edge_key(edge)
-            for cell in raw_cells
-            for edge in cell[1:3]
-            if edge.is_valid
-        }
+        active = preflight["active"]
+        bm = preflight["bm"]
+        cells = preflight["cells"]
+        edge_lookup = preflight["edge_lookup"]
+        selected_original = preflight["selected_original"]
+        cuts = preflight["cuts"]
         bmesh.update_edit_mesh(
             active.data,
             loop_triangles=False,
             destructive=False,
         )
         original_data = active.data.copy()
-        cuts = self._effective_cuts()
         new_edge_keys = set()
         try:
             # Split each transverse edge once. Shared edges are reused by all
