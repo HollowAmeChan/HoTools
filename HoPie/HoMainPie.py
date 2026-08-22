@@ -393,10 +393,32 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
     col.scale_y = 1.25
 
     row = col.row(align=True)
+    row.scale_y = 2
+    row.operator("mesh.region_to_loop",
+        text="边界",icon="SELECT_SET",)
+    row.operator("mesh.loop_to_region",
+        text="边界内",icon="VIEW_ORTHO",)
     row.operator("mesh.select_linked",
-        text="关联缝合(UV岛)",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
+        text="拓补关联",icon="UV_FACESEL",props={"delimit": {"NORMAL"}},)
+
+    row = col.row(align=True)
     row.operator("mesh.select_linked",
-        text="关联锐边(光滑组)",icon="STRIP_COLOR_05",props={"delimit": {"SHARP"}},)
+        text="选择UV岛",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
+    row.operator("mesh.select_linked",
+        text="选择光滑组",icon="STRIP_COLOR_05",props={"delimit": {"SHARP"}},)
+
+    row = col.row(align=True)
+    row.operator("mesh.edges_select_sharp",
+        text="锐利边缘",icon="STRIP_COLOR_05",)
+    row.operator("mesh.select_nth",
+        text="间隔性弃选",icon="SELECT_SUBTRACT",props={"skip": 1, "nth": 1, "offset": 0},)
+
+    row = col.row(align=True)
+    row.operator("mesh.select_face_by_sides",
+        text="选择Ngon",icon="FACESEL",props={"number": 4, "type": "GREATER"},)
+    row.operator("mesh.select_by_pole_count",
+        text="选择极点",icon="VERTEXSEL",props={"pole_count": 4, "type": "GREATER"},)
+
     row = col.row(align=True)
     row.operator("mesh.faces_select_linked_flat",
         text="相邻平展",icon="VIEW_PERSPECTIVE",props={"sharpness": 0.25},)
@@ -404,19 +426,11 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
         text="L选", icon="FILE_VOLUME")
 
     row = col.row(align=True)
-    row.operator("mesh.loop_to_region",
-        text="边界内",icon="VIEW_ORTHO",)
-    row.operator("mesh.region_to_loop",
-        text="边界",icon="SELECT_SET",)
-    row = col.row(align=True)
+    row.scale_y = 2
     row.operator("mesh.loop_multi_select",
         text="选择循环",icon="FILE_VOLUME",props={"ring": False},)
     row.operator("mesh.loop_multi_select",
         text="选择并排",icon="ALIGN_JUSTIFY",props={"ring": True},)
-
-    row = col.row(align=True)
-    row.operator("mesh.edges_select_sharp",text="锐利边缘",icon="STRIP_COLOR_05",)
-    row.operator("mesh.select_nth",text="间隔性弃选",icon="SELECT_SUBTRACT",props={"skip": 1, "nth": 1, "offset": 0},)
 
     row = col.row(align=True)
     row.scale_y = 2
@@ -440,6 +454,7 @@ def _draw_edge_flow_tools(layout: LayoutBuilder, context):
     col = layout.column(align=True)
     col.scale_y = 1.35
     col.operator("ho.set_edge_flow", text="loop设流",icon="SPHERECURVE")
+    col.operator("ho.parallel_manifold_subdivide", text="并排流形细分", icon="MOD_SUBSURF")
     row = col.row(align=True)
     row.operator("ho.set_edge_curve", text="并排设流",icon="MOD_WAVE")
     row.operator("ho.set_edge_linear", text="并排设直",icon="FILE_VOLUME")
