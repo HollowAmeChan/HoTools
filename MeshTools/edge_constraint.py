@@ -170,7 +170,7 @@ def clamp_point_to_segment(point, segment):
 class OP_TransformEdgeConstrained(bpy.types.Operator):
     bl_idname = "ho.transform_edge_constrained"
     bl_label = "边缘约束变换"
-    bl_description = "沿相邻拓扑边约束旋转或缩放，且不会超出原边段"
+    bl_description = "沿相邻拓扑边约束旋转或缩放，按 V 可限制在原边段内"
     bl_options = {'REGISTER', 'UNDO'}
 
     objmode: BoolProperty(default=False)# type: ignore
@@ -184,6 +184,7 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
     draw_end_align: BoolProperty(name="显示端点对齐选项", default=False)# type: ignore
     face_align: BoolProperty(name="面对齐", default=False)# type: ignore
     draw_face_align: BoolProperty(name="显示面对齐选项", default=False)# type: ignore
+    limit_to_edge_segment: BoolProperty(name="限制在边段内", default=False)# type: ignore
     @classmethod
     def poll(cls, context):
         if context.mode == 'EDIT_MESH' and context.active_object:
@@ -230,6 +231,8 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
         rows.append((offset, "Shift: ", "归零缩放"))
         offset += 22
         rows.append((offset, "X/Y/Z / C: ", "锁定轴向 / 清除"))
+        offset += 22
+        rows.append((offset, "V: ", f"边段限制 {'开' if self.limit_to_edge_segment else '关'}"))
         offset += 22
 
         if self.transform_mode == 'ROTATE' and not self.is_zero_scaling:
@@ -297,7 +300,7 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
         self.is_direction_locking = event.alt and self.transform_mode == 'SCALE' and not self.is_zero_scaling and not self.is_axis_locking
         self.update_scale_direction_lock()
 
-        events = ['MOUSEMOVE', *ctrl, *shift, *alt, 'ONE', 'TWO', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'E', 'R', 'S', 'X', 'Y', 'Z', 'C', 'MIDDLEMOUSE', 'F', 'Q']
+        events = ['MOUSEMOVE', *ctrl, *shift, *alt, 'ONE', 'TWO', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'E', 'R', 'S', 'X', 'Y', 'Z', 'C', 'V', 'MIDDLEMOUSE', 'F', 'Q']
 
         if event.type in events:
 
@@ -307,6 +310,9 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
 
             if event.type in ['X', 'Y', 'Z', 'C'] and event.value == 'PRESS' or event.type == 'MIDDLEMOUSE':
                 self.update_transform_axis(context, event)
+
+            elif event.type == 'V' and event.value == 'PRESS':
+                self.limit_to_edge_segment = not self.limit_to_edge_segment
 
             elif event.type in ['R'] and event.value == 'PRESS':
                 self.transform_mode = 'ROTATE'
@@ -424,6 +430,7 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
 
         self.end_align = True
         self.face_align = False
+        self.limit_to_edge_segment = False
 
         self.angle = 0
         self.rotation = Quaternion()
@@ -994,10 +1001,12 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
                 for key in candidate_keys:
                     candidate = tvdata[key]
                     if candidate is not None:
-                        v.co = clamp_point_to_segment(
-                            candidate,
-                            tvdata['edge_segment'],
-                        )
+                        if getattr(self, 'limit_to_edge_segment', False):
+                            candidate = clamp_point_to_segment(
+                                candidate,
+                                tvdata['edge_segment'],
+                            )
+                        v.co = candidate
                         break
 
     def get_transformed_data(self):
