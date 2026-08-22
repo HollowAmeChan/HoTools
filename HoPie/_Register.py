@@ -172,7 +172,7 @@ def _register_delete_merge_keymaps(store):
 
 def _register_main_keymaps(store):
     register_keymap(
-        '3D View Generic', 'VIEW_3D', 'SPACE',
+        '3D View', 'VIEW_3D', 'SPACE',
         menu_name='HO_MT_HoMainPie', keymap_store=store,
         operator_idname='ho.hopie_nested_pie',
         property_name='pie_menu_name', invoke_mode='HOTKEY',
