@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
 from . import VertexColorTools, ShapekeyTools, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,ModifierTools,HoPie
 from . import ProjectTools, ObjectTools, CurveTools
 from . import OmniNode, HoTab
+from .Utils.keymap_utils import find_user_keymap_item
 from bpy.props import BoolProperty, FloatProperty
 
 # 内置的绘制快捷键ui的接口
@@ -40,6 +41,17 @@ def _preference_keymaps():
         *HoPie.preference_keymaps(),
         *HoTab.preference_keymaps(),
     ]
+
+
+def _preference_user_keymaps(context):
+    """将已注册的插件默认快捷键解析为可持久化的用户快捷键项。"""
+    kc = context.window_manager.keyconfigs.user
+    resolved = []
+    for addon_keymap, addon_item in _preference_keymaps():
+        user_item = find_user_keymap_item(kc, addon_keymap, addon_item)
+        if user_item is not None:
+            resolved.append(user_item)
+    return resolved
 
 
 bl_info = {
@@ -261,11 +273,12 @@ class AddonPreference(bpy.types.AddonPreferences):
                     col.context_pointer_set("keymap", km)
                     rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
 
-        if _preference_keymaps():
+        user_keymaps = _preference_user_keymaps(context)
+        if user_keymaps:
             col = layout.column()
-            for km, kmi in _preference_keymaps():
-                col.context_pointer_set("keymap", km)
-                rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
+            for keymap, keymap_item in user_keymaps:
+                col.context_pointer_set("keymap", keymap)
+                rna_keymap_ui.draw_kmi([], kc, keymap, keymap_item, col, 0)
 
     def draw(self, context):
         layout: bpy.types.UILayout = self.layout
@@ -321,12 +334,14 @@ class AddonPreference(bpy.types.AddonPreferences):
         _draw_module_box(left, self, 'hoTools_ui_hotab_expanded', 'HoTab', 'hoTools_enableHoTab')
         _draw_module_box(left, self, 'hoTools_ui_hopie_expanded', 'HoPie', draw_content=draw_hopie)
 
+        user_keymaps = _preference_user_keymaps(context)
+
         def draw_keymaps(content):
-            for keymap, keymap_item in _preference_keymaps():
+            for keymap, keymap_item in user_keymaps:
                 content.context_pointer_set('keymap', keymap)
                 rna_keymap_ui.draw_kmi([], kc, keymap, keymap_item, content, 0)
 
-        if _preference_keymaps():
+        if user_keymaps:
             _draw_module_box(right, self, 'hoTools_ui_keymaps_expanded', '快捷键', draw_content=draw_keymaps)
 
 
