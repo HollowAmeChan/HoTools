@@ -220,12 +220,12 @@ class AddonPreference(bpy.types.AddonPreferences):
     hoTools_OmniNodeFeatures_enable: BoolProperty(name="OmniNode",
                                           default=False,update=updateOmniNodeFeaturesState)  # type: ignore
     hoTools_enableHoTab: BoolProperty(name="HoTab", default=True, update=updateHoTabState)  # type: ignore
-    hoTools_enableAlignPie: BoolProperty(name="对齐饼菜单", default=False, update=updateAlignPieState)  # type: ignore
-    hoTools_enableCursorPie: BoolProperty(name="光标与原点饼菜单", default=False, update=updateCursorPieState)  # type: ignore
+    hoTools_enableAlignPie: BoolProperty(name="对齐饼菜单", default=True, update=updateAlignPieState)  # type: ignore
+    hoTools_enableCursorPie: BoolProperty(name="光标与原点饼菜单", default=True, update=updateCursorPieState)  # type: ignore
     hoTools_enableSelectionModePie: BoolProperty(name="选择模式饼菜单", default=True, update=updateSelectionModePieState)  # type: ignore
     hoTools_enableDeleteMergePie: BoolProperty(name="删除与合并饼菜单", default=True, update=updateDeleteMergePieState)  # type: ignore
     hoTools_enableHoMainPie: BoolProperty(name="Ho大饼", default=True, update=updateMainPieState)  # type: ignore
-    hoTools_enableArmatureModePie: BoolProperty(name="骨架模式饼", default=False, update=updateArmatureModePieState)  # type: ignore
+    hoTools_enableArmatureModePie: BoolProperty(name="骨架模式饼", default=True, update=updateArmatureModePieState)  # type: ignore
     hoTools_ui_exicon_expanded: BoolProperty(name='展开 ExIcon', default=False)  # type: ignore
     hoTools_ui_omninode_expanded: BoolProperty(name='展开 OmniNode', default=False)  # type: ignore
     hoTools_ui_hotab_expanded: BoolProperty(name='展开 HoTab', default=False)  # type: ignore
