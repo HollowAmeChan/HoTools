@@ -19,9 +19,6 @@ from ._Core import (
     find_space,
 )
 
-from ..MeshTools.parallel_manifold_subdivide import OP_ParallelManifoldSubdivide
-
-
 _RANDOM_PREVIEW_RESTORE = "MATERIAL"
 
 
@@ -455,17 +452,25 @@ def _draw_edge_flow_tools(layout: LayoutBuilder, context):
     """绘制 Mesh 子饼正右侧的 EdgeFlow 工具区。"""
     col = layout.column(align=True)
     col.scale_y = 1.35
-    col.operator("ho.set_edge_flow", text="loop设流",icon="SPHERECURVE")
-    col.operator("ho.parallel_manifold_subdivide", text="并排流形细分", icon="MOD_SUBSURF")
-    col.operator("ho.slide_edge_loop_cut", text="滑边环切", icon="EDGESEL")
+
     row = col.row(align=True)
+    row.operator("ho.set_edge_flow", text="loop设流",icon="SPHERECURVE")
     row.operator("ho.set_edge_curve", text="并排设流",icon="MOD_WAVE")
     row.operator("ho.set_edge_linear", text="并排设直",icon="FILE_VOLUME")
+
+    row = col.row(align=True)
+    row.operator("ho.parallel_manifold_subdivide",
+        text="并排流形细分",icon="FILE_VOLUME",
+        operator_context="EXEC_DEFAULT",)
+    row.operator("ho.slide_edge_loop_cut",
+        text="滑边环切",icon="CURVES",
+        operator_context="INVOKE_DEFAULT",)
+
     row = col.row(align=True)
     row.operator("ho.mesh_flatten", text="压平", icon="NOCURVE")
     row.operator("ho.mesh_relax", text="保边松弛", icon="MOD_SMOOTH")
-    row = col.row(align=True)
     row.operator("ho.mesh_circle_even", text="均匀圆化", icon="MESH_CIRCLE")
+
 
 
 def _draw_edge_display(layout: LayoutBuilder, context):
@@ -547,8 +552,7 @@ def _draw_mesh_down_tools(layout: LayoutBuilder, context):
     col.scale_y = 1.25
 
     row = col.row(align=True)
-    row.operator(OP_ParallelManifoldSubdivide.bl_idname,
-            text="并排流形细分",icon="FILE_VOLUME",)
+    return
 
 class HO_MT_HoMainPieMesh(Menu):
     """PME 中的网格工具子饼。"""
