@@ -310,8 +310,13 @@ class _EdgeLoop:
                 if not ring1.edge.is_boundary:
                     final = ring1.link_loop_radial_next.link_loop_next
                     p1 = next(vertex for vertex in final.edge.verts if vertex != p2).co.copy()
-                    angle = (p1 - p2.co).angle(center.co - p2.co)
-                    if angle < min_angle:
+                    p1_direction = p1 - p2.co
+                    center_direction = center.co - p2.co
+                    if (
+                        p1_direction.length <= 1.0e-12
+                        or center_direction.length <= 1.0e-12
+                        or p1_direction.angle(center_direction) < min_angle
+                    ):
                         p1 = p2.co - (p3.co - p2.co) * 0.5
                 else:
                     p1 = p2.co - (p3.co - p2.co)
@@ -319,8 +324,13 @@ class _EdgeLoop:
                 if not ring2.edge.is_boundary:
                     final = ring2.link_loop_radial_prev.link_loop_prev
                     p4 = next(vertex for vertex in final.edge.verts if vertex != p3).co.copy()
-                    angle = (p4 - p3.co).angle(center.co - p3.co)
-                    if angle < min_angle:
+                    p4_direction = p4 - p3.co
+                    center_direction = center.co - p3.co
+                    if (
+                        p4_direction.length <= 1.0e-12
+                        or center_direction.length <= 1.0e-12
+                        or p4_direction.angle(center_direction) < min_angle
+                    ):
                         p4 = p3.co - (p2.co - p3.co) * 0.5
                 else:
                     p3 = ring2.edge.other_vert(p3)
