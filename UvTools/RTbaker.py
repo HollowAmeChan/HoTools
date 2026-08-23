@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 import bpy
 import os
-import sys
 import numpy as np
 from bpy.types import Operator, PropertyGroup, UIList
 from bpy.props import (
@@ -13,20 +14,12 @@ from bpy.props import (
     StringProperty,
 )
 
-if sys.version_info[:2] == (3, 13):
-    from .._Lib.py313.PIL import Image, ImageDraw
-    try:
-        from .._Lib.py313 import pyoidn
-    except ImportError:
-        pyoidn = None
-elif sys.version_info[:2] == (3, 11):
-    from .._Lib.py311.PIL import Image, ImageDraw
-    try:
-        from .._Lib.py311 import pyoidn
-    except ImportError:
-        pyoidn = None
-else:
-    pyoidn = None
+from ..Utils.optional_dependencies import optional_module
+
+
+Image = optional_module("PIL.Image", "Pillow")
+ImageDraw = optional_module("PIL.ImageDraw", "Pillow")
+pyoidn = optional_module("pyoidn", "OIDN")
 
 
 BAKE_TYPES_WITHOUT_VIEW_FROM = {
@@ -638,7 +631,7 @@ class RTBakeChannel:
         }
 
     def _denoise_image_with_oidn(self, oidn_input, uv_padding_context, operator):
-        if pyoidn is None:
+        if not pyoidn.is_available():
             operator.report({'WARNING'}, "未找到 pyoidn，已跳过 OIDN 降噪")
             return oidn_input
 
@@ -672,7 +665,7 @@ class RTBakeChannel:
         }
 
     def _get_oidn_quality(self, quality):
-        if pyoidn is None:
+        if not pyoidn.is_available():
             return None
         return {
             'FAST': getattr(pyoidn, "OIDN_QUALITY_FAST", None),

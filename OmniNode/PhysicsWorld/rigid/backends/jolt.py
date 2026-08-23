@@ -15,10 +15,14 @@ physicsWorld.rigid.backends.jolt — Jolt Physics Python 适配器
 
 from __future__ import annotations
 
-import importlib
 import math
 import time
 from typing import TYPE_CHECKING
+
+from .....Utils.optional_dependencies import (
+    OptionalDependencyError,
+    import_native_module,
+)
 
 from ..names import (
     RIGID_BACKEND_RESOURCE_KEY,
@@ -34,11 +38,20 @@ if TYPE_CHECKING:
 # 懒加载 native 模块（编译产物不存在时静默失败）
 # ---------------------------------------------------------------------------
 
+_NATIVE_MODULE = None
+_NATIVE_LOAD_ERROR = None
+_NATIVE_LOAD_ATTEMPTED = False
+
 def _load_native():
+    global _NATIVE_MODULE, _NATIVE_LOAD_ERROR, _NATIVE_LOAD_ATTEMPTED
+    if _NATIVE_LOAD_ATTEMPTED:
+        return _NATIVE_MODULE
+    _NATIVE_LOAD_ATTEMPTED = True
     try:
-        return importlib.import_module("hotools_jolt")
-    except ImportError:
-        return None
+        _NATIVE_MODULE = import_native_module("hotools_jolt")
+    except OptionalDependencyError as exc:
+        _NATIVE_LOAD_ERROR = exc
+    return _NATIVE_MODULE
 
 
 def _get_native_const(attr: str, default):
@@ -212,9 +225,7 @@ class JoltAdapter:
     ):
         native = _load_native()
         if native is None:
-            raise RuntimeError(
-                "hotools_jolt 模块未找到。请先编译 native binding（build.bat）。"
-            )
+            raise RuntimeError(str(_NATIVE_LOAD_ERROR)) from _NATIVE_LOAD_ERROR
         max_bodies, max_body_pairs, max_contact_constraints = _capacity_tuple(
             max_bodies,
             max_body_pairs,

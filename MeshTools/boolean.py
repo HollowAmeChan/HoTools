@@ -1,28 +1,10 @@
-import os
-import sys
-
 import bpy
 import numpy as np
 from mathutils import Vector
 from bpy.types import Operator
 from bpy.props import BoolProperty
 
-
-# 根据 Blender 内置 Python 版本选择对应的原生模块目录。
-_plugin_dir = os.path.dirname(os.path.dirname(__file__))
-_lib_dir = os.path.join(_plugin_dir, "_Lib")
-if sys.version_info[:2] == (3, 13):
-    _python_lib = "py313"
-elif sys.version_info[:2] == (3, 11):
-    _python_lib = "py311"
-else:
-    raise RuntimeError(
-        "HoTools 仅支持 Python 3.11 和 3.13，当前版本为 "
-        f"{sys.version_info.major}.{sys.version_info.minor}"
-    )
-_native_package_dir = os.path.join(_lib_dir, _python_lib, "HotoolsPackage")
-if _native_package_dir not in sys.path:
-    sys.path.insert(0, _native_package_dir)
+from Utils.optional_dependencies import import_native_module
 
 
 def reg_props():
@@ -34,13 +16,7 @@ def ureg_props():
 
 
 def _load_native_boolean():
-    try:
-        import hotools_boolean
-    except ImportError as exc:
-        raise RuntimeError(
-            "缺少 hotools_boolean 原生模块，请先运行 _native\\build.bat 311 boolean"
-        ) from exc
-    return hotools_boolean
+    return import_native_module("hotools_boolean")
 
 
 def _mesh_arrays(mesh):

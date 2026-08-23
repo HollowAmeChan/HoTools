@@ -1,26 +1,10 @@
 import math
 import os
-import sys
 from array import array
 from dataclasses import dataclass
 
 import bpy
 import numpy as np
-try:
-    from .._Lib.py313.PIL import Image as PILImage
-except (ImportError, ValueError):
-    try:
-        from .._Lib.py311.PIL import Image as PILImage
-    except (ImportError, ValueError):
-        lib_variant = 'py313' if sys.version_info[:2] == (3, 13) else 'py311'
-        lib_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            '_Lib',
-            lib_variant,
-        )
-        if lib_path not in sys.path:
-            sys.path.insert(0, lib_path)
-        from PIL import Image as PILImage
 from bpy.props import (
     BoolProperty,
     CollectionProperty,
@@ -28,6 +12,11 @@ from bpy.props import (
     StringProperty,
 )
 from bpy.types import Operator, PropertyGroup, UIList
+
+from ..Utils.optional_dependencies import optional_module
+
+
+PILImage = optional_module("PIL.Image", "Pillow")
 
 
 @dataclass

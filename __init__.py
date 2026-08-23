@@ -2,23 +2,21 @@ import bpy
 from bpy.types import Operator,Panel
 
 import os  # NOQA: E402
-import sys  # NOQA: E402
-plugin_dir = os.path.dirname(__file__)
-sys.path.append(plugin_dir)
-lib_dir = os.path.join(plugin_dir, "_Lib")
-sys.path.append(lib_dir)
-if sys.version_info[:2] == (3, 13):
-    py_lib_dir = os.path.join(lib_dir, "py313")
-elif sys.version_info[:2] == (3, 11):
-    py_lib_dir = os.path.join(lib_dir, "py311")
-else:
-    raise RuntimeError(
-        "HoTools supports Blender Python 3.11 and 3.13; "
-        f"found {sys.version_info.major}.{sys.version_info.minor}"
-    )
+from pathlib import Path
+import sys
 
-sys.path.append(py_lib_dir)
-sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
+from .Utils.runtime_platform import (
+    configure_runtime_paths,
+    resolve_runtime_target,
+)
+
+
+plugin_dir = Path(__file__).resolve().parent
+if str(plugin_dir) not in sys.path:
+    sys.path.append(str(plugin_dir))
+
+RUNTIME_TARGET = resolve_runtime_target(plugin_dir)
+configure_runtime_paths(RUNTIME_TARGET)
 
 
 from . import VertexColorTools, ShapekeyTools, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,ModifierTools,HoPie

@@ -134,6 +134,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             op.individual_origins = False
             op.end_align = True
             op.face_align = False
+            op.limit_to_edge_segment = True
             op.slide_coords = []
             op.draw_end_align = False
 

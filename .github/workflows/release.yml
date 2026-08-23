@@ -4,40 +4,63 @@ on:
   push:
     branches:
       - main
-  # 手动触发入口，方便只创建一次安装包发布，不必额外 push。
   workflow_dispatch:
 
-# 创建 GitHub Release 并上传安装包需要写权限。
 permissions:
   contents: write
 
 jobs:
-  build-package-and-release:
+  linux:
+    uses: ./.github/workflows/linux-x86_64.yml
+    permissions:
+      contents: read
+
+  windows:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Create Blender install ZIP and release
+      - name: Build Windows ZIPs
+        run: |
+          python tools/build_release_zip.py \
+            --abi py311 --platform windows-x86_64 \
+            --output _dist/HoTools-Blender-4.5-Windows-x86_64.zip
+          python tools/build_release_zip.py \
+            --abi py313 --platform windows-x86_64 \
+            --output _dist/HoTools-Blender-5.2-Windows-x86_64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: _dist/*.zip
+          compression-level: 0
+
+  release:
+    needs:
+      - linux
+      - windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: _dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-
-          # 同一个时间戳同时用于 tag、release 标题和 zip 文件名，避免互相对不上。
           VERSION="$(date +'%Y%m%d-%H%M%S')"
-          RELEASE_TAG="v${VERSION}"
-          RELEASE_TITLE="HoTools-${VERSION}"
-          ZIP_45="_dist/HoTools-${VERSION}-Blender-4.5-py311.zip"
-          ZIP_52="_dist/HoTools-${VERSION}-Blender-5.2-py313.zip"
-
-          # 每个安装包只携带目标 Blender 使用的 Python ABI 依赖，避免把两套大型
-          # Pillow/OIDN/native runtime 一起塞进同一个 ZIP。
-          python tools/build_release_zip.py --abi py311 --output "$ZIP_45"
-          python tools/build_release_zip.py --abi py313 --output "$ZIP_52"
-
-          # GitHub 页面仍会自动显示源码压缩包；用户应下载这里上传的对应 Blender 版本 ZIP。
-          gh release create "$RELEASE_TAG" "$ZIP_45" "$ZIP_52" \
+          mv _dist/HoTools-Blender-4.5-Windows-x86_64.zip \
+            "_dist/HoTools-${VERSION}-Blender-4.5-Windows-x86_64.zip"
+          mv _dist/HoTools-Blender-5.2-Windows-x86_64.zip \
+            "_dist/HoTools-${VERSION}-Blender-5.2-Windows-x86_64.zip"
+          mv _dist/HoTools-Blender-4.5-Linux-x86_64.zip \
+            "_dist/HoTools-${VERSION}-Blender-4.5-Linux-x86_64.zip"
+          mv _dist/HoTools-Blender-5.2-Linux-x86_64.zip \
+            "_dist/HoTools-${VERSION}-Blender-5.2-Linux-x86_64.zip"
+          gh release create "v${VERSION}" _dist/*.zip \
             --target "$GITHUB_SHA" \
-            --title "$RELEASE_TITLE"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            --title "HoTools-${VERSION}"

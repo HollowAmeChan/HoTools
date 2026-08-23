@@ -67,12 +67,21 @@ foreach(_hotools_dependency nanobind libigl cgal eigen boost)
     string(TOUPPER "${_hotools_dependency}" _hotools_dependency_upper)
     set(_hotools_dependency_source
         "${FETCHCONTENT_BASE_DIR}/${_hotools_dependency}-src")
-    if(EXISTS "${_hotools_dependency_source}")
+    if(_hotools_dependency STREQUAL "boost")
+        set(_hotools_dependency_marker
+            "${_hotools_dependency_source}/boost/version.hpp")
+    else()
+        set(_hotools_dependency_marker
+            "${_hotools_dependency_source}/CMakeLists.txt")
+    endif()
+    if(EXISTS "${_hotools_dependency_marker}")
         set(
             FETCHCONTENT_SOURCE_DIR_${_hotools_dependency_upper}
             "${_hotools_dependency_source}"
             CACHE PATH "Local extracted ${_hotools_dependency} source" FORCE
         )
+    else()
+        unset(FETCHCONTENT_SOURCE_DIR_${_hotools_dependency_upper} CACHE)
     endif()
 endforeach()
 
@@ -223,10 +232,17 @@ if(HOTOOLS_BUILD_JOLT)
     # Jolt 的实际选项名为 PROFILER_IN_DEBUG_AND_RELEASE / DEBUG_RENDERER_IN_DEBUG_AND_RELEASE。
     set(PROFILER_IN_DEBUG_AND_RELEASE    OFF CACHE BOOL "" FORCE)
     set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+    # hotools_jolt derives from Jolt polymorphic classes. GCC/Clang require
+    # both the extension and the static Jolt library to emit compatible RTTI.
+    if(UNIX)
+        set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
+    endif()
 
     if(EXISTS "${_jolt_local}/Build/CMakeLists.txt")
         message(STATUS "[HoTools] JoltPhysics: 使用本地 extern/JoltPhysics")
-        hotools_patch_jolt_mutex("${_jolt_local}")
+        if(WIN32)
+            hotools_patch_jolt_mutex("${_jolt_local}")
+        endif()
         add_subdirectory("${_jolt_local}/Build" JoltPhysics EXCLUDE_FROM_ALL)
     else()
         message(STATUS "[HoTools] JoltPhysics: 从 GitHub 拉取（FetchContent，缓存到 .fetch-cache/）")
@@ -240,7 +256,9 @@ if(HOTOOLS_BUILD_JOLT)
         )
         FetchContent_MakeAvailable(JoltPhysics)
         get_filename_component(_jolt_fetched_root "${JoltPhysics_SOURCE_DIR}/.." ABSOLUTE)
-        hotools_patch_jolt_mutex("${_jolt_fetched_root}")
+        if(WIN32)
+            hotools_patch_jolt_mutex("${_jolt_fetched_root}")
+        endif()
     endif()
 endif()
 
@@ -341,6 +359,13 @@ set_target_properties(hotools_native PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${HOTOOLS_RUNTIME_DIR}"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
+if(UNIX)
+    set_target_properties(hotools_native PROPERTIES
+        BUILD_RPATH "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN"
+        BUILD_RPATH_USE_ORIGIN TRUE
+    )
+endif()
 
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set_target_properties(hotools_native PROPERTIES
@@ -381,6 +406,13 @@ set_target_properties(hotools_boolean PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${HOTOOLS_RUNTIME_DIR}"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
+if(UNIX)
+    set_target_properties(hotools_boolean PROPERTIES
+        BUILD_RPATH "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN"
+        BUILD_RPATH_USE_ORIGIN TRUE
+    )
+endif()
 
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set_target_properties(hotools_boolean PROPERTIES
@@ -419,6 +451,13 @@ set_target_properties(hotools_jolt PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${HOTOOLS_RUNTIME_DIR}"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
+if(UNIX)
+    set_target_properties(hotools_jolt PROPERTIES
+        BUILD_RPATH "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN"
+        BUILD_RPATH_USE_ORIGIN TRUE
+    )
+endif()
 
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set_target_properties(hotools_jolt PROPERTIES
