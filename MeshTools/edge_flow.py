@@ -382,12 +382,16 @@ class _SetEdgeLoopBase:
         self._objects = []
         self._bmeshes = {}
         self._edgeloops = {}
+        self._edge_keys = {}
         self._initial_positions = {}
         for obj in selected:
             if obj.type != 'MESH' or obj.mode != 'EDIT':
                 continue
             bm = bmesh.from_edit_mesh(obj.data)
             bm.verts.ensure_lookup_table()
+            bm.verts.index_update()
+            bm.edges.ensure_lookup_table()
+            bm.edges.index_update()
             edges = [edge for edge in bm.edges if edge.select]
             if not edges:
                 continue
@@ -395,26 +399,76 @@ class _SetEdgeLoopBase:
             self._objects.append(obj)
             self._bmeshes[obj] = bm
             self._edgeloops[obj] = loops
+            self._edge_keys[obj] = [
+                tuple(sorted(vertex.index for vertex in edge.verts))
+                for edge in edges
+            ]
             self._initial_positions[obj] = {
                 vertex.index: vertex.co.copy()
                 for edge in edges for vertex in edge.verts
             }
         self._prepared = True
 
-    def _reset_positions(self):
+    def _refresh_bmeshes(self):
+        """Rebind cached topology to the current edit-mode BMesh.
+
+        Blender may recreate the edit BMesh when an operator is repeated from
+        the F9 panel (the previous instance is undone first).  Python BMesh
+        element references then point at removed data, so they cannot be kept
+        across executions.  The immutable position snapshot and edge keys are
+        plain Python data and remain valid; only the runtime handles are rebuilt.
+        """
+        bmeshes = {}
+        edgeloops = {}
         for obj in self._objects:
-            bm = self._bmeshes[obj]
-            for index, position in self._initial_positions[obj].items():
-                bm.verts[index].co = position
+            if obj.type != 'MESH' or obj.mode != 'EDIT':
+                continue
+            bm = bmesh.from_edit_mesh(obj.data)
+            bm.verts.ensure_lookup_table()
+            bm.verts.index_update()
+            bm.edges.ensure_lookup_table()
+            bm.edges.index_update()
+
+            edges_by_key = {
+                tuple(sorted(vertex.index for vertex in edge.verts)): edge
+                for edge in bm.edges
+            }
+            edge_keys = self._edge_keys.get(obj, ())
+            edges = []
+            for key in edge_keys:
+                edge = edges_by_key.get(key)
+                if edge is not None:
+                    edges.append(edge)
+            if not edges or len(edges) != len(edge_keys):
+                continue
+
+            loops = _get_edge_loops(bm, edges)
+            initial_positions = self._initial_positions[obj]
+            for loop in loops:
+                loop.initial_vert_positions = [
+                    initial_positions.get(vertex.index, vertex.co.copy())
+                    for vertex in loop.verts
+                ]
+            bmeshes[obj] = bm
+            edgeloops[obj] = loops
+
+        self._bmeshes = bmeshes
+        self._edgeloops = edgeloops
+
+    def _reset_positions(self):
+        for obj, bm in self._bmeshes.items():
+            for index, position in self._initial_positions.get(obj, {}).items():
+                if 0 <= index < len(bm.verts):
+                    bm.verts[index].co = position
 
     def _apply_mix(self):
         if self.mix >= 1.0:
             return
-        for obj in self._objects:
-            bm = self._bmeshes[obj]
-            for loop in self._edgeloops[obj]:
+        for obj, loops in self._edgeloops.items():
+            initial_positions = self._initial_positions.get(obj, {})
+            for loop in loops:
                 for vertex in loop.verts:
-                    initial = self._initial_positions[obj].get(vertex.index)
+                    initial = initial_positions.get(vertex.index)
                     if initial is not None:
                         vertex.co = initial.lerp(vertex.co, self.mix)
 
@@ -482,12 +536,14 @@ class HO_OT_SetEdgeFlow(bpy.types.Operator, _SetEdgeLoopBase):
     def execute(self, context):
         if not getattr(self, "_prepared", False):
             self._prepare(context)
+        else:
+            self._refresh_bmeshes()
         self._reset_positions()
-        for obj in self._objects:
+        for obj, loops in self._edgeloops.items():
             for _ in range(self.iterations):
-                for loop in self._edgeloops[obj]:
+                for loop in loops:
                     loop.set_flow(self.tension / 100.0, math.radians(self.min_angle))
-            for loop in self._edgeloops[obj]:
+            for loop in loops:
                 if self.blend_mode == 'ABSOLUTE':
                     start, end = self.blend_start_int, self.blend_end_int
                 else:
@@ -496,10 +552,10 @@ class HO_OT_SetEdgeFlow(bpy.types.Operator, _SetEdgeLoopBase):
                     end = round(count * self.blend_end_float)
                 loop.blend_start_end(start, end, self.blend_type)
             self._bmeshes[obj].normal_update()
-            bmesh.update_edit_mesh(obj.data)
+            bmesh.update_edit_mesh(obj.data, destructive=False)
         self._apply_mix()
-        for obj in self._objects:
-            bmesh.update_edit_mesh(obj.data)
+        for obj in self._bmeshes:
+            bmesh.update_edit_mesh(obj.data, destructive=False)
         return {'FINISHED'}
 
 
@@ -544,19 +600,21 @@ class HO_OT_SetEdgeCurve(bpy.types.Operator, _SetEdgeLoopBase):
     def execute(self, context):
         if not getattr(self, "_prepared", False):
             self._prepare(context)
+        else:
+            self._refresh_bmeshes()
         self._reset_positions()
-        for obj in self._objects:
-            for loop in self._edgeloops[obj]:
+        for obj, loops in self._edgeloops.items():
+            for loop in loops:
                 if self.rail_mode == 'ABSOLUTE':
                     start, end = self.rail_start_width, self.rail_end_width
                 else:
                     start, end = self.rail_start_factor, self.rail_end_factor
                 loop.set_curve_flow(self.tension / 100.0, self.use_rail, self.rail_mode, start, end)
             self._bmeshes[obj].normal_update()
-            bmesh.update_edit_mesh(obj.data)
+            bmesh.update_edit_mesh(obj.data, destructive=False)
         self._apply_mix()
-        for obj in self._objects:
-            bmesh.update_edit_mesh(obj.data)
+        for obj in self._bmeshes:
+            bmesh.update_edit_mesh(obj.data, destructive=False)
         return {'FINISHED'}
 
 
@@ -580,15 +638,17 @@ class HO_OT_SetEdgeLinear(bpy.types.Operator, _SetEdgeLoopBase):
     def execute(self, context):
         if not getattr(self, "_prepared", False):
             self._prepare(context)
+        else:
+            self._refresh_bmeshes()
         self._reset_positions()
-        for obj in self._objects:
-            for loop in self._edgeloops[obj]:
+        for obj, loops in self._edgeloops.items():
+            for loop in loops:
                 loop.set_linear(self.space_evenly)
             self._bmeshes[obj].normal_update()
-            bmesh.update_edit_mesh(obj.data)
+            bmesh.update_edit_mesh(obj.data, destructive=False)
         self._apply_mix()
-        for obj in self._objects:
-            bmesh.update_edit_mesh(obj.data)
+        for obj in self._bmeshes:
+            bmesh.update_edit_mesh(obj.data, destructive=False)
         return {'FINISHED'}
 
 
