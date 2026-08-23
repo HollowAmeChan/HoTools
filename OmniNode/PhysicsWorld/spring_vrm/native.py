@@ -28,11 +28,12 @@ SpringBone 只接受 context symbols；35 参数数组 ABI、Python solver 和�
 
 from __future__ import annotations
 
-import importlib
 import time
 
 import mathutils
 import numpy as np
+
+from ....Utils.optional_dependencies import import_native_module
 
 from ..names import (
     COLLIDER_TYPE_BOX,
@@ -61,7 +62,7 @@ _NATIVE_MODULE = None
 def native_module():
     global _NATIVE_MODULE
     if _NATIVE_MODULE is None:
-        _NATIVE_MODULE = importlib.import_module("hotools_native")
+        _NATIVE_MODULE = import_native_module("hotools_native")
     return _NATIVE_MODULE
 
 

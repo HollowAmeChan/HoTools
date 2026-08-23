@@ -5,8 +5,8 @@ import os
 from bpy.types import PropertyGroup, UIList, Operator, Panel, Menu
 from bpy.types import UILayout, Context
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
-import subprocess
 from ..BoneTools import humanoid_auto_mapping
+from ..Utils.desktop import copy_text, open_path
 from Utils.bone_selection import selected_bone_names
 
 
@@ -292,7 +292,7 @@ class OP_Mapping_DeselectAllItems(Operator):
         return {'FINISHED'}
 
 def copy_to_clipboard(text):
-    subprocess.run("clip", universal_newlines=True, input=text)
+    copy_text(bpy.context.window_manager, text)
 
 def paste_from_clipboard():
     try:
@@ -387,7 +387,7 @@ class OT_Mapping_OpenTemplateFile(Operator):
         if not os.path.exists(abs_path):
             self.report({'ERROR'}, f"文件不存在: {abs_path}")
             return {'CANCELLED'}
-        os.startfile(abs_path)
+        open_path(abs_path, bpy.ops.wm.path_open)
         return {'FINISHED'}
 
 

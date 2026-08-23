@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 OMNI_NODE_REGISTRATION = {
     "category": {"id": "OPERATOR", "label": "操作", "order": 50},
 }
@@ -21,11 +23,11 @@ import numpy as np
 import re
 
 import os
-import sys
-if sys.version_info[:2] == (3, 13):
-    from ..._Lib.py313.PIL import Image, ImageDraw
-elif sys.version_info[:2] == (3, 11):
-    from ..._Lib.py311.PIL import Image, ImageDraw
+from ...Utils.optional_dependencies import optional_module
+
+
+Image = optional_module("PIL.Image", "Pillow")
+ImageDraw = optional_module("PIL.ImageDraw", "Pillow")
 
 
 def _parse_custom_property_token(token: str):

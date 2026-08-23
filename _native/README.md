@@ -29,6 +29,27 @@ C++ 侧只处理数组、上下文、约束求解和碰撞内核，不直接碰 
 
 ## 构建
 
+### Linux x86_64
+
+Linux 使用 Ninja，并为每个 ABI/模块使用独立构建目录。传入的 Python 必须包含
+匹配版本的开发头文件；Blender 自带 Python 若未附带头文件，可用同 ABI 的
+standalone CPython 编译，再在对应 Blender 中验收。
+
+```bash
+# 可重复 --module；省略时依次构建全部三个模块
+python3.11 tools/build_linux_native.py \
+  --abi py311 --python /path/to/python3.11 \
+  --module native --module jolt --module boolean --jobs 4
+
+python3.13 tools/build_linux_native.py \
+  --abi py313 --python /path/to/python3.13 \
+  --module native --module jolt --module boolean --jobs 4
+```
+
+产物位于 `_Lib/<abi>/linux-x86_64/HotoolsPackage/`。驱动会检查扩展名、
+x86_64 ELF 头、`file`、`ldd`、RPATH/RUNPATH 与实际 Python 导入，并写入
+`_hotools_native_manifest.json`。FetchContent 源码与构建输出均为可再生缓存。
+
 ### 快速编译（推荐）
 
 双击或在 `_native/` 下运行 `build.bat`。默认构建

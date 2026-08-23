@@ -9,7 +9,6 @@ from __future__ import annotations
 import gettext
 import hashlib
 import re
-import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -17,15 +16,10 @@ import bpy
 from bpy.props import EnumProperty
 from bpy.types import Node, Operator
 
-_LIB_ROOT = Path(__file__).resolve().parent.parent / "_Lib"
-_PYTHON_LIB = {
-    (3, 11): _LIB_ROOT / "py311",
-    (3, 13): _LIB_ROOT / "py313",
-}.get(sys.version_info[:2])
-if _PYTHON_LIB is not None and _PYTHON_LIB.is_dir():
-    python_lib_path = str(_PYTHON_LIB)
-    if python_lib_path not in sys.path:
-        sys.path.insert(0, python_lib_path)
+from ..Utils.runtime_platform import configure_runtime_paths, resolve_runtime_target
+
+_ADDON_ROOT = Path(__file__).resolve().parent.parent
+configure_runtime_paths(resolve_runtime_target(_ADDON_ROOT))
 
 try:
     from pypinyin import Style as _PinyinStyle

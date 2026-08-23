@@ -8,9 +8,13 @@ import numpy as np
 
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PY311_PACKAGE = os.path.join(PLUGIN_ROOT, "_Lib", "py311", "HotoolsPackage")
-if PY311_PACKAGE not in sys.path:
-    sys.path.insert(0, PY311_PACKAGE)
+PY_LIB = "py313" if sys.version_info >= (3, 13) else "py311"
+PACKAGE_DIR = os.environ.get(
+    "HOTOOLS_NATIVE_TEST_DIR",
+    os.path.join(PLUGIN_ROOT, "_Lib", PY_LIB, "HotoolsPackage"),
+)
+if PACKAGE_DIR not in sys.path:
+    sys.path.insert(0, PACKAGE_DIR)
 
 
 def cube(origin, size=1.0):

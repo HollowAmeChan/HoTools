@@ -39,12 +39,23 @@ def verify(zip_path: Path, abi: str) -> None:
     from PIL import Image
     import hotools_jolt
     import hotools_native
+    import hotools_boolean
     import pyoidn
 
     addon_root = Path(HoTools.__file__).resolve().parent
     other_abi = "py313" if abi == "py311" else "py311"
     if (addon_root / "_Lib" / other_abi).exists():
         raise RuntimeError(f"Installed ZIP leaked {other_abi}")
+    scripts_root = Path(os.environ["BLENDER_USER_SCRIPTS"]).resolve()
+    if not addon_root.is_relative_to(scripts_root):
+        raise RuntimeError(f"Addon escaped isolated Blender scripts: {addon_root}")
+    runtime_root = addon_root / "_Lib" / abi / "linux-x86_64"
+    if not runtime_root.is_dir():
+        raise RuntimeError(f"Linux runtime is missing: {runtime_root}")
+    for module in (Image, cffi, pyoidn, hotools_native, hotools_jolt, hotools_boolean):
+        module_file = Path(module.__file__).resolve()
+        if not module_file.is_relative_to(runtime_root):
+            raise RuntimeError(f"Module escaped installed runtime: {module_file}")
 
     catalog_count = sum(
         len(shapekey_catalog.get_standard_specs(info.identifier))
@@ -57,6 +68,14 @@ def verify(zip_path: Path, abi: str) -> None:
 
     device = pyoidn.Device()
     device.commit()
+    if device.get_error() is not None:
+        raise RuntimeError(f"OIDN device error: {device.get_error()}")
+    result = bpy.ops.preferences.addon_disable(module="HoTools")
+    if "FINISHED" not in result:
+        raise RuntimeError(f"Addon disable failed: {result}")
+    result = bpy.ops.preferences.addon_enable(module="HoTools")
+    if "FINISHED" not in result:
+        raise RuntimeError(f"Addon re-enable failed: {result}")
     print(
         "HOTOOLS_RELEASE_INSTALL_OK",
         bpy.app.version_string,
@@ -66,6 +85,7 @@ def verify(zip_path: Path, abi: str) -> None:
         type(device).__name__,
         hotools_jolt.__name__,
         hotools_native.__name__,
+        hotools_boolean.__name__,
         catalog_count,
     )
     bpy.ops.wm.quit_blender()

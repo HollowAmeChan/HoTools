@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import importlib
-import os
-from pathlib import Path
-import sys
+from ....Utils.optional_dependencies import import_native_module
 
 
 XPBD_REQUIRED_NATIVE_SYMBOLS = (
@@ -15,22 +12,10 @@ XPBD_REQUIRED_NATIVE_SYMBOLS = (
 _NATIVE_MODULE = None
 
 
-def _ensure_bundled_native_path() -> None:
-    override = os.environ.get("HOTOOLS_NATIVE_TEST_DIR")
-    package_dir = Path(override) if override else None
-    if package_dir is None:
-        package_root = Path(__file__).resolve().parents[3]
-        py_lib = "py313" if sys.version_info >= (3, 13) else "py311"
-        package_dir = package_root / "_Lib" / py_lib / "HotoolsPackage"
-    if package_dir.exists() and str(package_dir) not in sys.path:
-        sys.path.insert(0, str(package_dir))
-
-
 def native_module():
     global _NATIVE_MODULE
     if _NATIVE_MODULE is None:
-        _ensure_bundled_native_path()
-        _NATIVE_MODULE = importlib.import_module("hotools_native")
+        _NATIVE_MODULE = import_native_module("hotools_native")
     return _NATIVE_MODULE
 
 

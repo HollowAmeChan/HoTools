@@ -24,6 +24,7 @@ import hotools_native  # noqa: E402
 FIELD_ROOT = ROOT / "OmniNode" / "PhysicsWorld" / "field"
 PHYSICS_WORLD_ROOT = FIELD_ROOT.parent
 PACKAGE_ROOT = "hotools_field_runtime_native_test"
+PHYSICS_PACKAGE = f"{PACKAGE_ROOT}.OmniNode.PhysicsWorld"
 
 
 def _ensure_package(name: str, path: Path) -> None:
@@ -42,31 +43,41 @@ def _load_module(name: str, path: Path):
     return module
 
 
-_ensure_package(PACKAGE_ROOT, PHYSICS_WORLD_ROOT)
-_ensure_package(f"{PACKAGE_ROOT}.collision", PHYSICS_WORLD_ROOT / "collision")
-_ensure_package(f"{PACKAGE_ROOT}.field", FIELD_ROOT)
+_ensure_package(PACKAGE_ROOT, ROOT)
+_ensure_package(f"{PACKAGE_ROOT}.Utils", ROOT / "Utils")
 _load_module(
-    f"{PACKAGE_ROOT}.collision.groups",
+    f"{PACKAGE_ROOT}.Utils.runtime_platform", ROOT / "Utils" / "runtime_platform.py"
+)
+_load_module(
+    f"{PACKAGE_ROOT}.Utils.optional_dependencies",
+    ROOT / "Utils" / "optional_dependencies.py",
+)
+_ensure_package(f"{PACKAGE_ROOT}.OmniNode", ROOT / "OmniNode")
+_ensure_package(f"{PHYSICS_PACKAGE}", PHYSICS_WORLD_ROOT)
+_ensure_package(f"{PHYSICS_PACKAGE}.collision", PHYSICS_WORLD_ROOT / "collision")
+_ensure_package(f"{PHYSICS_PACKAGE}.field", FIELD_ROOT)
+_load_module(
+    f"{PHYSICS_PACKAGE}.collision.groups",
     PHYSICS_WORLD_ROOT / "collision" / "groups.py",
 )
 field_names = _load_module(
-    f"{PACKAGE_ROOT}.field.names", FIELD_ROOT / "names.py"
+    f"{PHYSICS_PACKAGE}.field.names", FIELD_ROOT / "names.py"
 )
 _load_module(
-    f"{PACKAGE_ROOT}.field.diagnostics", FIELD_ROOT / "diagnostics.py"
+    f"{PHYSICS_PACKAGE}.field.diagnostics", FIELD_ROOT / "diagnostics.py"
 )
 field_specs = _load_module(
-    f"{PACKAGE_ROOT}.field.specs", FIELD_ROOT / "specs.py"
+    f"{PHYSICS_PACKAGE}.field.specs", FIELD_ROOT / "specs.py"
 )
 field_volume = _load_module(
-    f"{PACKAGE_ROOT}.field.volume", FIELD_ROOT / "volume.py"
+    f"{PHYSICS_PACKAGE}.field.volume", FIELD_ROOT / "volume.py"
 )
-_load_module(f"{PACKAGE_ROOT}.field.wind", FIELD_ROOT / "wind.py")
+_load_module(f"{PHYSICS_PACKAGE}.field.wind", FIELD_ROOT / "wind.py")
 field_sampling = _load_module(
-    f"{PACKAGE_ROOT}.field.sampling", FIELD_ROOT / "sampling.py"
+    f"{PHYSICS_PACKAGE}.field.sampling", FIELD_ROOT / "sampling.py"
 )
 field_native = _load_module(
-    f"{PACKAGE_ROOT}.field.native", FIELD_ROOT / "native.py"
+    f"{PHYSICS_PACKAGE}.field.native", FIELD_ROOT / "native.py"
 )
 
 

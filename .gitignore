@@ -30,10 +30,13 @@ MagicaCloth2/
 .vscode/
 
 # Packaging and CMake build outputs.
+.worktrees/
 _build/
 _dist/
 build/
 cmake-build-*/
+_Lib/py311/linux-x86_64/
+_Lib/py313/linux-x86_64/
 
 # Native backend build/cache directories. Keep _native source tracked.
 _native/build/
