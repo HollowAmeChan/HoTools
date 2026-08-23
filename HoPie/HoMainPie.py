@@ -462,8 +462,11 @@ def _draw_edge_flow_tools(layout: LayoutBuilder, context):
     row.operator("ho.parallel_manifold_subdivide",
         text="并排流形细分",icon="FILE_VOLUME",
         operator_context="EXEC_DEFAULT",)
-    row.operator("ho.slide_edge_loop_cut",
-        text="滑边环切",icon="CURVES",
+    row.operator("ho.inner_loop_cut_slide",
+        text="滑切",icon="MOD_INSTANCE",
+        operator_context="INVOKE_DEFAULT",)
+    row.operator("ho.offset_edges_extrude",
+        text="外扩",icon="MOD_INSTANCE",
         operator_context="INVOKE_DEFAULT",)
 
     row = col.row(align=True)
