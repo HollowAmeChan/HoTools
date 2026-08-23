@@ -301,6 +301,102 @@ def find_deforming_armature_for_object(
     return armatures[0] if len(armatures) == 1 else None
 
 
+def deform_group_indices_for_object(obj: bpy.types.Object) -> set[int]:
+    """返回对象上由形变骨架驱动的顶点组索引。"""
+    if obj is None or obj.type != "MESH":
+        return set()
+
+    deform_bone_names = {
+        bone.name
+        for armature in find_deforming_armatures_for_object(obj)
+        for bone in armature.data.bones
+        if bone.use_deform
+    }
+    return {
+        group.index
+        for group in obj.vertex_groups
+        if group.name in deform_bone_names
+    }
+
+
+def limit_deform_weights(
+    obj: bpy.types.Object,
+    limit: int,
+    *,
+    selected_only: bool = False,
+) -> int:
+    """每个顶点最多保留 ``limit`` 个形变权重，返回删除的权重数量。"""
+    if obj is None or obj.type != "MESH":
+        return 0
+
+    group_indices = deform_group_indices_for_object(obj)
+    if not group_indices:
+        return 0
+
+    limit = max(1, int(limit))
+    locked = {
+        group.index
+        for group in obj.vertex_groups
+        if group.lock_weight and group.index in group_indices
+    }
+
+    if obj.mode == "EDIT":
+        import bmesh
+
+        mesh = obj.data
+        bm = bmesh.from_edit_mesh(mesh)
+        deform_layer = bm.verts.layers.deform.verify()
+        removed = 0
+        for vert in bm.verts:
+            if selected_only and not vert.select:
+                continue
+
+            weights = vert[deform_layer]
+            items = list(weights.items())
+            candidates = [
+                (group_index, weight)
+                for group_index, weight in items
+                if group_index in group_indices and group_index not in locked
+            ]
+            deform_count = sum(
+                group_index in group_indices for group_index, _weight in items
+            )
+            remove_count = max(0, deform_count - limit)
+            for group_index, _weight in sorted(
+                candidates, key=lambda item: (item[1], item[0])
+            )[:remove_count]:
+                del weights[group_index]
+                removed += 1
+
+        bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=False)
+        return removed
+
+    removed = 0
+    for vert in obj.data.vertices:
+        if selected_only and not vert.select:
+            continue
+
+        assignments = [
+            (assignment.group, assignment.weight)
+            for assignment in vert.groups
+        ]
+        candidates = [
+            (group_index, weight)
+            for group_index, weight in assignments
+            if group_index in group_indices and group_index not in locked
+        ]
+        deform_count = sum(
+            group_index in group_indices for group_index, _weight in assignments
+        )
+        remove_count = max(0, deform_count - limit)
+        for group_index, _weight in sorted(
+            candidates, key=lambda item: (item[1], item[0])
+        )[:remove_count]:
+            obj.vertex_groups[group_index].remove([vert.index])
+            removed += 1
+    return removed
+
+
 def object_uses_armature(
     obj: bpy.types.Object,
     armature_obj: bpy.types.Object,
@@ -460,12 +556,14 @@ __all__ = [
     "ensure_bone_collection",
     "find_armature_for_object",
     "find_armatures_for_object",
+    "deform_group_indices_for_object",
     "find_deforming_armature_for_object",
     "find_deforming_armatures_for_object",
     "find_suffixless",
     "get_mirrored_bone",
     "has_side_suffix",
     "inherit_bone_collections",
+    "limit_deform_weights",
     "mirror_pair",
     "mirrored_role_names",
     "object_is_deformed_by_armature",

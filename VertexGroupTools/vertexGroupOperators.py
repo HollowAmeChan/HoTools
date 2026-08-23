@@ -2227,7 +2227,7 @@ class OP_VertexGroupTools_Max_VG_Limit(Operator):
             bpy.ops.object.mode_set(mode='EDIT')
 
         if len(obj.vertex_groups):
-            bpy.ops.object.vertex_group_limit_total(limit=self.num_max,group_select_mode='BONE_DEFORM')
+            bone_utils.limit_deform_weights(obj, self.num_max, selected_only=True)
 
         _refresh_checker(context)
 
@@ -2403,28 +2403,7 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     scene = context.scene
     box = layout.box()
     layout = box
-    
-    col = layout.column(align=True)
-    col.scale_y = 2.0
-    row = col.row(align=True)
-    row.operator(OP_VertexGroupTools_Max_VG_Limit.bl_idname,text="限组数")
-    row.operator(OP_VertexGroupTools_RemoveGroupVertex_by_value.bl_idname, text="阈值全移除")
-    row.prop(scene, "hoVertexGroupTools_remove_max", icon_only=True, slider=True)
 
-    row = col.row(align=True)
-    op2 = row.operator(OP_VertexGroupTools_Select_Vertices_by_WeightValue.bl_idname,text="选择小于")
-    op2.value = scene.hoVertexGroupTools_select_by_weightvalue
-    row.prop(scene,"hoVertexGroupTools_select_by_weightvalue",text="")
-
-    col = layout.column(align=True)
-    col.scale_y = 2.0
-    row = col.row(align=True)
-    op1 = row.operator(OP_VertexGroupTools_balanceVertexGroupWeight.bl_idname,text="组内翻转",icon="MOD_MIRROR")
-    op2 = row.operator(OP_VertexGroupTools_mirror_to_other_group.bl_idname,text="同步到对称骨",icon="BONE_DATA")
-    row = col.row(align=True)
-    row.operator("object.vertex_group_remove_from", text="从组移除",icon="CANCEL")
-    row.operator(OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex.bl_idname,text="规格所选", icon="RECORD_ON")
-    
     col = layout.column(align=True)
     col.scale_y = 2.0
     row = col.row(align=True)
@@ -2442,7 +2421,6 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     row = col.row(align=True)
     row.operator(OP_VertexGroupTools_ExtractGroupValues_SelectedVertex.bl_idname,text="复制", icon="COPYDOWN")
     row.operator(OP_VertexGroupTools_ApplyGroupValues_SelectedVertex.bl_idname,text="粘贴", icon="PASTEDOWN")
-
 
     col = layout.column(align=True)
     col.scale_y = 2.0
@@ -2494,7 +2472,29 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
         row.prop(scene, "hoVertexGroupTools_sharpen_blur_radius", text="模糊")
         row.prop(scene, "hoVertexGroupTools_sharpen_iterations", text="迭代")
         row.prop(scene, "hoVertexGroupTools_sharpen_topology_hops", text="拓扑")
+
+    col = layout.column(align=True)
+    col.scale_y = 2.0
+    row = col.row(align=True)
+    op1 = row.operator(OP_VertexGroupTools_balanceVertexGroupWeight.bl_idname,text="组内翻转",icon="MOD_MIRROR")
+    op2 = row.operator(OP_VertexGroupTools_mirror_to_other_group.bl_idname,text="同步到对称骨",icon="BONE_DATA")
+    row = col.row(align=True)
+    row.operator("object.vertex_group_remove_from", text="从组移除",icon="CANCEL")
+    row.operator(OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex.bl_idname,text="规格所选", icon="RECORD_ON")
     
+    col = layout.column(align=True)
+    col.scale_y = 2.0
+    row = col.row(align=True)
+    row.operator(OP_VertexGroupTools_Max_VG_Limit.bl_idname,text="限组数")
+    row.operator(OP_VertexGroupTools_RemoveGroupVertex_by_value.bl_idname, text="阈值全移除")
+    row.prop(scene, "hoVertexGroupTools_remove_max", icon_only=True, slider=True)
+
+    row = col.row(align=True)
+    op2 = row.operator(OP_VertexGroupTools_Select_Vertices_by_WeightValue.bl_idname,text="选择小于")
+    op2.value = scene.hoVertexGroupTools_select_by_weightvalue
+    row.prop(scene,"hoVertexGroupTools_select_by_weightvalue",text="")
+
+
 def _draw_ActiveVertex_weight(layout:bpy.types.UILayout,context:bpy.types.Context):
     # 活动顶点情况
     # 此办法比第二种快，只有在切换选择顶点的时候会卡
