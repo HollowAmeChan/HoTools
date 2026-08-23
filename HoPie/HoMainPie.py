@@ -468,7 +468,7 @@ def _draw_edge_flow_tools(layout: LayoutBuilder, context):
 
     row = col.row(align=True)
     row.operator("ho.mesh_flatten", text="压平", icon="NOCURVE")
-    row.operator("ho.mesh_relax", text="保边松弛", icon="MOD_SMOOTH")
+    row.operator("ho.mesh_relax", text="松弛", icon="MOD_SMOOTH")
     row.operator("ho.mesh_circle_even", text="均匀圆化", icon="MESH_CIRCLE")
 
 

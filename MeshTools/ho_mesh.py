@@ -29,6 +29,46 @@ def _selected_vertices(bm):
     }
 
 
+def _mesh_select_mode(context):
+    scene = getattr(context, "scene", None)
+    tool_settings = getattr(scene, "tool_settings", None)
+    mode = getattr(tool_settings, "mesh_select_mode", ())
+    try:
+        return tuple(mode)
+    except TypeError:
+        return ()
+
+
+def _selected_edge_relax_domain(bm):
+    """Return the vertices and anchors for an explicit edge selection.
+
+    The selected edge graph, rather than Blender's propagated vertex flags,
+    defines the domain.  Open-chain endpoints are fixed and branch junctions
+    are fixed as well so that a branched selection has stable anchors.
+    Closed loops have no endpoints, so all of their vertices remain movable.
+    """
+    selected_edges = [
+        edge for edge in bm.edges
+        if (edge.is_valid and edge.select and not edge.hide
+                and all(vert.is_valid and not vert.hide for vert in edge.verts))
+    ]
+    if not selected_edges:
+        return set(), set(), set(), selected_edges
+
+    adjacency = {}
+    for edge in selected_edges:
+        first, second = edge.verts
+        adjacency.setdefault(first, set()).add(second)
+        adjacency.setdefault(second, set()).add(first)
+
+    selected = set(adjacency)
+    fixed = {
+        vertex for vertex, neighbors in adjacency.items()
+        if len(neighbors) == 1 or len(neighbors) > 2
+    }
+    return selected, fixed, selected - fixed, selected_edges
+
+
 def _selected_components(bm, selected):
     """Match LoopTools input grouping: selected edges split vertex groups."""
     if not selected:
@@ -201,10 +241,16 @@ def _cotangent_at_opposite(vertex, first, second, positions):
     return first_vector.dot(second_vector) / cross_length
 
 
-def _neighbor_weights(vertex, selected, positions, method):
+def _neighbor_weights(vertex, selected, positions, method, edge_subset=None):
     weights = []
     for edge in vertex.link_edges:
-        if not _usable_edge(edge):
+        if edge_subset is None:
+            if not _usable_edge(edge):
+                continue
+        elif (edge not in edge_subset or not edge.is_valid or edge.hide
+              or len(edge.link_faces) > 2):
+            # Edge mode follows the selected edge graph.  Loose selected
+            # edges are valid topology too; non-manifold edges remain blocked.
             continue
         neighbor = edge.other_vert(vertex)
         if neighbor not in selected:
@@ -268,7 +314,8 @@ def _candidate_faces_are_valid(faces, old_positions, targets):
     return True
 
 
-def _laplacian_pass(bm, selected, movable, method, factor):
+def _laplacian_pass(
+        bm, selected, movable, method, factor, edge_subset=None):
     affected_faces = set()
     old_positions = {vertex: vertex.co.copy() for vertex in selected}
     for vertex in movable:
@@ -281,7 +328,8 @@ def _laplacian_pass(bm, selected, movable, method, factor):
     for vertex in movable:
         weighted = Vector((0.0, 0.0, 0.0))
         total = 0.0
-        for neighbor, weight in _neighbor_weights(vertex, selected, old_positions, method):
+        for neighbor, weight in _neighbor_weights(
+                vertex, selected, old_positions, method, edge_subset):
             weighted += old_positions[neighbor] * weight
             total += weight
         if total > _EPSILON:
@@ -297,10 +345,12 @@ def _laplacian_pass(bm, selected, movable, method, factor):
     return True
 
 
-def _safe_laplacian_pass(bm, selected, movable, method, factor):
+def _safe_laplacian_pass(
+        bm, selected, movable, method, factor, edge_subset=None):
     trial = factor
     for _ in range(8):
-        if _laplacian_pass(bm, selected, movable, method, trial):
+        if _laplacian_pass(
+                bm, selected, movable, method, trial, edge_subset):
             return True
         trial *= 0.5
     return False
@@ -348,6 +398,311 @@ def _component_edge_order(component):
     if len(ordered) != len(component):
         return sorted(component, key=lambda vertex: vertex.index), False
     return ordered, is_loop
+
+
+def _selected_edge_paths(selected_edges):
+    """Return simple selected-edge chains in LoopTools order."""
+    vert_verts = {}
+    vert_lookup = {}
+    for edge in selected_edges:
+        first, second = sorted(edge.verts, key=lambda vertex: vertex.index)
+        vert_lookup[first.index] = first
+        vert_lookup[second.index] = second
+        edge_key = (first.index, second.index)
+        for index in range(2):
+            vertex = edge_key[index]
+            neighbor = edge_key[1 - index]
+            vert_verts.setdefault(vertex, []).append(neighbor)
+
+    loops = []
+    while vert_verts:
+        loop = [next(iter(vert_verts))]
+        growing = True
+        flipped = False
+        while growing:
+            if loop[-1] not in vert_verts:
+                if not flipped:
+                    loop.reverse()
+                    flipped = True
+                else:
+                    growing = False
+                continue
+
+            extended = False
+            for index, next_vertex in enumerate(vert_verts[loop[-1]]):
+                if next_vertex in loop:
+                    continue
+                vert_verts[loop[-1]].pop(index)
+                if not vert_verts[loop[-1]]:
+                    del vert_verts[loop[-1]]
+                if next_vertex in vert_verts:
+                    if len(vert_verts[next_vertex]) == 1:
+                        del vert_verts[next_vertex]
+                    else:
+                        vert_verts[next_vertex].remove(loop[-1])
+                loop.append(next_vertex)
+                extended = True
+                break
+            if extended:
+                continue
+            if not flipped:
+                loop.reverse()
+                flipped = True
+            else:
+                growing = False
+
+        circular = False
+        if loop[0] in vert_verts and loop[-1] in vert_verts[loop[0]]:
+            circular = True
+            if len(vert_verts[loop[0]]) == 1:
+                del vert_verts[loop[0]]
+            else:
+                vert_verts[loop[0]].remove(loop[-1])
+            if len(vert_verts[loop[-1]]) == 1:
+                del vert_verts[loop[-1]]
+            else:
+                vert_verts[loop[-1]].remove(loop[0])
+
+        ordered = [vert_lookup[index] for index in loop]
+        if (len(ordered) >= 3 and any(
+                (ordered[index].co - ordered[index + 1].co).length > 1.0e-6
+                for index in range(len(ordered) - 1))):
+            loops.append((ordered, circular))
+    return loops
+
+
+def _looptools_relax_knots(vertices, circular):
+    """Build LoopTools' alternating knot and point lists."""
+    if circular:
+        extend = ([False, True, 0, 1, 0, 1]
+                  if len(vertices) % 2 else [True, False, 0, 1, 1, 2])
+    else:
+        extend = [False, False, 0, 1, 1, 2]
+
+    all_knots = []
+    all_points = []
+    loop = list(vertices)
+    for group in range(2):
+        if extend[group]:
+            loop = [loop[-1]] + loop + [loop[0]]
+        knots = [
+            loop[index]
+            for index in range(extend[2 + 2 * group], len(loop), 2)
+        ]
+        points = []
+        for index in range(extend[3 + 2 * group], len(loop), 2):
+            if index == len(loop) - 1 and not circular:
+                continue
+            if not points or loop[index] != points[0]:
+                points.append(loop[index])
+        if circular and knots[0] != knots[-1]:
+            knots.append(knots[0])
+        all_knots.append(knots)
+        all_points.append(points)
+    return all_knots, all_points
+
+
+def _looptools_relax_parameters(knots, points, positions, regular=True):
+    """Calculate LoopTools' arc-length parameters for one spline."""
+    mix = []
+    amount = len(knots) + len(points)
+    for index in range(amount):
+        if index % 2 == 0:
+            mix.append((True, knots[round(index / 2)]))
+        elif index == amount - 1:
+            mix.append((True, knots[-1]))
+        else:
+            mix.append((False, points[index // 2]))
+
+    total = 0.0
+    previous = None
+    tknots = []
+    tpoints = []
+    for is_knot, vertex in mix:
+        location = positions[vertex]
+        if previous is None:
+            previous = location
+        total += (location - previous).length
+        if is_knot:
+            tknots.append(total)
+        else:
+            tpoints.append(total)
+        previous = location
+    if regular:
+        tpoints = [
+            (tknots[index] + tknots[index + 1]) / 2.0
+            for index in range(len(points))
+        ]
+    return tknots, tpoints
+
+
+def _looptools_cubic_splines(knots, tknots, positions):
+    """Return natural cubic spline coefficients used by LoopTools."""
+    if len(knots) < 2:
+        return []
+
+    knots = list(knots)
+    tknots = list(tknots)
+    if knots[0] == knots[-1] and len(knots) > 1:
+        # LoopTools wraps four samples around a circular spline before
+        # solving the natural cubic system and keeps that padding for eval.
+        padded_knots_before = []
+        for index in range(-1, -5, -1):
+            adjusted = index
+            if adjusted - 1 < -len(knots):
+                adjusted += len(knots)
+            padded_knots_before.append(knots[adjusted - 1])
+        padded_knots_after = []
+        for index in range(4):
+            adjusted = index
+            if adjusted + 1 > len(knots) - 1:
+                adjusted -= len(knots)
+            padded_knots_after.append(knots[adjusted + 1])
+        padded_t_before = []
+        total = 0.0
+        for index in range(-1, -5, -1):
+            adjusted = index
+            if adjusted - 1 < -len(tknots):
+                adjusted += len(tknots)
+            total += tknots[adjusted] - tknots[adjusted - 1]
+            padded_t_before.append(tknots[0] - total)
+        padded_t_after = []
+        total = 0.0
+        for index in range(4):
+            adjusted = index
+            if adjusted + 1 > len(tknots) - 1:
+                adjusted -= len(tknots)
+            total += tknots[adjusted + 1] - tknots[adjusted]
+            padded_t_after.append(tknots[-1] + total)
+        knots = list(reversed(padded_knots_before)) + knots + padded_knots_after
+        tknots = list(reversed(padded_t_before)) + tknots + padded_t_after
+
+    x = list(tknots)
+    coordinates = []
+    for axis in range(3):
+        values = [positions[vertex][axis] for vertex in knots]
+        h = [
+            value if value != 0.0 else 1.0e-8
+            for value in (x[index + 1] - x[index]
+                          for index in range(len(x) - 1))
+        ]
+        q = [False]
+        for index in range(1, len(values) - 1):
+            q.append(
+                3.0 / h[index] * (values[index + 1] - values[index])
+                - 3.0 / h[index - 1] * (values[index] - values[index - 1])
+            )
+        l = [1.0]
+        u = [0.0]
+        z = [0.0]
+        for index in range(1, len(values) - 1):
+            l.append(2.0 * (x[index + 1] - x[index - 1])
+                     - h[index - 1] * u[index - 1])
+            if l[index] == 0.0:
+                l[index] = 1.0e-8
+            u.append(h[index] / l[index])
+            z.append((q[index] - h[index - 1] * z[index - 1]) / l[index])
+        l.append(1.0)
+        z.append(0.0)
+        b = [False for _ in range(len(values) - 1)]
+        c = [False for _ in range(len(values))]
+        d = [False for _ in range(len(values) - 1)]
+        c[-1] = 0.0
+        for index in range(len(values) - 2, -1, -1):
+            c[index] = z[index] - u[index] * c[index + 1]
+            b[index] = ((values[index + 1] - values[index]) / h[index]
+                        - h[index] * (c[index + 1] + 2.0 * c[index]) / 3.0)
+            d[index] = (c[index + 1] - c[index]) / (3.0 * h[index])
+        coordinates.append([
+            [values[index], b[index], c[index], d[index], x[index]]
+            for index in range(len(values) - 1)
+        ])
+
+    splines = [
+        [coordinates[axis][index] for axis in range(3)]
+        for index in range(len(knots) - 1)
+    ]
+    return splines
+
+
+def _looptools_linear_splines(knots, tknots, positions):
+    splines = []
+    for index in range(len(knots) - 1):
+        start = positions[knots[index]]
+        delta = positions[knots[index + 1]] - start
+        splines.append((start, delta, tknots[index],
+                        tknots[index + 1] - tknots[index]))
+    return splines
+
+
+def _looptools_spline_location(splines, interpolation, parameter):
+    if not splines:
+        return None
+    starts = [
+        spline[0][4] if interpolation == 'CUBIC' else spline[2]
+        for spline in splines
+    ]
+    if parameter in starts:
+        segment = starts.index(parameter)
+    else:
+        ordered = starts + [parameter]
+        ordered.sort()
+        segment = ordered.index(parameter) - 1
+    segment = max(0, min(segment, len(splines) - 1))
+    if interpolation == 'CUBIC':
+        location = Vector((0.0, 0.0, 0.0))
+        for axis in range(3):
+            a, b, c, d, start = splines[segment][axis]
+            delta = parameter - start
+            location[axis] = a + b * delta + c * delta ** 2 + d * delta ** 3
+        return location
+    start, delta, t_start, t_delta = splines[segment]
+    if t_delta == 0.0:
+        t_delta = 1.0e-8
+    return ((parameter - t_start) / t_delta) * delta + start
+
+
+def _looptools_relax_targets(
+        vertices, circular, interpolation='CUBIC', influence=1.0):
+    """Calculate one LoopTools Relax pass for a selected path."""
+    positions = {vertex: vertex.co.copy() for vertex in vertices}
+    all_knots, all_points = _looptools_relax_knots(vertices, circular)
+    targets = {}
+    for knots, points in zip(all_knots, all_points):
+        if len(knots) < 2 or not points:
+            continue
+        tknots, tpoints = _looptools_relax_parameters(
+            knots, points, positions, regular=True,
+        )
+        if interpolation == 'CUBIC':
+            splines = _looptools_cubic_splines(knots, tknots, positions)
+        else:
+            splines = _looptools_linear_splines(knots, tknots, positions)
+        for vertex, parameter in zip(points, tpoints):
+            location = _looptools_spline_location(
+                splines, interpolation, parameter,
+            )
+            if location is not None:
+                # LoopTools deliberately applies a half-step toward the
+                # spline and then exposes that result as the full operation.
+                looptools_target = positions[vertex].lerp(location, 0.5)
+                targets[vertex] = positions[vertex].lerp(
+                    looptools_target, max(0.0, min(1.0, influence)),
+                )
+    return targets
+
+
+def _looptools_relax_pass(paths, influence):
+    targets = {}
+    for vertices, circular in paths:
+        targets.update(
+            _looptools_relax_targets(
+                vertices, circular, influence=influence,
+            )
+        )
+    for vertex, target in targets.items():
+        vertex.co = target
+    return bool(targets)
 
 
 def _solve_linear_3x3(matrix, values):
@@ -589,16 +944,16 @@ class HO_OT_MeshFlatten(bpy.types.Operator):
 
 
 class HO_OT_MeshRelax(bpy.types.Operator):
-    """Relax selected manifold interior vertices while pinning boundaries."""
+    """Relax selected mesh patches or edge paths with fixed anchors."""
 
     bl_idname = "ho.mesh_relax"
     bl_label = "松弛"
-    bl_description = "固定选区边界，使用 Taubin-Laplacian 松弛内部流形顶点"
+    bl_description = "面模式固定选区边界；边模式使用 LoopTools 样条松弛并固定边链端点"
     bl_options = {'REGISTER', 'UNDO'}
 
     iterations: IntProperty(name="迭代", default=3, min=1, max=100) # type: ignore
     strength: FloatProperty(
-        name="强度", default=0.5, min=0.0, max=1.0,
+        name="强度", default=1.0, min=0.0, max=1.0,
         subtype='FACTOR',
     ) # type: ignore
     method: EnumProperty(
@@ -608,7 +963,7 @@ class HO_OT_MeshRelax(bpy.types.Operator):
         ), default='COTANGENT',
     ) # type: ignore
     preserve_shape: BoolProperty(
-        name="抑制收缩", default=True,
+        name="抑制收缩", default=False,
         description="使用 Taubin 反向步骤抑制普通 Laplacian 的整体收缩",
     ) # type: ignore
 
@@ -625,30 +980,58 @@ class HO_OT_MeshRelax(bpy.types.Operator):
         layout.use_property_split = True
         layout.prop(self, "iterations")
         layout.prop(self, "strength")
-        layout.prop(self, "method")
-        layout.prop(self, "preserve_shape")
-        layout.label(text="选区边界、网格边界和非流形点固定")
+        if _mesh_select_mode(context) == (False, True, False):
+            layout.label(text="LoopTools 样条松弛，边链端点固定")
+        else:
+            layout.prop(self, "method")
+            layout.prop(self, "preserve_shape")
+            layout.label(text="选区边界、网格边界和非流形点固定")
 
     def execute(self, context):
         obj, bm = _edit_mesh(context)
-        selected = _selected_vertices(bm) if bm is not None else set()
+        edge_mode = _mesh_select_mode(context) == (False, True, False)
+        edge_subset = None
+        if edge_mode and bm is not None:
+            selected, fixed, movable, edge_subset = _selected_edge_relax_domain(bm)
+        else:
+            selected = _selected_vertices(bm) if bm is not None else set()
+            fixed = _relax_boundary(selected)
+            movable = selected - fixed
+
         if not selected:
-            self.report({'WARNING'}, "请先选择要松弛的顶点")
+            self.report({"WARNING"}, "请先选择要松弛的边" if edge_mode
+                        else "请先选择要松弛的顶点")
             return {'CANCELLED'}
 
-        fixed = _relax_boundary(selected)
-        movable = selected - fixed
         if not movable:
-            self.report({'WARNING'}, "选区没有可松弛的内部流形顶点")
+            if edge_mode:
+                message = "选中的边没有可松弛的内部点"
+            else:
+                message = "选区没有可松弛的内部流形顶点"
+            self.report({'WARNING'}, message)
             return {'CANCELLED'}
 
         factor = max(0.0, min(1.0, self.strength))
+        if edge_mode:
+            paths = _selected_edge_paths(edge_subset)
+            if paths:
+                for _iteration in range(self.iterations):
+                    _looptools_relax_pass(paths, factor)
+                bm.normal_update()
+                bmesh.update_edit_mesh(
+                    obj.data, loop_triangles=True, destructive=False,
+                )
+                return {'FINISHED'}
+
         reverse_factor = -min(0.95, factor * 1.06)
         for _iteration in range(self.iterations):
-            _safe_laplacian_pass(bm, selected, movable, self.method, factor)
+            _safe_laplacian_pass(
+                bm, selected, movable, self.method, factor, edge_subset,
+            )
             if self.preserve_shape and reverse_factor < 0.0:
                 _safe_laplacian_pass(
                     bm, selected, movable, self.method, reverse_factor,
+                    edge_subset,
                 )
 
         bm.normal_update()
