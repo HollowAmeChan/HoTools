@@ -269,12 +269,13 @@ def _object_has_local_rotation(obj, tolerance=1e-6):
 
 def _draw_view_options(layout: LayoutBuilder, context):
     """主饼左上角的视图选项和叠加层开关。"""
-    space = find_space(context, "VIEW_3D")
+    space: bpy.types.SpaceView3D = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
-    scene = getattr(context, "scene", None)
+    scene: bpy.types.Scene = getattr(context, "scene", None)
 
     row = layout.row()
     row.item().operator("view3d.view_persportho",text="开关正交",icon="VIEW_ORTHO")
+    draw_prop(row, overlay, "show_text", "文本", icon="COLORSET_10_VEC")
     row.item().popover(panel="OBJECT_PT_display", text="视图显示", icon="VIEW3D")
 
     row = layout.row(align=True)
@@ -284,23 +285,28 @@ def _draw_view_options(layout: LayoutBuilder, context):
     draw_prop(row, overlay, "show_gizmo_object_translate", "轴", icon="STRIP_COLOR_03")
 
     row = layout.row(align=True)
-    settings = getattr(scene, "ho_vertex_color_tools", None)
-    draw_prop(row, settings, "view_mode", "顶点色", icon="COLORSET_06_VEC")
-    draw_prop(row, scene, "ho_checker_overlay_show", "棋盘格", icon="TEXTURE_DATA")
-
-    if scene is not None and hasattr(scene, "ho_checker_overlay_realtime_refresh"):
-        checker_row = layout.row(align=True)
-        checker_row.raw_layout.enabled = bool(getattr(scene, "ho_checker_overlay_show", False))
-        # draw_prop(checker_row,scene,"ho_checker_overlay_realtime_refresh","实时刷新",icon="FILE_REFRESH")
-
-    row = layout.row(align=True)
     shading = getattr(space, "shading", None)
     random_active = getattr(shading, "color_type", None) == "RANDOM"
     row.item().operator(HO_OT_HoMainPieToggleRandomPreview.bl_idname,
         text="随机预览",icon="COLORSET_05_VEC",depress=random_active,)
-    if overlay is not None:
-        draw_prop(row, overlay, "show_text", "文本", icon="COLORSET_10_VEC")
-    draw_prop(row, getattr(space, "uv_editor", None), "show_stretch", "UV 拉伸", icon="COLORSET_04_VEC")
+    settings = getattr(scene, "ho_vertex_color_tools", None)
+    draw_prop(row, settings, "view_mode", "顶点色", icon="COLORSET_06_VEC")
+    draw_prop(row, scene, "ho_checker_overlay_show", "棋盘格", icon="TEXTURE_DATA")
+    # if scene is not None and hasattr(scene, "ho_checker_overlay_realtime_refresh"):
+    #     checker_row = layout.row(align=True)
+    #     checker_row.raw_layout.enabled = bool(getattr(scene, "ho_checker_overlay_show", False))
+        # draw_prop(checker_row,scene,"ho_checker_overlay_realtime_refresh","实时刷新",icon="FILE_REFRESH")
+    image_space = find_space(context, "IMAGE_EDITOR")
+    uv_editor = getattr(image_space, "uv_editor", None)
+    if uv_editor is not None and hasattr(uv_editor, "show_stretch"):
+        draw_prop(row, uv_editor, "show_stretch", "UV 拉伸", icon="COLORSET_04_VEC")
+
+
+    row = layout.row(align=True)
+    row.label(text="",icon="SCENE")
+    row.prop(scene.view_settings,"view_transform",text="")
+    row.prop(scene.display_settings,"display_device",text="")
+
 
 
 def _draw_main_top_right(layout: LayoutBuilder, context):
@@ -535,18 +541,25 @@ def _draw_object_export_panel(layout: LayoutBuilder, context):
 
 def _draw_object_quick_panel(layout: LayoutBuilder, context):
     """绘制物体子饼左侧的快速操作面板。"""
-    obj = getattr(context, "active_object", None)
+    obj: bpy.types.Object = getattr(context, "active_object", None)
 
     col = layout.column(align=True)
     col.scale_x = 1
     col.scale_y = 1.5
 
     row = col.row(align=True)
-    draw_prop(row, obj, "display_type", "显示方式", icon="SHADING_WIRE")
-    draw_prop(row, obj, "show_in_front", "最前显示", icon="XRAY")
+    row.label(text="",icon="OBJECT_DATA")
+    row.prop(obj,"display_type",text="",icon="SHADING_WIRE")
+    row.prop(obj,"show_in_front",text="最前显示",icon="XRAY")
 
-    col.operator(HO_OT_HoMainPieSeparateLoose.bl_idname,
-        text="分离松散块",icon="UNLINKED",)
+    if obj.type == "ARMATURE":
+        armature: bpy.types.Armature = getattr(obj, "data", None)
+        row = col.row(align=True)
+        row.label(text="",icon="OUTLINER_OB_ARMATURE")
+        row.prop(armature, "show_names", text="显示名称",icon="SYNTAX_OFF")
+        row.prop(armature, "show_axes", text="显示轴",icon="EMPTY_AXIS")
+        row.prop(armature, "display_type", text="",icon="SHADING_WIRE")
+    
 
 def _draw_mesh_down_tools(layout: LayoutBuilder, context):
     """绘制网格子饼下方的工具面板。"""
@@ -613,7 +626,7 @@ class HO_MT_HoMainPie(Menu):
                 text="叠加层",icon="OVERLAY",depress=bool(getattr(overlay, "show_overlays", False)),)
 
         pie.top_left.expand(_draw_view_options,
-            width=1.5,height=1.5,height_offset=5.0,)
+            width=1.2,height=1.8,height_offset=5.0,)
         pie.top_right.expand(_draw_main_top_right,
             height_offset=5.0,)
         pie.finish()
