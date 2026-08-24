@@ -559,6 +559,52 @@ class HO_OT_SetEdgeFlow(bpy.types.Operator, _SetEdgeLoopBase):
         return {'FINISHED'}
 
 
+class _EdgeFlowRunner(_SetEdgeLoopBase):
+    """Non-RNA runner for callers that already own an edit-mesh operation."""
+
+    def __init__(self, mix=1.0, iterations=1):
+        self.mix = max(0.0, min(float(mix), 1.0))
+        self.tension = 180
+        self.iterations = max(1, int(iterations))
+        self.min_angle = 0
+        self.blend_mode = 'ABSOLUTE'
+        self.blend_type = 'LINEAR'
+        self.blend_start_int = 0
+        self.blend_end_int = 0
+        self.blend_start_float = 0.0
+        self.blend_end_float = 0.0
+
+
+def apply_edge_flow(context, *, mix=1.0, iterations=1):
+    """Apply SetEdgeFlow without nested bpy.ops context/poll dispatch."""
+    runner = _EdgeFlowRunner(mix=mix, iterations=iterations)
+    runner._prepare(context)
+    if not runner._bmeshes:
+        return False
+
+    runner._reset_positions()
+    for obj, loops in runner._edgeloops.items():
+        for _iteration in range(runner.iterations):
+            for loop in loops:
+                loop.set_flow(
+                    runner.tension / 100.0,
+                    math.radians(runner.min_angle),
+                )
+        for loop in loops:
+            loop.blend_start_end(
+                runner.blend_start_int,
+                runner.blend_end_int,
+                runner.blend_type,
+            )
+        runner._bmeshes[obj].normal_update()
+        bmesh.update_edit_mesh(obj.data, destructive=False)
+
+    runner._apply_mix()
+    for obj in runner._bmeshes:
+        bmesh.update_edit_mesh(obj.data, destructive=False)
+    return True
+
+
 class HO_OT_SetEdgeCurve(bpy.types.Operator, _SetEdgeLoopBase):
     bl_idname = "ho.set_edge_curve"
     bl_label = "设置曲线"
@@ -657,5 +703,6 @@ EDGE_FLOW_CLASSES = (HO_OT_SetEdgeFlow, HO_OT_SetEdgeCurve, HO_OT_SetEdgeLinear)
 
 __all__ = [
     "HO_OT_SetEdgeFlow", "HO_OT_SetEdgeCurve", "HO_OT_SetEdgeLinear",
+    "apply_edge_flow",
     "EDGE_FLOW_CLASSES",
 ]
