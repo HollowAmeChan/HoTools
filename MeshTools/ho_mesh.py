@@ -29,6 +29,18 @@ def _selected_vertices(bm):
     }
 
 
+def _selected_region_faces(bm, selected_vertices, selected_edges):
+    """识别显式选面，以及由完整选点/选边围成的面。"""
+    return {
+        face for face in bm.faces
+        if face.is_valid and not face.hide and (
+            face.select
+            or all(vertex in selected_vertices for vertex in face.verts)
+            or all(edge in selected_edges for edge in face.edges)
+        )
+    }
+
+
 def _mesh_select_mode(context):
     scene = getattr(context, "scene", None)
     tool_settings = getattr(scene, "tool_settings", None)
@@ -43,9 +55,8 @@ def _selected_edge_relax_domain(bm):
     """Return the vertices and anchors for an explicit edge selection.
 
     The selected edge graph, rather than Blender's propagated vertex flags,
-    defines the domain.  Open-chain endpoints are fixed and branch junctions
-    are fixed as well so that a branched selection has stable anchors.
-    Closed loops have no endpoints, so all of their vertices remain movable.
+    defines the domain. Open-chain endpoints are fixed; surface-like edge
+    regions additionally use their perimeter as anchors.
     """
     selected_edges = [
         edge for edge in bm.edges
@@ -85,7 +96,78 @@ def _selected_edge_relax_domain(bm):
                 if edge.is_boundary or edge not in selected_edge_set:
                     fixed.add(vertex)
                     break
+        # Complex edge picks can be only a perimeter, leaving no movable
+        # vertex.  Fall back to chain anchors so an irregular selection still
+        # produces a useful relax operation instead of cancelling outright.
+        if not (selected - fixed) and len(selected) > 2:
+            fixed = {
+                vertex for vertex, neighbors in adjacency.items()
+                if len(neighbors) == 1 or any(
+                    not _usable_edge(edge) for edge in vertex.link_edges
+                )
+            }
     return selected, fixed, selected - fixed, selected_edges
+
+
+def _selected_face_relax_domain(bm, selected_faces):
+    """Return a face region and vertices fixed on its topological perimeter."""
+    selected = {
+        vertex for face in selected_faces
+        for vertex in face.verts
+        if vertex.is_valid and not vertex.hide
+    }
+    fixed = set()
+    for vertex in selected:
+        for edge in vertex.link_edges:
+            if not _usable_edge(edge):
+                fixed.add(vertex)
+                break
+            linked_selected = sum(
+                1 for face in edge.link_faces if face in selected_faces
+            )
+            if edge.is_boundary or (
+                linked_selected and linked_selected != len(edge.link_faces)
+            ):
+                fixed.add(vertex)
+                break
+    return selected, fixed, selected - fixed
+
+
+def _relax_fallback_anchors(bm, selected):
+    """Use only graph endpoints/non-manifold points as a permissive fallback."""
+    adjacency = {vertex: set() for vertex in selected}
+    for edge in bm.edges:
+        if not _usable_edge(edge):
+            continue
+        first, second = edge.verts
+        if first in adjacency and second in adjacency:
+            adjacency[first].add(second)
+            adjacency[second].add(first)
+    fixed = {
+        vertex for vertex, neighbors in adjacency.items()
+        if len(neighbors) <= 1 or any(
+            not _usable_edge(edge) for edge in vertex.link_edges
+        )
+    }
+    return selected, fixed, selected - fixed
+
+
+def _selected_point_relax_domain(bm, selected_vertices):
+    """按选中点之间的连接边构造纯点松弛域。"""
+    adjacency = {vertex: set() for vertex in selected_vertices}
+    for edge in bm.edges:
+        if not edge.is_valid or edge.hide:
+            continue
+        first, second = edge.verts
+        if first in adjacency and second in adjacency:
+            adjacency[first].add(second)
+            adjacency[second].add(first)
+    selected = {vertex for vertex, neighbors in adjacency.items() if neighbors}
+    fixed = {
+        vertex for vertex in selected
+        if len(adjacency[vertex]) == 1 or len(adjacency[vertex]) > 2
+    }
+    return selected, fixed, selected - fixed
 
 
 def _selected_components(bm, selected):
@@ -234,21 +316,6 @@ def _locked_target(old, target, lock_x, lock_y, lock_z, influence):
 def _usable_edge(edge):
     # Non-manifold edges are not allowed to transmit a smoothing update.
     return edge.is_valid and not edge.hide and 0 < len(edge.link_faces) <= 2
-
-
-def _relax_boundary(selected):
-    """Find fixed Dirichlet vertices for a selected mesh patch."""
-    fixed = set()
-    for vert in selected:
-        for edge in vert.link_edges:
-            if not _usable_edge(edge):
-                fixed.add(vert)
-                break
-            other = edge.other_vert(vert)
-            if edge.is_boundary or other not in selected:
-                fixed.add(vert)
-                break
-    return fixed
 
 
 def _cotangent_at_opposite(vertex, first, second, positions):
@@ -702,12 +769,30 @@ class HO_OT_MeshRelax(bpy.types.Operator):
         obj, bm = _edit_mesh(context)
         edge_mode = _mesh_select_mode(context) == (False, True, False)
         edge_subset = None
-        if edge_mode and bm is not None:
+        selected_vertices = _selected_vertices(bm) if bm is not None else set()
+        selected_edges = {
+            edge for edge in bm.edges
+            if edge.is_valid and edge.select and not edge.hide
+        } if bm is not None else set()
+        selected_faces = _selected_region_faces(
+            bm, selected_vertices, selected_edges,
+        ) if bm is not None else set()
+        if selected_faces:
+            selected, fixed, movable = _selected_face_relax_domain(
+                bm, selected_faces,
+            )
+        elif edge_mode and bm is not None:
             selected, fixed, movable, edge_subset = _selected_edge_relax_domain(bm)
         else:
-            selected = _selected_vertices(bm) if bm is not None else set()
-            fixed = _relax_boundary(selected)
-            movable = selected - fixed
+            selected, fixed, movable = _selected_point_relax_domain(
+                bm, selected_vertices,
+            ) if bm is not None else (set(), set(), set())
+
+        if (
+            selected and not movable and len(selected) > 2
+            and bm is not None and not selected_faces
+        ):
+            selected, fixed, movable = _relax_fallback_anchors(bm, selected)
 
         if not selected:
             self.report({"WARNING"}, "请先选择要松弛的边" if edge_mode
