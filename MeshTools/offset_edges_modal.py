@@ -1,4 +1,4 @@
-"""Stable modal wrapper around the bundled OffsetEdges topology algorithm."""
+"""基于 OffsetEdges 拓扑算法的稳定模态封装。"""
 
 from __future__ import annotations
 
@@ -302,7 +302,7 @@ _ACTIVE_HUD_HANDLES = bpy.app.driver_namespace.setdefault(
 
 
 def cleanup_offset_edges_huds():
-    """Remove any HUD handlers left by a reload or addon unregister."""
+    """移除插件重载或注销后残留的 HUD 绘制句柄。"""
     for handle in list(_ACTIVE_HUD_HANDLES):
         try:
             bpy.types.SpaceView3D.draw_handler_remove(handle, "WINDOW")
@@ -322,7 +322,7 @@ def _ensure_edit_mode(context):
 
 
 def _mesh_snapshot(active):
-    """Copy the live edit BMesh, including unflushed edit-mode changes."""
+    """复制当前编辑态 BMesh，包括尚未刷新的编辑改动。"""
     bmesh.update_edit_mesh(
         active.data,
         loop_triangles=False,
@@ -349,7 +349,7 @@ def _selected_edge_keys(active):
 
 
 def _restore_snapshot_bmesh(active, snapshot, selected_edge_keys=None):
-    """Restore without rebuilding through mesh.from_pydata."""
+    """直接从快照恢复 BMesh，避免通过 mesh.from_pydata 重建。"""
     bpy.ops.object.mode_set(mode="OBJECT")
     bm = bmesh.new()
     try:
@@ -445,9 +445,8 @@ def _apply_offset(active, snapshot, offset_infos, edge_indices, width, depth):
         bm.edges.ensure_lookup_table()
         edges_orig = [bm.edges[index] for index in edge_indices]
         geom_ex = extrude_edges(bm, edges_orig)
-        # extrude_edge_only invalidates sequence lookup tables.  The bundled
-        # implementation keeps BMVert references; our cached preview keeps
-        # indices, so refresh before resolving them.
+        # extrude_edge_only 会使序列查找表失效。原算法保留 BMVert 引用，
+        # 而缓存预览保存的是索引，因此解析索引前必须刷新查找表。
         bm.verts.ensure_lookup_table()
         bm.edges.ensure_lookup_table()
         bm.verts.index_update()
@@ -462,286 +461,6 @@ def _apply_offset(active, snapshot, offset_infos, edge_indices, width, depth):
     finally:
         bm.free()
         bpy.ops.object.mode_set(mode="EDIT")
-
-
-class OP_OffsetEdgesExtrude(Operator):
-    bl_idname = "ho.offset_edges_extrude"
-    bl_label = "外扩边环"
-    bl_description = "沿选中边环向外生成一圈新面，滚轮调节凹翘程度"
-    bl_options = {"REGISTER", "UNDO"}
-
-    width: FloatProperty(
-        name="外扩宽度",
-        default=0.2,
-        precision=4,
-        description="Ctrl + 滚轮调节外扩宽度",
-    )  # type: ignore
-    warp_angle: FloatProperty(
-        name="翘凹角度",
-        default=0.0,
-        soft_min=-1.570796,
-        soft_max=1.570796,
-        precision=3,
-        subtype="ANGLE",
-        description="Shift + 滚轮调节正负翘凹角度",
-    )  # type: ignore
-    follow_face: BoolProperty(
-        name="跟随面方向",
-        default=True,
-    )  # type: ignore
-    edge_rail: BoolProperty(
-        name="边轨约束",
-        default=False,
-    )  # type: ignore
-    edge_rail_only_end: BoolProperty(
-        name="仅端点边轨",
-        default=False,
-    )  # type: ignore
-
-    _source_object = None
-    _snapshot = None
-    _selected_edge_keys = None
-    _offset_infos = None
-    _edge_indices = None
-    _step = 0.0
-    _handle_text = None
-    _mouse_x = 0.0
-    _mouse_y = 0.0
-
-    @classmethod
-    def poll(cls, context):
-        return _ensure_edit_mode(context) is not None
-
-    def draw(self, context):
-        self.layout.prop(self, "width")
-        self.layout.prop(self, "warp_angle")
-        self.layout.prop(self, "follow_face")
-        self.layout.prop(self, "edge_rail")
-        if self.edge_rail:
-            self.layout.prop(self, "edge_rail_only_end")
-
-    def _tag_redraw(self, context):
-        area = getattr(context, "area", None)
-        if area is not None:
-            try:
-                area.tag_redraw()
-            except (AttributeError, ReferenceError, RuntimeError):
-                pass
-
-    def _draw_hud(self):
-        try:
-            rows = [
-                (0, "Ctrl+滚轮：", f"{self.width:+.4f}"),
-                (24, "Shift+滚轮：", f"{self.warp_angle * 57.2957795:+.1f}°"),
-                (48, "左键：", "确认"),
-                (72, "右键 / Esc：", "取消"),
-            ]
-            draw_mouse_hud_rows(
-                (self._mouse_x, self._mouse_y),
-                rows,
-                offset=24,
-                size=15,
-            )
-        except (AttributeError, RuntimeError, TypeError, ValueError, ReferenceError):
-            pass
-
-    def _install_hud(self):
-        if self._handle_text is not None:
-            return
-        cleanup_offset_edges_huds()
-        try:
-            self._handle_text = bpy.types.SpaceView3D.draw_handler_add(
-                self._draw_hud,
-                (),
-                "WINDOW",
-                "POST_PIXEL",
-            )
-            _ACTIVE_HUD_HANDLES.add(self._handle_text)
-        except (AttributeError, RuntimeError, TypeError, ReferenceError):
-            self._handle_text = None
-
-    def _remove_hud(self):
-        handle = self._handle_text
-        self._handle_text = None
-        if handle is not None:
-            try:
-                bpy.types.SpaceView3D.draw_handler_remove(handle, "WINDOW")
-            except (AttributeError, RuntimeError, TypeError, ReferenceError):
-                pass
-            _ACTIVE_HUD_HANDLES.discard(handle)
-
-    def _cleanup_snapshot(self):
-        self._remove_hud()
-        snapshot = self._snapshot
-        self._snapshot = None
-        self._source_object = None
-        self._selected_edge_keys = None
-        self._offset_infos = None
-        self._edge_indices = None
-        if snapshot is not None:
-            try:
-                if snapshot.users == 0:
-                    bpy.data.meshes.remove(snapshot)
-            except (AttributeError, ReferenceError, RuntimeError):
-                pass
-
-    def _cancel(self, context):
-        if self._source_object is not None and self._snapshot is not None:
-            try:
-                _restore_snapshot_bmesh(
-                    self._source_object,
-                    self._snapshot,
-                    self._selected_edge_keys,
-                )
-            except (AttributeError, RuntimeError, TypeError, ValueError, ReferenceError):
-                pass
-        self._cleanup_snapshot()
-        area = getattr(context, "area", None)
-        if area is not None:
-            area.tag_redraw()
-        return {"CANCELLED"}
-
-    def _finish(self, context):
-        self._cleanup_snapshot()
-        area = getattr(context, "area", None)
-        if area is not None:
-            area.tag_redraw()
-        return {"FINISHED"}
-
-    def _rebuild(self):
-        _apply_offset(
-            self._source_object,
-            self._snapshot,
-            self._offset_infos,
-            self._edge_indices,
-            self.width * cos(self.warp_angle),
-            self.width * sin(self.warp_angle),
-        )
-
-    def modal(self, context, event):
-        if context.active_object is not self._source_object:
-            return self._cancel(context)
-        if event.type in {"ESC", "RIGHTMOUSE"}:
-            return self._cancel(context)
-        if event.type == "LEFTMOUSE" and event.value == "PRESS":
-            return self._finish(context)
-
-        if event.type == "MOUSEMOVE":
-            self._mouse_x = event.mouse_region_x
-            self._mouse_y = event.mouse_region_y
-            self._tag_redraw(context)
-            return {"RUNNING_MODAL"}
-
-        changed = False
-        if event.type in {"WHEELUPMOUSE", "WHEELDOWNMOUSE"}:
-            if not event.shift and not event.ctrl:
-                return {"PASS_THROUGH"}
-            direction = 1.0 if event.type == "WHEELUPMOUSE" else -1.0
-            if event.shift:
-                self.warp_angle = max(
-                    -1.570796,
-                    min(1.570796, self.warp_angle + direction * radians(5.0)),
-                )
-            elif event.ctrl:
-                self.width += direction * self._step * 4.0
-            changed = True
-
-        if changed:
-            try:
-                self._rebuild()
-            except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
-                self.report({"WARNING"}, f"外扩预览失败: {error}")
-                return self._cancel(context)
-            self._tag_redraw(context)
-        if event.type in {
-            "MIDDLEMOUSE",
-            "TRACKPADPAN",
-            "TRACKPADZOOM",
-            "NDOF_MOTION",
-        }:
-            return {"PASS_THROUGH"}
-        return {"RUNNING_MODAL"}
-
-    def invoke(self, context, event):
-        active = _ensure_edit_mode(context)
-        if active is None:
-            return {"CANCELLED"}
-        self._mouse_x = event.mouse_region_x
-        self._mouse_y = event.mouse_region_y
-        snapshot = None
-        try:
-            snapshot = _mesh_snapshot(active)
-            selected_edge_keys = _selected_edge_keys(active)
-            offset_infos, edge_indices = _build_offset_infos(
-                snapshot,
-                active,
-                selected_edge_keys,
-                self.follow_face,
-                self.edge_rail,
-                self.edge_rail_only_end,
-                radians(0.05),
-            )
-            self._source_object = active
-            self._snapshot = snapshot
-            self._selected_edge_keys = selected_edge_keys
-            self._offset_infos = offset_infos
-            self._edge_indices = edge_indices
-            self._step = max(1.0e-4, self._estimate_step(snapshot, edge_indices))
-            self.width = self._step * 24.0
-            self.warp_angle = 0.0
-            self._rebuild()
-            self._install_hud()
-            context.window_manager.modal_handler_add(self)
-            self._tag_redraw(context)
-            return {"RUNNING_MODAL"}
-        except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
-            if snapshot is not None:
-                self._snapshot = snapshot
-            self.report({"WARNING"}, f"无法开始外扩: {error}")
-            return self._cancel(context)
-
-    def execute(self, context):
-        active = _ensure_edit_mode(context)
-        if active is None:
-            return {"CANCELLED"}
-        snapshot = None
-        try:
-            snapshot = _mesh_snapshot(active)
-            selected_edge_keys = _selected_edge_keys(active)
-            offset_infos, edge_indices = _build_offset_infos(
-                snapshot,
-                active,
-                selected_edge_keys,
-                self.follow_face,
-                self.edge_rail,
-                self.edge_rail_only_end,
-                radians(0.05),
-            )
-            self._source_object = active
-            self._snapshot = snapshot
-            self._selected_edge_keys = selected_edge_keys
-            self._offset_infos = offset_infos
-            self._edge_indices = edge_indices
-            self._step = max(1.0e-4, self._estimate_step(snapshot, edge_indices))
-            self._rebuild()
-            self._cleanup_snapshot()
-            return {"FINISHED"}
-        except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
-            if snapshot is not None:
-                self._snapshot = snapshot
-            self.report({"WARNING"}, f"外扩失败: {error}")
-            return self._cancel(context)
-
-    @staticmethod
-    def _estimate_step(snapshot, edge_indices):
-        bm = bmesh.new()
-        try:
-            bm.from_mesh(snapshot)
-            bm.edges.ensure_lookup_table()
-            lengths = [bm.edges[index].calc_length() for index in edge_indices]
-            return sum(lengths) / max(1, len(lengths)) / 120.0
-        finally:
-            bm.free()
 
 
 def _edge_key(edge):
@@ -775,8 +494,7 @@ def _collect_inner_specs(bm, selected_keys):
             continue
         anchor = selected[0]
         if len(face.verts) == 3:
-            # A triangle has no opposite edge. Splitting both remaining edges
-            # and connecting their points creates the missing support edge.
+            # 三角面没有对边；拆分另外两条边并连接新点，补出支撑边。
             cross = [edge for edge in face.edges if edge is not anchor]
         else:
             opposite = next(
@@ -828,7 +546,7 @@ def _find_split_face(bm, point_a, point_b, face_ids):
 
 
 def _build_inner_cut_cache(snapshot, specs, factor):
-    """Build the cut topology once and retain its movable transverse points."""
+    """只构建一次切割拓扑，并保留可移动的横向切点。"""
     bm = bmesh.new()
     success = False
     try:
@@ -886,10 +604,7 @@ def _build_inner_cut_cache(snapshot, specs, factor):
         for edge in generated:
             edge.select_set(edge.is_valid)
         bm.normal_update()
-        cache = {
-            "bm": bm,
-            "points": tuple(point_sources.values()),
-        }
+        cache = {"bm": bm, "points": tuple(point_sources.values())}
         success = True
         return cache
     finally:
@@ -921,38 +636,63 @@ def _free_inner_cut_cache(cache):
             pass
 
 
-class OP_InnerLoopCutSlide(Operator):
-    bl_idname = "ho.inner_loop_cut_slide"
-    bl_label = "内环切滑移"
-    bl_description = "在选中边环旁插入内部切线，右键或 Esc 会完整撤销"
+class OP_SlideCut(Operator):
+    """统一滑切模态操作：默认内切，按 A 切换外扩。"""
+
+    bl_idname = "ho.slide_cut"
+    bl_label = "滑切"
+    bl_description = "默认内环切，按 A 切换内环切/外扩"
     bl_options = {"REGISTER", "UNDO"}
 
-    follow_selected_side: BoolProperty(
-        name="跟随选中边方向",
+    width: FloatProperty(
+        name="外扩宽度",
+        default=0.2,
+        precision=4,
+        description="Shift + 滚轮调节外扩宽度",
+    )  # type: ignore
+    warp_angle: FloatProperty(
+        name="翘凹角度",
+        default=0.0,
+        soft_min=-1.570796,
+        soft_max=1.570796,
+        precision=3,
+        subtype="ANGLE",
+        description="Ctrl + 滚轮调节正负翘凹角度",
+    )  # type: ignore
+    follow_face: BoolProperty(
+        name="跟随面方向",
         default=True,
-        options={"HIDDEN"},
+    )  # type: ignore
+    edge_rail: BoolProperty(
+        name="边轨约束",
+        default=False,
+    )  # type: ignore
+    edge_rail_only_end: BoolProperty(
+        name="仅端点边轨",
+        default=False,
     )  # type: ignore
 
     _source_object = None
     _snapshot = None
-    _specs = None
     _selected_edge_keys = None
-    _inner_cache = None
+    _offset_infos = None
+    _edge_indices = None
+    _step = 0.0
     _handle_text = None
     _mouse_x = 0.0
     _mouse_y = 0.0
-    slide_factor: FloatProperty(
-        name="滑移位置",
-        description="切线在横向边上的位置，0.05 靠近选中边，0.95 靠近对侧",
-        default=0.5,
-        soft_min=0.05,
-        soft_max=0.95,
-        precision=3,
-        subtype="FACTOR",
-    )  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return _ensure_edit_mode(context) is not None
+
+    def draw(self, context):
+        self.layout.prop(self, "width")
+        self.layout.prop(self, "warp_angle")
+        self.layout.prop(self, "follow_face")
+        self.layout.prop(self, "edge_rail")
+        if self.edge_rail:
+            self.layout.prop(self, "edge_rail_only_end")
 
     def _tag_redraw(self, context):
         area = getattr(context, "area", None)
@@ -961,22 +701,6 @@ class OP_InnerLoopCutSlide(Operator):
                 area.tag_redraw()
             except (AttributeError, ReferenceError, RuntimeError):
                 pass
-
-    def _draw_hud(self):
-        try:
-            rows = [
-                (0, "\u6eda\u8f6e:", f"{self.slide_factor:.3f}"),
-                (24, "\u5de6\u952e:", "\u786e\u8ba4"),
-                (48, "\u53f3\u952e / Esc:", "\u53d6\u6d88"),
-            ]
-            draw_mouse_hud_rows(
-                (self._mouse_x, self._mouse_y),
-                rows,
-                offset=24,
-                size=15,
-            )
-        except (AttributeError, RuntimeError, TypeError, ValueError, ReferenceError):
-            pass
 
     def _install_hud(self):
         if self._handle_text is not None:
@@ -1003,15 +727,14 @@ class OP_InnerLoopCutSlide(Operator):
                 pass
             _ACTIVE_HUD_HANDLES.discard(handle)
 
-    def _cleanup(self):
+    def _cleanup_offset_snapshot(self):
         self._remove_hud()
-        _free_inner_cut_cache(self._inner_cache)
-        self._inner_cache = None
         snapshot = self._snapshot
         self._snapshot = None
         self._source_object = None
-        self._specs = None
         self._selected_edge_keys = None
+        self._offset_infos = None
+        self._edge_indices = None
         if snapshot is not None:
             try:
                 if snapshot.users == 0:
@@ -1029,132 +752,39 @@ class OP_InnerLoopCutSlide(Operator):
                 )
             except (AttributeError, RuntimeError, TypeError, ValueError, ReferenceError):
                 pass
-        self._cleanup()
-        self._tag_redraw(context)
+        self._cleanup_snapshot()
+        area = getattr(context, "area", None)
+        if area is not None:
+            area.tag_redraw()
         return {"CANCELLED"}
 
     def _finish(self, context):
-        self._cleanup()
-        self._tag_redraw(context)
+        self._cleanup_snapshot()
+        area = getattr(context, "area", None)
+        if area is not None:
+            area.tag_redraw()
         return {"FINISHED"}
 
-    def _rebuild(self):
-        if self._inner_cache is None:
-            self._inner_cache = _build_inner_cut_cache(
-                self._snapshot,
-                self._specs,
-                self.slide_factor,
-            )
-        _write_inner_cut_cache(
+    def _rebuild_outer(self):
+        _apply_offset(
             self._source_object,
-            self._inner_cache,
-            self.slide_factor,
+            self._snapshot,
+            self._offset_infos,
+            self._edge_indices,
+            self.width * cos(self.warp_angle),
+            self.width * sin(self.warp_angle),
         )
 
-    def modal(self, context, event):
-        if context.active_object is not self._source_object:
-            return self._cancel(context)
-        if event.type in {"ESC", "RIGHTMOUSE"}:
-            return self._cancel(context)
-        if event.type == "LEFTMOUSE" and event.value == "PRESS":
-            return self._finish(context)
-        if event.type == "MOUSEMOVE":
-            self._mouse_x = event.mouse_region_x
-            self._mouse_y = event.mouse_region_y
-            self._tag_redraw(context)
-            return {"RUNNING_MODAL"}
-
-        if event.type in {"WHEELUPMOUSE", "WHEELDOWNMOUSE"}:
-            direction = 1.0 if event.type == "WHEELUPMOUSE" else -1.0
-            self.slide_factor = max(
-                0,
-                min(1, self.slide_factor + direction * 0.05),
-            )
-            try:
-                self._rebuild()
-            except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
-                self.report({"WARNING"}, f"内环切预览失败: {error}")
-                return self._cancel(context)
-            self._tag_redraw(context)
-            return {"RUNNING_MODAL"}
-        if event.type in {
-            "MIDDLEMOUSE",
-            "TRACKPADPAN", "TRACKPADZOOM", "NDOF_MOTION",
-        }:
-            return {"PASS_THROUGH"}
-        return {"RUNNING_MODAL"}
-
-    def invoke(self, context, event):
-        active = _ensure_edit_mode(context)
-        if active is None:
-            return {"CANCELLED"}
-        self._mouse_x = event.mouse_region_x
-        self._mouse_y = event.mouse_region_y
-        snapshot = None
+    @staticmethod
+    def _estimate_step(snapshot, edge_indices):
+        bm = bmesh.new()
         try:
-            snapshot = _mesh_snapshot(active)
-            selected_edge_keys = _selected_edge_keys(active)
-            bm = bmesh.new()
-            try:
-                bm.from_mesh(snapshot)
-                _ensure_tables(bm)
-                self._specs = _collect_inner_specs(bm, selected_edge_keys)
-            finally:
-                bm.free()
-            if not self._specs:
-                raise ValueError("select a continuous edge loop beside quad faces")
-            self._source_object = active
-            self._snapshot = snapshot
-            self._selected_edge_keys = selected_edge_keys
-            self.slide_factor = 0.5
-            self._rebuild()
-            self._install_hud()
-            context.window_manager.modal_handler_add(self)
-            self._tag_redraw(context)
-            return {"RUNNING_MODAL"}
-        except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
-            if snapshot is not None:
-                self._snapshot = snapshot
-            self.report({"WARNING"}, f"无法开始内环切: {error}")
-            return self._cancel(context)
-
-    def execute(self, context):
-        active = _ensure_edit_mode(context)
-        if active is None:
-            return {"CANCELLED"}
-        snapshot = None
-        try:
-            snapshot = _mesh_snapshot(active)
-            selected_edge_keys = _selected_edge_keys(active)
-            bm = bmesh.new()
-            try:
-                bm.from_mesh(snapshot)
-                _ensure_tables(bm)
-                self._specs = _collect_inner_specs(bm, selected_edge_keys)
-            finally:
-                bm.free()
-            if not self._specs:
-                raise ValueError("select a continuous edge loop beside quad faces")
-            self._source_object = active
-            self._snapshot = snapshot
-            self._selected_edge_keys = selected_edge_keys
-            self._rebuild()
-            self._cleanup()
-            return {"FINISHED"}
-        except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
-            if snapshot is not None:
-                self._snapshot = snapshot
-            self.report({"WARNING"}, f"内环切失败: {error}")
-            return self._cancel(context)
-
-
-class OP_SlideCut(OP_OffsetEdgesExtrude):
-    """Unified slide-cut modal: inner cut by default, outer offset via A."""
-
-    bl_idname = "ho.slide_cut"
-    bl_label = "滑切"
-    bl_description = "默认内环切，按 A 切换内环切/外扩"
-
+            bm.from_mesh(snapshot)
+            bm.edges.ensure_lookup_table()
+            lengths = [bm.edges[index].calc_length() for index in edge_indices]
+            return sum(lengths) / max(1, len(lengths)) / 120.0
+        finally:
+            bm.free()
     inner_mode: BoolProperty(
         name="内部切",
         default=True,
@@ -1176,7 +806,7 @@ class OP_SlideCut(OP_OffsetEdgesExtrude):
         _free_inner_cut_cache(self._inner_cache)
         self._inner_cache = None
         self._inner_specs = None
-        super()._cleanup_snapshot()
+        self._cleanup_offset_snapshot()
 
     def _prepare_inner(self):
         bm = bmesh.new()
@@ -1231,7 +861,7 @@ class OP_SlideCut(OP_OffsetEdgesExtrude):
         if self.inner_mode:
             self._rebuild_inner()
         else:
-            super()._rebuild()
+            self._rebuild_outer()
 
     def _draw_hud(self):
         try:
@@ -1351,6 +981,7 @@ class OP_SlideCut(OP_OffsetEdgesExtrude):
                 self._snapshot = snapshot
             self.report({"WARNING"}, f"滑切失败: {error}")
             return self._cancel(context)
+
 
 
 __all__ = [
