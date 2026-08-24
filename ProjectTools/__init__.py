@@ -3,6 +3,7 @@
 import bpy
 
 from .application import OP_RestartBlender
+# from .application import draw_in_TOPBAR_MT_editor_menus
 from .visibility import OP_sync_render_visibility
 
 
@@ -16,6 +17,7 @@ def register():
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.OUTLINER_MT_context_menu.append(draw_in_OUTLINER_MT_context_menu)
+    # bpy.types.TOPBAR_MT_editor_menus.append(draw_in_TOPBAR_MT_editor_menus)
 
 
 def unregister():
@@ -23,6 +25,10 @@ def unregister():
         bpy.types.OUTLINER_MT_context_menu.remove(draw_in_OUTLINER_MT_context_menu)
     except Exception:
         pass
+    # try:
+    #     bpy.types.TOPBAR_MT_editor_menus.remove(draw_in_TOPBAR_MT_editor_menus)
+    # except Exception:
+    #     pass
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)
 

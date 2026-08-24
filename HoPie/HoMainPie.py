@@ -272,6 +272,25 @@ def _draw_view_options(layout: LayoutBuilder, context):
     space: bpy.types.SpaceView3D = find_space(context, "VIEW_3D")
     overlay = getattr(space, "overlay", None)
     scene: bpy.types.Scene = getattr(context, "scene", None)
+    obj: bpy.types.Object = getattr(context, "active_object", None)
+
+    row = layout.row(align=True)
+    row.label(text="",icon="SCENE")
+    row.prop(scene.view_settings,"view_transform",text="")
+    row.prop(scene.display_settings,"display_device",text="")
+
+    row = layout.row(align=True)
+    row.label(text="",icon="OBJECT_DATA")
+    row.prop(obj,"display_type",text="",icon="SHADING_WIRE")
+    row.prop(obj,"show_in_front",text="最前显示",icon="XRAY")
+
+    if obj.type == "ARMATURE":
+        armature: bpy.types.Armature = getattr(obj, "data", None)
+        row = layout.row(align=True)
+        row.label(text="",icon="OUTLINER_OB_ARMATURE")
+        row.prop(armature, "show_names", text="显示名称",icon="SYNTAX_OFF")
+        row.prop(armature, "show_axes", text="显示轴",icon="EMPTY_AXIS")
+        row.prop(armature, "display_type", text="",icon="SHADING_WIRE")
 
     row = layout.row()
     row.item().operator("view3d.view_persportho",text="开关正交",icon="VIEW_ORTHO")
@@ -302,12 +321,6 @@ def _draw_view_options(layout: LayoutBuilder, context):
         draw_prop(row, uv_editor, "show_stretch", "UV 拉伸", icon="COLORSET_04_VEC")
 
 
-    row = layout.row(align=True)
-    row.label(text="",icon="SCENE")
-    row.prop(scene.view_settings,"view_transform",text="")
-    row.prop(scene.display_settings,"display_device",text="")
-
-
 
 def _draw_main_top_right(layout: LayoutBuilder, context):
     """绘制主饼右上角的界面和时间轴快捷项。"""
@@ -336,6 +349,9 @@ def _draw_main_top_right(layout: LayoutBuilder, context):
                         "show_statusbar", False)
             ),
         )
+    row.alert = True
+    row.operator("ho.restart_blender", icon="QUIT", text="")
+    row.alert = False
 
     # 第二行：播放控制和场景帧率。
     row = layout.row(align=True)
@@ -547,18 +563,7 @@ def _draw_object_quick_panel(layout: LayoutBuilder, context):
     col.scale_x = 1
     col.scale_y = 1.5
 
-    row = col.row(align=True)
-    row.label(text="",icon="OBJECT_DATA")
-    row.prop(obj,"display_type",text="",icon="SHADING_WIRE")
-    row.prop(obj,"show_in_front",text="最前显示",icon="XRAY")
-
-    if obj.type == "ARMATURE":
-        armature: bpy.types.Armature = getattr(obj, "data", None)
-        row = col.row(align=True)
-        row.label(text="",icon="OUTLINER_OB_ARMATURE")
-        row.prop(armature, "show_names", text="显示名称",icon="SYNTAX_OFF")
-        row.prop(armature, "show_axes", text="显示轴",icon="EMPTY_AXIS")
-        row.prop(armature, "display_type", text="",icon="SHADING_WIRE")
+    return
     
 
 def _draw_mesh_down_tools(layout: LayoutBuilder, context):
@@ -626,7 +631,7 @@ class HO_MT_HoMainPie(Menu):
                 text="叠加层",icon="OVERLAY",depress=bool(getattr(overlay, "show_overlays", False)),)
 
         pie.top_left.expand(_draw_view_options,
-            width=1.2,height=1.8,height_offset=5.0,)
+            width=1.2,height=1.8,height_offset=10.0,)
         pie.top_right.expand(_draw_main_top_right,
             height_offset=5.0,)
         pie.finish()
