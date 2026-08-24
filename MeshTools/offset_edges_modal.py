@@ -830,6 +830,8 @@ def _find_split_face(bm, point_a, point_b, face_ids):
 
 
 def _apply_inner_cut(active, snapshot, specs, factor):
+    # Keep the original isolated BMesh transaction here.  The modal operator
+    # must not clear Blender's live edit BMesh while it is being displayed.
     bpy.ops.object.mode_set(mode="OBJECT")
     bm = bmesh.new()
     try:
@@ -905,6 +907,9 @@ class OP_InnerLoopCutSlide(Operator):
     _snapshot = None
     _specs = None
     _selected_edge_keys = None
+    _handle_text = None
+    _mouse_x = 0.0
+    _mouse_y = 0.0
     slide_factor: FloatProperty(
         name="滑移位置",
         description="切线在横向边上的位置，0.05 靠近选中边，0.95 靠近对侧",
@@ -921,7 +926,58 @@ class OP_InnerLoopCutSlide(Operator):
     def poll(cls, context):
         return _ensure_edit_mode(context) is not None
 
+    def _tag_redraw(self, context):
+        area = getattr(context, "area", None)
+        if area is not None:
+            try:
+                area.tag_redraw()
+            except (AttributeError, ReferenceError, RuntimeError):
+                pass
+
+    def _draw_hud(self):
+        try:
+            rows = [
+                (0, "\u6ed1\u79fb\u4f4d\u7f6e:", f"{self.slide_factor:.3f}"),
+                (24, "\u9f20\u6807\u79fb\u52a8:", "\u8c03\u6574\u6ed1\u79fb"),
+                (48, "\u5de6\u952e:", "\u786e\u8ba4"),
+                (72, "\u53f3\u952e / Esc:", "\u53d6\u6d88"),
+            ]
+            draw_mouse_hud_rows(
+                (self._mouse_x, self._mouse_y),
+                rows,
+                offset=24,
+                size=15,
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError, ReferenceError):
+            pass
+
+    def _install_hud(self):
+        if self._handle_text is not None:
+            return
+        cleanup_offset_edges_huds()
+        try:
+            self._handle_text = bpy.types.SpaceView3D.draw_handler_add(
+                self._draw_hud,
+                (),
+                "WINDOW",
+                "POST_PIXEL",
+            )
+            _ACTIVE_HUD_HANDLES.add(self._handle_text)
+        except (AttributeError, RuntimeError, TypeError, ReferenceError):
+            self._handle_text = None
+
+    def _remove_hud(self):
+        handle = self._handle_text
+        self._handle_text = None
+        if handle is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(handle, "WINDOW")
+            except (AttributeError, RuntimeError, TypeError, ReferenceError):
+                pass
+            _ACTIVE_HUD_HANDLES.discard(handle)
+
     def _cleanup(self):
+        self._remove_hud()
         snapshot = self._snapshot
         self._snapshot = None
         self._source_object = None
@@ -945,10 +1001,12 @@ class OP_InnerLoopCutSlide(Operator):
             except (AttributeError, RuntimeError, TypeError, ValueError, ReferenceError):
                 pass
         self._cleanup()
+        self._tag_redraw(context)
         return {"CANCELLED"}
 
-    def _finish(self):
+    def _finish(self, context):
         self._cleanup()
+        self._tag_redraw(context)
         return {"FINISHED"}
 
     def _rebuild(self):
@@ -965,21 +1023,25 @@ class OP_InnerLoopCutSlide(Operator):
         if event.type in {"ESC", "RIGHTMOUSE"}:
             return self._cancel(context)
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
-            return self._finish()
+            return self._finish(context)
         if event.type == "MOUSEMOVE":
+            self._mouse_x = event.mouse_region_x
+            self._mouse_y = event.mouse_region_y
             delta = event.mouse_region_x - self._start_mouse_x
-            self.slide_factor = max(
+            slide_factor = max(
                 0.05,
                 min(0.95, 0.5 + delta * self._step),
             )
+            if slide_factor == self.slide_factor:
+                self._tag_redraw(context)
+                return {"RUNNING_MODAL"}
+            self.slide_factor = slide_factor
             try:
                 self._rebuild()
             except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
                 self.report({"WARNING"}, f"内环切预览失败: {error}")
                 return self._cancel(context)
-            area = getattr(context, "area", None)
-            if area is not None:
-                area.tag_redraw()
+            self._tag_redraw(context)
             return {"RUNNING_MODAL"}
         if event.type in {
             "MIDDLEMOUSE", "WHEELUPMOUSE", "WHEELDOWNMOUSE",
@@ -992,6 +1054,8 @@ class OP_InnerLoopCutSlide(Operator):
         active = _ensure_edit_mode(context)
         if active is None:
             return {"CANCELLED"}
+        self._mouse_x = event.mouse_region_x
+        self._mouse_y = event.mouse_region_y
         snapshot = None
         try:
             snapshot = _mesh_snapshot(active)
@@ -1017,7 +1081,9 @@ class OP_InnerLoopCutSlide(Operator):
             self._step = max(1.0e-4, sum(lengths) / max(1, len(lengths)) / 120.0)
             self.slide_factor = 0.5
             self._rebuild()
+            self._install_hud()
             context.window_manager.modal_handler_add(self)
+            self._tag_redraw(context)
             return {"RUNNING_MODAL"}
         except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
             if snapshot is not None:
