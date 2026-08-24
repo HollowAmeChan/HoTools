@@ -589,7 +589,7 @@ class HO_MT_HoMainPieMesh(Menu):
         pie.top.expand(_draw_edge_display,
             height=1.5)
         pie.top_right.expand(_draw_quick_modifier_buttons,
-            height_offset=30.0)
+            height_offset=15.0)
         pie.bottom.expand(_draw_mesh_down_tools,
             height=1.5)
         pie.finish()
