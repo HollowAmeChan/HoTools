@@ -594,90 +594,8 @@ def ray_hit_candidate(candidates, ray_origin, ray_direction):
     return best_index
 
 
-class OP_AutoPlaceObjectBottom(Operator):
-    bl_idname = "ho.auto_place_object_bottom"
-    bl_label = "自动底面放置"
-    bl_description = "生成简化凸包，点击有代表性的平面将物体放置到地面"
-    bl_options = {'REGISTER', 'UNDO', 'BLOCKING'}
-
-    keep_origin_transform: BoolProperty(
-        name="保持原点变换",
-        description="保持物体原点的位置和旋转不变，直接变换网格数据",
-        default=True,
-    )  # type: ignore
-    placement_point_local: FloatVectorProperty(
-        name="放置平面点",
-        size=3,
-        options={'HIDDEN', 'SKIP_SAVE'},
-    )  # type: ignore
-    placement_normal_local: FloatVectorProperty(
-        name="放置平面法线",
-        size=3,
-        default=(0.0, 0.0, 1.0),
-        options={'HIDDEN', 'SKIP_SAVE'},
-    )  # type: ignore
-    has_placement_plane: BoolProperty(
-        name="已有放置平面",
-        default=False,
-        options={'HIDDEN', 'SKIP_SAVE'},
-    )  # type: ignore
-
-    coplanar_angle: FloatProperty(
-        name="共面合并角度",
-        description="合并凸包上近似共面的相邻面",
-        subtype='ANGLE',
-        default=math.radians(2.5),
-        min=0.0,
-        max=math.radians(15.0),
-    )  # type: ignore
-    merge_coplanar: BoolProperty(
-        name="合并近似共面",
-        description="合并凸包上法线接近的相邻面",
-        default=True,
-    )  # type: ignore
-    use_evaluated_mesh: BoolProperty(
-        name="使用求值后网格",
-        description="使用包含可见修改器结果的网格生成凸包",
-        default=True,
-    )  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        return (
-            context.area is not None and
-            context.area.type == 'VIEW_3D' and
-            context.active_object is not None and
-            context.active_object.type == 'MESH' and
-            context.mode == 'EDIT_MESH'
-        )
-
-    def draw(self, context):
-        self.layout.prop(self, "keep_origin_transform")
-
-    def execute(self, context):
-        obj = context.active_object
-        if (
-            not self.has_placement_plane or
-            obj is None or
-            obj.type != 'MESH'
-        ):
-            self.report({'ERROR'}, "没有可重用的凸包放置面")
-            return {'CANCELLED'}
-
-        world_matrix = obj.matrix_world.copy()
-        plane_point = world_matrix @ Vector(self.placement_point_local)
-        normal_matrix = world_matrix.to_3x3().inverted_safe().transposed()
-        world_normal = (
-            normal_matrix @ Vector(self.placement_normal_local)
-        ).normalized()
-        place_object_on_ground(
-            obj,
-            [plane_point],
-            world_normal,
-            context,
-            self.keep_origin_transform,
-        )
-        return {'FINISHED'}
+class _ConvexHullPickerMixin:
+    """提供凸包候选面的绘制、拾取和模态交互。"""
 
     def _tag_redraw(self, context):
         if context.area is not None:
@@ -929,7 +847,93 @@ class OP_AutoPlaceObjectBottom(Operator):
         return {'RUNNING_MODAL'}
 
 
-class OP_AutoSnapFaceOrthogonal(Operator):
+class OP_AutoPlaceObjectBottom(_ConvexHullPickerMixin, Operator):
+    bl_idname = "ho.auto_place_object_bottom"
+    bl_label = "自动底面放置"
+    bl_description = "生成简化凸包，点击有代表性的平面将物体放置到地面"
+    bl_options = {'REGISTER', 'UNDO', 'BLOCKING'}
+
+    keep_origin_transform: BoolProperty(
+        name="保持原点变换",
+        description="保持物体原点的位置和旋转不变，直接变换网格数据",
+        default=True,
+    )  # type: ignore
+    placement_point_local: FloatVectorProperty(
+        name="放置平面点",
+        size=3,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    placement_normal_local: FloatVectorProperty(
+        name="放置平面法线",
+        size=3,
+        default=(0.0, 0.0, 1.0),
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    has_placement_plane: BoolProperty(
+        name="已有放置平面",
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    coplanar_angle: FloatProperty(
+        name="共面合并角度",
+        description="合并凸包上近似共面的相邻面",
+        subtype='ANGLE',
+        default=math.radians(2.5),
+        min=0.0,
+        max=math.radians(15.0),
+    )  # type: ignore
+    merge_coplanar: BoolProperty(
+        name="合并近似共面",
+        description="合并凸包上法线接近的相邻面",
+        default=True,
+    )  # type: ignore
+    use_evaluated_mesh: BoolProperty(
+        name="使用求值后网格",
+        description="使用包含可见修改器结果的网格生成凸包",
+        default=True,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return (
+            context.area is not None and
+            context.area.type == 'VIEW_3D' and
+            context.active_object is not None and
+            context.active_object.type == 'MESH' and
+            context.mode == 'OBJECT'
+        )
+
+    def draw(self, context):
+        self.layout.prop(self, "keep_origin_transform")
+
+    def execute(self, context):
+        obj = context.active_object
+        if (
+            not self.has_placement_plane or
+            obj is None or
+            obj.type != 'MESH'
+        ):
+            self.report({'ERROR'}, "没有可重用的凸包放置面")
+            return {'CANCELLED'}
+
+        world_matrix = obj.matrix_world.copy()
+        plane_point = world_matrix @ Vector(self.placement_point_local)
+        normal_matrix = world_matrix.to_3x3().inverted_safe().transposed()
+        world_normal = (
+            normal_matrix @ Vector(self.placement_normal_local)
+        ).normalized()
+        place_object_on_ground(
+            obj,
+            [plane_point],
+            world_normal,
+            context,
+            self.keep_origin_transform,
+        )
+        return {'FINISHED'}
+
+
+class OP_AutoSnapFaceOrthogonal(_ConvexHullPickerMixin, Operator):
     bl_idname = "ho.auto_snap_face_orthogonal"
     bl_label = "自动面吸附正交旋转"
     bl_description = "生成凸包并点击候选面，将其法向旋转到最接近的世界正交轴"
@@ -1005,13 +1009,3 @@ class OP_AutoSnapFaceOrthogonal(Operator):
             self.keep_origin_transform,
         )
         return {'FINISHED'}
-
-    _tag_redraw = OP_AutoPlaceObjectBottom._tag_redraw
-    _update_hover = OP_AutoPlaceObjectBottom._update_hover
-    _update_hover_at = OP_AutoPlaceObjectBottom._update_hover_at
-    _rebuild_candidates = OP_AutoPlaceObjectBottom._rebuild_candidates
-    draw_preview = OP_AutoPlaceObjectBottom.draw_preview
-    draw_text = OP_AutoPlaceObjectBottom.draw_text
-    finish = OP_AutoPlaceObjectBottom.finish
-    modal = OP_AutoPlaceObjectBottom.modal
-    invoke = OP_AutoPlaceObjectBottom.invoke

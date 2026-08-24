@@ -24,6 +24,15 @@ def draw_in_VIEW3D_MT_object_context_menu(self, context):
             text=HO_MT_HoObjectTools.bl_label,
         )
 
+
+def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
+    if HO_MT_HoObjectTools.poll(context):
+        self.layout.menu(
+            HO_MT_HoObjectTools.bl_idname,
+            text=HO_MT_HoObjectTools.bl_label,
+        )
+
+
 _CLASSES = (
     OP_Align,
     OP_AlignRelative,
@@ -46,6 +55,9 @@ def register():
     bpy.types.VIEW3D_MT_object_context_menu.prepend(
         draw_in_VIEW3D_MT_object_context_menu
     )
+    bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(
+        draw_in_VIEW3D_MT_edit_mesh_context_menu
+    )
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if keyconfig:
         for keymap_name in ("Object Mode", "Pose"):
@@ -62,6 +74,12 @@ def unregister():
     for keymap, item in addon_keymaps:
         keymap.keymap_items.remove(item)
     addon_keymaps.clear()
+    try:
+        bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(
+            draw_in_VIEW3D_MT_edit_mesh_context_menu
+        )
+    except Exception:
+        pass
     try:
         bpy.types.VIEW3D_MT_object_context_menu.remove(
             draw_in_VIEW3D_MT_object_context_menu

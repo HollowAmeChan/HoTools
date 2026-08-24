@@ -166,9 +166,28 @@ class HO_MT_HoObjectTools(bpy.types.Menu):
 
     @classmethod
     def poll(cls, context):
-        return getattr(context, "mode", None) == "OBJECT"
+        mode = getattr(context, "mode", None)
+        if mode == "OBJECT":
+            return True
+        active = getattr(context, "active_object", None)
+        return mode == "EDIT_MESH" and getattr(active, "type", None) == "MESH"
 
     def draw(self, context):
         if context.mode == "OBJECT":
-            self.layout.operator_context = "INVOKE_DEFAULT"
-            self.layout.operator(HO_OT_QuickAddLattice.bl_idname, text="快速添加晶格", icon="MOD_LATTICE")
+            layout = self.layout
+            layout.operator_context = "INVOKE_REGION_WIN"
+            layout.operator("ho.auto_place_object_bottom", icon="SNAP_FACE")
+            layout.operator("ho.auto_snap_face_orthogonal", icon="ORIENTATION_GLOBAL")
+            layout.separator()
+            layout.operator_context = "INVOKE_DEFAULT"
+            layout.operator(
+                HO_OT_QuickAddLattice.bl_idname,
+                text="快速添加晶格",
+                icon="MOD_LATTICE",
+            )
+            return
+
+        layout = self.layout
+        layout.operator_context = "EXEC_DEFAULT"
+        layout.operator("ho.placeobjectbottom", icon="TRIA_DOWN")
+        layout.operator("ho.snap_selected_face_orthogonal", icon="ORIENTATION_GLOBAL")
