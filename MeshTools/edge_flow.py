@@ -500,7 +500,7 @@ class HO_OT_SetEdgeFlow(bpy.types.Operator, _SetEdgeLoopBase):
         ), default='LINEAR',
     ) # type: ignore
     tension: IntProperty(name="张力", default=180, min=-500, max=500) # type: ignore
-    iterations: IntProperty(name="迭代", default=8, min=1, soft_max=32) # type: ignore
+    iterations: IntProperty(name="迭代", default=1, min=1, soft_max=32) # type: ignore
     min_angle: IntProperty(name="最小角度", default=0, min=0, max=180) # type: ignore
     blend_start_int: IntProperty(name="起始混合", default=0, min=0) # type: ignore
     blend_end_int: IntProperty(name="结束混合", default=0, min=0) # type: ignore
@@ -510,7 +510,7 @@ class HO_OT_SetEdgeFlow(bpy.types.Operator, _SetEdgeLoopBase):
     def _reset_defaults(self):
         self.mix = 1.0
         self.tension = 180
-        self.iterations = 16
+        self.iterations = 1
         self.min_angle = 0
         self.blend_start_int = 0
         self.blend_end_int = 0
