@@ -1148,8 +1148,212 @@ class OP_InnerLoopCutSlide(Operator):
             return self._cancel(context)
 
 
+class OP_SlideCut(OP_OffsetEdgesExtrude):
+    """Unified slide-cut modal: inner cut by default, outer offset via A."""
+
+    bl_idname = "ho.slide_cut"
+    bl_label = "滑切"
+    bl_description = "默认内环切，按 A 切换内环切/外扩"
+
+    inner_mode: BoolProperty(
+        name="内部切",
+        default=True,
+        options={"HIDDEN"},
+    )  # type: ignore
+    slide_factor: FloatProperty(
+        name="滑移位置",
+        default=0.5,
+        soft_min=0.05,
+        soft_max=0.95,
+        precision=3,
+        subtype="FACTOR",
+    )  # type: ignore
+
+    _inner_cache = None
+    _inner_specs = None
+
+    def _cleanup_snapshot(self):
+        _free_inner_cut_cache(self._inner_cache)
+        self._inner_cache = None
+        self._inner_specs = None
+        super()._cleanup_snapshot()
+
+    def _prepare_inner(self):
+        bm = bmesh.new()
+        try:
+            bm.from_mesh(self._snapshot)
+            _ensure_tables(bm)
+            self._inner_specs = _collect_inner_specs(bm, self._selected_edge_keys)
+        finally:
+            bm.free()
+        if not self._inner_specs:
+            raise ValueError("select a continuous edge loop beside quad faces")
+        self.inner_mode = True
+        self.slide_factor = 0.5
+
+    def _prepare_outer(self):
+        offset_infos, edge_indices = _build_offset_infos(
+            self._snapshot,
+            self._source_object,
+            self._selected_edge_keys,
+            self.follow_face,
+            self.edge_rail,
+            self.edge_rail_only_end,
+            radians(0.05),
+        )
+        self._offset_infos = offset_infos
+        self._edge_indices = edge_indices
+        self._step = max(1.0e-4, self._estimate_step(self._snapshot, edge_indices))
+        self.width = self._step * 24.0
+        self.warp_angle = 0.0
+        self.inner_mode = False
+
+    def _rebuild_inner(self):
+        if self._inner_cache is None:
+            self._inner_cache = _build_inner_cut_cache(
+                self._snapshot,
+                self._inner_specs,
+                self.slide_factor,
+            )
+        _write_inner_cut_cache(self._source_object, self._inner_cache, self.slide_factor)
+
+    def _switch_mode(self):
+        if self.inner_mode:
+            _free_inner_cut_cache(self._inner_cache)
+            self._inner_cache = None
+            self._prepare_outer()
+            self._rebuild()
+        else:
+            self._prepare_inner()
+            self._rebuild_inner()
+
+    def _rebuild(self):
+        if self.inner_mode:
+            self._rebuild_inner()
+        else:
+            super()._rebuild()
+
+    def _draw_hud(self):
+        try:
+            if self.inner_mode:
+                rows = [
+                    (0, "Shift+滚轮：", f"{self.slide_factor:.3f}"),
+                    (24, "A：", "外扩"),
+                    (48, "左键：", "确认"),
+                    (72, "右键 / Esc：", "取消"),
+                ]
+            else:
+                rows = [
+                    (0, "Shift+滚轮：", f"{self.width:+.4f}"),
+                    (24, "Ctrl+滚轮：", f"{self.warp_angle * 57.2957795:+.1f}°"),
+                    (48, "A：", "内环切"),
+                    (72, "左键：", "确认"),
+                    (96, "右键 / Esc：", "取消"),
+                ]
+            draw_mouse_hud_rows(
+                (self._mouse_x, self._mouse_y),
+                rows,
+                offset=24,
+                size=15,
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError, ReferenceError):
+            pass
+
+    def modal(self, context, event):
+        if context.active_object is not self._source_object:
+            return self._cancel(context)
+        if event.type in {"ESC", "RIGHTMOUSE"}:
+            return self._cancel(context)
+        if event.type == "LEFTMOUSE" and event.value == "PRESS":
+            return self._finish(context)
+        if event.type == "MOUSEMOVE":
+            self._mouse_x = event.mouse_region_x
+            self._mouse_y = event.mouse_region_y
+            self._tag_redraw(context)
+            return {"RUNNING_MODAL"}
+        if event.type == "A" and event.value == "PRESS":
+            try:
+                self._switch_mode()
+            except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
+                self.report({"WARNING"}, f"模式切换失败: {error}")
+                return self._cancel(context)
+            self._tag_redraw(context)
+            return {"RUNNING_MODAL"}
+
+        changed = False
+        if event.type in {"WHEELUPMOUSE", "WHEELDOWNMOUSE"}:
+            direction = 1.0 if event.type == "WHEELUPMOUSE" else -1.0
+            if self.inner_mode:
+                if not event.shift or event.ctrl:
+                    return {"PASS_THROUGH"}
+                self.slide_factor = max(0.05, min(0.95, self.slide_factor + direction * 0.05))
+                changed = True
+            else:
+                if not event.shift and not event.ctrl:
+                    return {"PASS_THROUGH"}
+                if event.shift:
+                    self.width += direction * self._step * 4.0
+                elif event.ctrl:
+                    self.warp_angle = max(-1.570796, min(1.570796, self.warp_angle + direction * radians(5.0)))
+                changed = True
+
+        if changed:
+            try:
+                self._rebuild()
+            except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
+                self.report({"WARNING"}, f"滑切预览失败: {error}")
+                return self._cancel(context)
+            self._tag_redraw(context)
+        if event.type in {"MIDDLEMOUSE", "TRACKPADPAN", "TRACKPADZOOM", "NDOF_MOTION"}:
+            return {"PASS_THROUGH"}
+        return {"RUNNING_MODAL"}
+
+    def invoke(self, context, event):
+        active = _ensure_edit_mode(context)
+        if active is None:
+            return {"CANCELLED"}
+        self._mouse_x = event.mouse_region_x
+        self._mouse_y = event.mouse_region_y
+        snapshot = None
+        try:
+            snapshot = _mesh_snapshot(active)
+            self._source_object = active
+            self._snapshot = snapshot
+            self._selected_edge_keys = _selected_edge_keys(active)
+            self._prepare_inner()
+            self._rebuild_inner()
+            self._install_hud()
+            context.window_manager.modal_handler_add(self)
+            self._tag_redraw(context)
+            return {"RUNNING_MODAL"}
+        except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
+            if snapshot is not None:
+                self._snapshot = snapshot
+            self.report({"WARNING"}, f"无法开始滑切: {error}")
+            return self._cancel(context)
+
+    def execute(self, context):
+        active = _ensure_edit_mode(context)
+        if active is None:
+            return {"CANCELLED"}
+        snapshot = None
+        try:
+            snapshot = _mesh_snapshot(active)
+            self._source_object = active
+            self._snapshot = snapshot
+            self._selected_edge_keys = _selected_edge_keys(active)
+            self._prepare_inner()
+            self._rebuild_inner()
+            self._cleanup_snapshot()
+            return {"FINISHED"}
+        except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
+            if snapshot is not None:
+                self._snapshot = snapshot
+            self.report({"WARNING"}, f"滑切失败: {error}")
+            return self._cancel(context)
+
+
 __all__ = [
-    "OP_OffsetEdgesExtrude",
-    "OP_InnerLoopCutSlide",
+    "OP_SlideCut",
     "cleanup_offset_edges_huds",
 ]

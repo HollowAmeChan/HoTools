@@ -33,7 +33,7 @@ from .custom_normals import (
 )
 from .normals import OP_MergeOverlapping_VertexNormals
 from .parallel_manifold_subdivide import OP_ParallelManifoldSubdivide
-from .offset_edges_modal import OP_InnerLoopCutSlide, OP_OffsetEdgesExtrude
+from .offset_edges_modal import OP_SlideCut
 
 
 def draw_in_DATA_PT_customdata(self, context):
@@ -67,8 +67,7 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         layout.operator(HO_OT_SetEdgeLinear.bl_idname, icon='IPO_LINEAR')
         layout.operator(OP_ParallelManifoldSubdivide.bl_idname, icon='MOD_SUBSURF')
         layout.operator_context = 'INVOKE_REGION_WIN'
-        layout.operator(OP_InnerLoopCutSlide.bl_idname, icon='EDGESEL')
-        layout.operator(OP_OffsetEdgesExtrude.bl_idname, icon='EDGESEL')
+        layout.operator(OP_SlideCut.bl_idname, icon='EDGESEL')
         layout.operator_context = 'INVOKE_DEFAULT'
         layout.separator()
         layout.operator(HO_OT_MeshFlatten.bl_idname, icon='MESH_GRID')
@@ -101,8 +100,7 @@ CLASSES = [
     OP_AddSelectSideRingLoops,
     OP_RemoveSelectSideRingLoops,
     OP_ParallelManifoldSubdivide,
-    OP_InnerLoopCutSlide,
-    OP_OffsetEdgesExtrude,
+    OP_SlideCut,
     OP_VisualBooleanCut,
     VIEW3D_MT_edit_mesh_hotools,
     *_SUPPLEMENTAL_CLASSES,
