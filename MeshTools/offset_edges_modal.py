@@ -531,12 +531,10 @@ class OP_OffsetEdgesExtrude(Operator):
     def _draw_hud(self):
         try:
             rows = [
-                (0, "宽度：", f"{self.width:+.4f}"),
-                (24, "翘凹角度：", f"{self.warp_angle * 57.2957795:+.1f}°"),
-                (48, "Ctrl+滚轮：", "调节宽度"),
-                (72, "Shift+滚轮：", "调节翘凹"),
-                (96, "左键：", "确认"),
-                (120, "右键 / Esc：", "取消"),
+                (0, "Ctrl+滚轮：", f"{self.width:+.4f}"),
+                (24, "Shift+滚轮：", f"{self.warp_angle * 57.2957795:+.1f}°"),
+                (48, "左键：", "确认"),
+                (72, "右键 / Esc：", "取消"),
             ]
             draw_mouse_hud_rows(
                 (self._mouse_x, self._mouse_y),
@@ -829,15 +827,15 @@ def _find_split_face(bm, point_a, point_b, face_ids):
     )
 
 
-def _apply_inner_cut(active, snapshot, specs, factor):
-    # Keep the original isolated BMesh transaction here.  The modal operator
-    # must not clear Blender's live edit BMesh while it is being displayed.
-    bpy.ops.object.mode_set(mode="OBJECT")
+def _build_inner_cut_cache(snapshot, specs, factor):
+    """Build the cut topology once and retain its movable transverse points."""
     bm = bmesh.new()
+    success = False
     try:
         bm.from_mesh(snapshot)
         _ensure_tables(bm)
         points = {}
+        point_sources = {}
         for spec in specs:
             for edge_key, anchor_id in spec["cross"]:
                 if edge_key in points:
@@ -851,8 +849,12 @@ def _apply_inner_cut(active, snapshot, specs, factor):
                 )
                 if start is None:
                     raise RuntimeError("transverse edge anchor disappeared")
+                end = edge.other_vert(start)
+                start_co = start.co.copy()
+                end_co = end.co.copy()
                 _unused, point = bmesh.utils.edge_split(edge, start, factor)
                 points[edge_key] = point
+                point_sources[edge_key] = (point, start_co, end_co)
                 _ensure_tables(bm)
 
         generated = []
@@ -884,11 +886,39 @@ def _apply_inner_cut(active, snapshot, specs, factor):
         for edge in generated:
             edge.select_set(edge.is_valid)
         bm.normal_update()
+        cache = {
+            "bm": bm,
+            "points": tuple(point_sources.values()),
+        }
+        success = True
+        return cache
+    finally:
+        if not success:
+            bm.free()
+
+
+def _write_inner_cut_cache(active, cache, factor):
+    bm = cache["bm"]
+    for point, start_co, end_co in cache["points"]:
+        point.co = start_co + (end_co - start_co) * factor
+    bm.normal_update()
+    bpy.ops.object.mode_set(mode="OBJECT")
+    try:
         bm.to_mesh(active.data)
         active.data.update()
     finally:
-        bm.free()
         bpy.ops.object.mode_set(mode="EDIT")
+
+
+def _free_inner_cut_cache(cache):
+    if cache is None:
+        return
+    bm = cache.get("bm")
+    if bm is not None:
+        try:
+            bm.free()
+        except (ReferenceError, RuntimeError):
+            pass
 
 
 class OP_InnerLoopCutSlide(Operator):
@@ -907,6 +937,7 @@ class OP_InnerLoopCutSlide(Operator):
     _snapshot = None
     _specs = None
     _selected_edge_keys = None
+    _inner_cache = None
     _handle_text = None
     _mouse_x = 0.0
     _mouse_y = 0.0
@@ -919,9 +950,6 @@ class OP_InnerLoopCutSlide(Operator):
         precision=3,
         subtype="FACTOR",
     )  # type: ignore
-    _start_mouse_x = 0.0
-    _step = 0.001
-
     @classmethod
     def poll(cls, context):
         return _ensure_edit_mode(context) is not None
@@ -937,10 +965,9 @@ class OP_InnerLoopCutSlide(Operator):
     def _draw_hud(self):
         try:
             rows = [
-                (0, "\u6ed1\u79fb\u4f4d\u7f6e:", f"{self.slide_factor:.3f}"),
-                (24, "\u9f20\u6807\u79fb\u52a8:", "\u8c03\u6574\u6ed1\u79fb"),
-                (48, "\u5de6\u952e:", "\u786e\u8ba4"),
-                (72, "\u53f3\u952e / Esc:", "\u53d6\u6d88"),
+                (0, "\u6eda\u8f6e:", f"{self.slide_factor:.3f}"),
+                (24, "\u5de6\u952e:", "\u786e\u8ba4"),
+                (48, "\u53f3\u952e / Esc:", "\u53d6\u6d88"),
             ]
             draw_mouse_hud_rows(
                 (self._mouse_x, self._mouse_y),
@@ -978,6 +1005,8 @@ class OP_InnerLoopCutSlide(Operator):
 
     def _cleanup(self):
         self._remove_hud()
+        _free_inner_cut_cache(self._inner_cache)
+        self._inner_cache = None
         snapshot = self._snapshot
         self._snapshot = None
         self._source_object = None
@@ -1010,10 +1039,15 @@ class OP_InnerLoopCutSlide(Operator):
         return {"FINISHED"}
 
     def _rebuild(self):
-        _apply_inner_cut(
+        if self._inner_cache is None:
+            self._inner_cache = _build_inner_cut_cache(
+                self._snapshot,
+                self._specs,
+                self.slide_factor,
+            )
+        _write_inner_cut_cache(
             self._source_object,
-            self._snapshot,
-            self._specs,
+            self._inner_cache,
             self.slide_factor,
         )
 
@@ -1027,15 +1061,15 @@ class OP_InnerLoopCutSlide(Operator):
         if event.type == "MOUSEMOVE":
             self._mouse_x = event.mouse_region_x
             self._mouse_y = event.mouse_region_y
-            delta = event.mouse_region_x - self._start_mouse_x
-            slide_factor = max(
-                0.05,
-                min(0.95, 0.5 + delta * self._step),
+            self._tag_redraw(context)
+            return {"RUNNING_MODAL"}
+
+        if event.type in {"WHEELUPMOUSE", "WHEELDOWNMOUSE"}:
+            direction = 1.0 if event.type == "WHEELUPMOUSE" else -1.0
+            self.slide_factor = max(
+                0,
+                min(1, self.slide_factor + direction * 0.05),
             )
-            if slide_factor == self.slide_factor:
-                self._tag_redraw(context)
-                return {"RUNNING_MODAL"}
-            self.slide_factor = slide_factor
             try:
                 self._rebuild()
             except (AttributeError, RuntimeError, TypeError, ValueError, IndexError, ReferenceError) as error:
@@ -1044,7 +1078,7 @@ class OP_InnerLoopCutSlide(Operator):
             self._tag_redraw(context)
             return {"RUNNING_MODAL"}
         if event.type in {
-            "MIDDLEMOUSE", "WHEELUPMOUSE", "WHEELDOWNMOUSE",
+            "MIDDLEMOUSE",
             "TRACKPADPAN", "TRACKPADZOOM", "NDOF_MOTION",
         }:
             return {"PASS_THROUGH"}
@@ -1065,11 +1099,6 @@ class OP_InnerLoopCutSlide(Operator):
                 bm.from_mesh(snapshot)
                 _ensure_tables(bm)
                 self._specs = _collect_inner_specs(bm, selected_edge_keys)
-                lengths = [
-                    bm.edges[index].calc_length()
-                    for index in range(len(bm.edges))
-                    if _edge_key(bm.edges[index]) in selected_edge_keys
-                ]
             finally:
                 bm.free()
             if not self._specs:
@@ -1077,8 +1106,6 @@ class OP_InnerLoopCutSlide(Operator):
             self._source_object = active
             self._snapshot = snapshot
             self._selected_edge_keys = selected_edge_keys
-            self._start_mouse_x = event.mouse_region_x
-            self._step = max(1.0e-4, sum(lengths) / max(1, len(lengths)) / 120.0)
             self.slide_factor = 0.5
             self._rebuild()
             self._install_hud()
