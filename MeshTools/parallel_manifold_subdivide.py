@@ -75,18 +75,11 @@ def _target_cells(bm):
         ]
         if len(transverse) != 2:
             continue
-        if any(
-            any(
-                linked_face is not face
-                and linked_face.is_valid
-                and len(linked_face.verts) != 4
-                for linked_face in edge.link_faces
-            )
-            for edge in transverse
-        ):
-            # Splitting a transverse edge also touches its neighboring face;
-            # do not let a triangle/Ngon participate in a quad-only pass.
-            continue
+        # The target must be a quad, but its transverse edges may border a
+        # triangle or an n-gon cap. Splitting such an edge only inserts a
+        # vertex into that neighboring face and does not change the target
+        # side strip into a non-quad. This is required for prisms and other
+        # capped meshes whose side faces are valid quad cells.
         cells.append((face, first, second, transverse[0], transverse[1]))
     return cells
 
@@ -204,9 +197,7 @@ def _run_flow_on_new_edges(active, edge_keys, mix):
     )
     bpy.ops.ho.set_edge_flow(
         "EXEC_DEFAULT",
-        mix=max(0.0, min(float(mix), 1.0)),
-    )
-
+        mix=max(0.0, min(float(mix), 1.0)))
 
 class OP_ParallelManifoldSubdivide(Operator):
     bl_idname = "ho.parallel_manifold_subdivide"
