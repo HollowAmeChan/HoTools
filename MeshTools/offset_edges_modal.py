@@ -922,7 +922,7 @@ class OP_SlideCut(Operator):
                 if not event.shift and not event.ctrl:
                     return {"PASS_THROUGH"}
                 if event.shift:
-                    self.width += direction * self._step * 4.0
+                    self.width += direction * self._step * 40.0
                 elif event.ctrl:
                     self.warp_angle = max(-1.570796, min(1.570796, self.warp_angle + direction * radians(5.0)))
                 changed = True
