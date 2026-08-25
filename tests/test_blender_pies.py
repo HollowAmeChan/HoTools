@@ -189,6 +189,97 @@ class PieRegistrationTests(unittest.TestCase):
                 bpy.ops.object.mode_set(mode='OBJECT')
             bpy.data.objects.remove(obj, do_unlink=True)
 
+    def test_cursor_to_selected_supports_curve_points_and_handles(self):
+        HoPie.set_pie_enabled('cursor', True)
+        curve = bpy.data.curves.new('CursorCurve', 'CURVE')
+        curve.dimensions = '3D'
+
+        bezier = curve.splines.new('BEZIER')
+        bezier.bezier_points.add(1)
+        bezier.bezier_points[0].co = (0.0, 0.0, 0.0)
+        bezier.bezier_points[1].co = (2.0, 0.0, 0.0)
+        bezier.bezier_points[1].handle_right = (4.0, 0.0, 0.0)
+
+        poly = curve.splines.new('POLY')
+        poly.points.add(0)
+        poly.points[0].co = (8.0, 0.0, 0.0, 2.0)
+
+        for point in bezier.bezier_points:
+            point.select_control_point = False
+            point.select_left_handle = False
+            point.select_right_handle = False
+        poly.points[0].select = False
+        bezier.bezier_points[0].select_control_point = True
+        bezier.bezier_points[1].select_right_handle = True
+        poly.points[0].select = True
+
+        obj = bpy.data.objects.new('CursorCurveObject', curve)
+        bpy.context.collection.objects.link(obj)
+        obj.location = (1.0, 2.0, 3.0)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode='EDIT')
+
+            expected = obj.matrix_world @ Vector((4.0, 0.0, 0.0))
+            self.assertTrue(bpy.ops.ho.cursor_to_selected.poll())
+            self.assertEqual(bpy.ops.ho.cursor_to_selected(), {'FINISHED'})
+            self.assertLess((bpy.context.scene.cursor.location - expected).length, 1e-6)
+        finally:
+            if bpy.context.mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+    def test_cursor_to_selected_supports_bone_heads_tails_and_pose_bones(self):
+        from Utils.bone_selection import select_bones
+        from Utils.bone_utils import bone_head_tail
+
+        HoPie.set_pie_enabled('cursor', True)
+        armature_data = bpy.data.armatures.new('CursorArmature')
+        obj = bpy.data.objects.new('CursorArmatureObject', armature_data)
+        bpy.context.collection.objects.link(obj)
+        obj.location = (3.0, 4.0, 5.0)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        try:
+            bpy.ops.object.mode_set(mode='EDIT')
+            bone = armature_data.edit_bones.new('CursorBone')
+            bone.head = (1.0, 0.0, 0.0)
+            bone.tail = (1.0, 4.0, 0.0)
+
+            bone.select = bone.select_head = bone.select_tail = False
+            bone.select_head = True
+            self.assertTrue(bpy.ops.ho.cursor_to_selected.poll())
+            self.assertEqual(bpy.ops.ho.cursor_to_selected(), {'FINISHED'})
+            expected = obj.matrix_world @ bone.head
+            self.assertLess((bpy.context.scene.cursor.location - expected).length, 1e-6)
+
+            bone.select = bone.select_head = bone.select_tail = False
+            bone.select_tail = True
+            self.assertEqual(bpy.ops.ho.cursor_to_selected(), {'FINISHED'})
+            expected = obj.matrix_world @ bone.tail
+            self.assertLess((bpy.context.scene.cursor.location - expected).length, 1e-6)
+
+            bone.select = bone.select_head = bone.select_tail = False
+            bone.select = True
+            self.assertEqual(bpy.ops.ho.cursor_to_selected(), {'FINISHED'})
+            expected = obj.matrix_world @ ((bone.head + bone.tail) * 0.5)
+            self.assertLess((bpy.context.scene.cursor.location - expected).length, 1e-6)
+
+            bpy.ops.object.mode_set(mode='POSE')
+            select_bones(obj, ['CursorBone'])
+            pose_bone = obj.pose.bones['CursorBone']
+            pose_bone.location = (0.0, 1.0, 0.0)
+            bpy.context.view_layer.update()
+            head, tail = bone_head_tail(pose_bone)
+            expected = obj.matrix_world @ ((head + tail) * 0.5)
+            self.assertEqual(bpy.ops.ho.cursor_to_selected(), {'FINISHED'})
+            self.assertLess((bpy.context.scene.cursor.location - expected).length, 1e-6)
+        finally:
+            if bpy.context.mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.data.objects.remove(obj, do_unlink=True)
+
     def test_bottom_origin_uses_local_bounds_for_rotated_object(self):
         HoPie.set_pie_enabled('cursor', True)
         mesh = bpy.data.meshes.new('BoundsMesh')

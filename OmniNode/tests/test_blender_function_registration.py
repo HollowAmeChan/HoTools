@@ -133,6 +133,7 @@ required_node_ids = {
     "HO_OmniNode_CacheDump",
     "HO_OmniNode_stringInput",
     "HO_OmniNode_bonesFromRoot",
+    "HO_OmniNode_bonesFromCollection",
     "HO_OmniNode_float2int",
     "HO_OmniNode_floatAdd",
     "HO_OmniNode_composeTransform",
