@@ -148,6 +148,60 @@ def bonesFromRoot(
 
 @omni(
     enable=True,
+    bl_label="从骨骼集合获取骨骼",
+    base_color=nodeColors.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=["骨架物体", "集合名称"],
+    _OUTPUT_NAME=["骨骼"],
+    omni_description="""
+    从 Armature 数据中的 Bone Collection 收集一组 Bone socket 值。
+
+    “集合名称”按 Blender Bone Collection 名称精确匹配；集合不存在或名称为空时输出空列表。
+    输出骨骼会携带集合元数据，物理节点可以据此保留该组骨骼的顺序和根骨。
+    """,
+)
+def bonesFromCollection(
+    armature: bpy.types.Object,
+    collection_name: str,
+) -> list[_OmniBone]:
+    if (
+        not isinstance(armature, bpy.types.Object)
+        or armature.type != "ARMATURE"
+    ):
+        raise ValueError("armature input is empty or invalid")
+
+    collection_name = str(collection_name or "").strip()
+    if not collection_name:
+        return []
+
+    armature_data = getattr(armature, "data", None)
+    collections = getattr(armature_data, "collections_all", None)
+    if collections is None:
+        collections = getattr(armature_data, "collections", None)
+    collection = collections.get(collection_name) if collections is not None else None
+    if collection is None:
+        return []
+
+    bones = getattr(collection, "bones", None)
+    if bones is None:
+        return []
+    bone_names = [
+        str(getattr(bone, "name", "") or "").strip()
+        for bone in bones
+    ]
+    bone_names = [name for name in bone_names if name]
+    if not bone_names:
+        return []
+
+    root_name = bone_names[0]
+    return [
+        _bone_socket_value(armature, bone_name, root_name, bone_names)
+        for bone_name in bone_names
+    ]
+
+
+@omni(
+    enable=True,
     bl_label="寻找骨骼",
     base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
