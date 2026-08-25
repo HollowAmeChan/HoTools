@@ -1061,6 +1061,7 @@ class VGSwitchHUD:
     _text = None
     _bone_head = None
     _bone_tail = None
+    _bone_segments = []
     _start_time = 0.0
     _duration = 1.0
 
@@ -1079,7 +1080,19 @@ class VGSwitchHUD:
         obj = context.active_object
         rig = bone_utils.find_armature_for_object(obj)
 
+        VGSwitchHUD._bone_head = None
+        VGSwitchHUD._bone_tail = None
+        VGSwitchHUD._bone_segments = []
         if rig:
+            # Match the picker: visible bones with a matching vertex group.
+            for pb in rig.pose.bones:
+                if pb.bone.hide or not obj.vertex_groups.get(pb.name):
+                    continue
+                VGSwitchHUD._bone_segments.append((
+                    rig.matrix_world @ pb.head,
+                    rig.matrix_world @ pb.tail,
+                ))
+
             pb = rig.pose.bones.get(bone_name)
             if pb:
                 VGSwitchHUD._bone_head = rig.matrix_world @ pb.head
@@ -1130,7 +1143,7 @@ class VGSwitchHUD:
     # 3D 绘制（骨骼）
     @staticmethod
     def _draw_3d():
-        if VGSwitchHUD._bone_head is None or VGSwitchHUD._bone_tail is None:
+        if (VGSwitchHUD._bone_head is None or VGSwitchHUD._bone_tail is None) and not VGSwitchHUD._bone_segments:
             return
 
         elapsed = time.time() - VGSwitchHUD._start_time
@@ -1143,22 +1156,27 @@ class VGSwitchHUD:
         # 使用POLYLINE_UNIFORM_COLOR而不是UNIFORM_COLOR防止gpu驱动(vk后端的问题)导致的线宽不生效
         # POLYLINE_UNIFORM_COLOR会绘制面片伪装出的直角线段
         shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
-        coords = [
-            VGSwitchHUD._bone_head,
-            VGSwitchHUD._bone_tail
-        ]
-        batch = batch_for_shader(shader, 'LINE_STRIP', {
-            "pos": coords
-        })
-
         gpu.state.blend_set('ALPHA')
         gpu.state.depth_test_set('NONE')
         shader.bind()
         region = bpy.context.region
         shader.uniform_float("viewportSize", (region.width, region.height))
-        shader.uniform_float("lineWidth", 6.0)
-        shader.uniform_float("color", (1.0, 0.85, 0.2, alpha))
-        batch.draw(shader)
+
+        if VGSwitchHUD._bone_segments:
+            candidate_coords = [point for segment in VGSwitchHUD._bone_segments for point in segment]
+            candidate_batch = batch_for_shader(shader, 'LINES', {"pos": candidate_coords})
+            shader.uniform_float("lineWidth", 2.0)
+            shader.uniform_float("color", (0.72, 0.72, 0.72, 0.45 * alpha))
+            candidate_batch.draw(shader)
+
+        if VGSwitchHUD._bone_head is not None and VGSwitchHUD._bone_tail is not None:
+            target_batch = batch_for_shader(shader, 'LINE_STRIP', {
+                "pos": [VGSwitchHUD._bone_head, VGSwitchHUD._bone_tail]
+            })
+            shader.uniform_float("lineWidth", 6.0)
+            shader.uniform_float("color", (1.0, 0.9, 0.35, alpha))
+            target_batch.draw(shader)
+
         gpu.state.blend_set('NONE')
         gpu.state.depth_test_set('LESS_EQUAL')
 
@@ -1217,6 +1235,7 @@ class VGSwitchHUD:
         VGSwitchHUD._text = None
         VGSwitchHUD._bone_head = None
         VGSwitchHUD._bone_tail = None
+        VGSwitchHUD._bone_segments = []
         VGSwitchHUD._timer_running = False
 
         # 最后再刷新一次
@@ -1230,7 +1249,7 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
     bl_idname = "ho.vertexgrouptools_switch_vg_bycursor"
     bl_label = "切换到鼠标位置的组/骨骼"
     bl_options = {'REGISTER', 'UNDO'}
-    _MAX_PICK_DISTANCE_PX = 32.0
+    _MAX_PICK_DISTANCE_PX = 64.0
     _TIE_BREAK_MARGIN_PX = 6.0
 
     @classmethod
