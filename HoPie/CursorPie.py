@@ -5,6 +5,7 @@ import bpy
 from bpy.props import BoolProperty
 from mathutils import Matrix, Quaternion, Vector
 
+from Utils.bone_utils import bone_head_tail, selected_mode_bones
 from Utils.mesh_utils import (
     average_locations,
     component_rotation,
@@ -18,6 +19,55 @@ from Utils.transform_utils import (
 from Utils.ui_utils import popup_error
 
 from ._Core import HoPie
+
+
+def _selected_curve_locations(active):
+    locations = []
+    for spline in active.data.splines:
+        if spline.type == 'BEZIER':
+            for point in spline.bezier_points:
+                if point.select_control_point:
+                    locations.append(point.co.copy())
+                if point.select_left_handle:
+                    locations.append(point.handle_left.copy())
+                if point.select_right_handle:
+                    locations.append(point.handle_right.copy())
+        else:
+            locations.extend(
+                Vector(point.co[:3])
+                for point in spline.points
+                if point.select
+            )
+    return locations
+
+
+def _selected_bone_locations(active, bones):
+    locations = []
+    for bone in bones:
+        head, tail = bone_head_tail(bone)
+        if active.mode == 'EDIT':
+            head_selected = bool(getattr(bone, 'select_head', False))
+            tail_selected = bool(getattr(bone, 'select_tail', False))
+            if head_selected:
+                locations.append(head)
+            if tail_selected:
+                locations.append(tail)
+            if getattr(bone, 'select', False) and not (head_selected or tail_selected):
+                locations.append((head + tail) * 0.5)
+        else:
+            locations.extend((head, tail))
+    return locations
+
+
+def _selected_bone_rotation(context, active, bones):
+    preferred = (
+        getattr(context, 'active_pose_bone', None)
+        if active.mode == 'POSE'
+        else getattr(context, 'active_bone', None)
+    )
+    selected_names = {bone.name for bone in bones}
+    bone = preferred if getattr(preferred, 'name', None) in selected_names else bones[0]
+    return (active.matrix_world @ bone.matrix).to_quaternion()
 
 
 class CursorToOrigin(bpy.types.Operator):
@@ -64,8 +114,25 @@ class CursorToSelected(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        active = context.active_object
         if context.mode == 'EDIT_MESH':
-            return bool(selected_verts(bmesh.from_edit_mesh(context.active_object.data)))
+            return bool(
+                active
+                and active.type == 'MESH'
+                and selected_verts(bmesh.from_edit_mesh(active.data))
+            )
+        if context.mode == 'EDIT_CURVE':
+            return bool(
+                active
+                and active.type == 'CURVE'
+                and _selected_curve_locations(active)
+            )
+        if context.mode in {'EDIT_ARMATURE', 'POSE'}:
+            return bool(
+                active
+                and active.type == 'ARMATURE'
+                and selected_mode_bones(context, active)
+            )
         return bool(context.selected_objects or context.active_object)
 
     def invoke(self, context, event):
@@ -88,6 +155,15 @@ class CursorToSelected(bpy.types.Operator):
                 faces = [face for face in bm.faces if face.select]
                 location = active.matrix_world @ average_locations([face.calc_center_median_weighted() for face in faces])
             rotation = component_rotation(context, active, bm).to_quaternion()
+        elif context.mode == 'EDIT_CURVE':
+            locations = _selected_curve_locations(active)
+            location = active.matrix_world @ average_locations(locations)
+            rotation = active.matrix_world.to_quaternion()
+        elif context.mode in {'EDIT_ARMATURE', 'POSE'}:
+            bones = selected_mode_bones(context, active)
+            locations = _selected_bone_locations(active, bones)
+            location = active.matrix_world @ average_locations(locations)
+            rotation = _selected_bone_rotation(context, active, bones)
         else:
             objects = context.selected_objects or [active]
             if len(objects) == 1:
