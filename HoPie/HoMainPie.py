@@ -309,7 +309,7 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
     row.operator("mesh.select_linked",text="拓补关联",icon="UV_FACESEL",props={"delimit": {"NORMAL"}},)
 
     row = col.row(align=True)
-    row.operator("mesh.select_linked",text="选择UV岛",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
+    row.operator("mesh.select_linked",text="选择缝合岛",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
     row.operator("mesh.select_linked",text="选择光滑组",icon="STRIP_COLOR_05",props={"delimit": {"SHARP"}},)
 
     row = col.row(align=True)
