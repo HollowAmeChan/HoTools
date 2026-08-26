@@ -1,23 +1,8 @@
-"""HoMainPie：模式无关的主工作饼菜单。"""
 import bpy
 from bpy.types import Menu, Operator
 
-try:
-    from ..ModifierTools import _draw_quick_modifier_buttons
-except ImportError:
-    try:
-        from ModifierTools import _draw_quick_modifier_buttons
-    except ImportError:
-        # Standalone HoPie test loaders do not have the parent HoTools package.
-        def _draw_quick_modifier_buttons(*args, **kwargs):
-            return None
-
-from ._Core import (
-    HoPie,
-    LayoutBuilder,
-    draw_prop,
-    find_space,
-)
+from ..ModifierTools import _draw_quick_modifier_buttons
+from ._Core import (HoPie,LayoutBuilder,draw_prop,find_space,)
 
 class HO_OT_HoMainPieSeparateLoose(Operator):
     """把当前网格物体按松散块拆成多个物体。"""
@@ -176,7 +161,7 @@ class HO_OT_HoMainPieSelectMirror(Operator):
 
 
 def _object_has_local_rotation(obj, tolerance=1e-6):
-    """Return whether the object's local rotation transform is non-identity."""
+    """物体是否有本地旋转"""
     if obj is None:
         return False
 
