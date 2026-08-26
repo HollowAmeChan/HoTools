@@ -19,74 +19,6 @@ from ._Core import (
     find_space,
 )
 
-_RANDOM_PREVIEW_RESTORE = "MATERIAL"
-
-
-class HO_OT_HoMainPieToggleRandomPreview(Operator):
-    """切换随机颜色预览，并记住切换前的颜色模式。"""
-
-    bl_idname = "ho.main_pie_toggle_random_preview"
-    bl_label = "随机预览"
-    bl_description = "切换随机颜色预览，并恢复之前的颜色模式"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @staticmethod
-    def _remember(color_type):
-        """记住开启随机预览前的颜色模式。"""
-        global _RANDOM_PREVIEW_RESTORE
-        if isinstance(color_type, str) and color_type != "RANDOM":
-            _RANDOM_PREVIEW_RESTORE = color_type
-
-    @staticmethod
-    def _restore():
-        """读取需要恢复的颜色模式。"""
-        if (not isinstance(_RANDOM_PREVIEW_RESTORE, str)
-                or _RANDOM_PREVIEW_RESTORE == "RANDOM"):
-            return "MATERIAL"
-        return _RANDOM_PREVIEW_RESTORE
-
-    @staticmethod
-    def _disable_vertex_color_preview(context):
-        """回到材质颜色时关闭 HoTools 的顶点色预览。"""
-        settings = getattr(getattr(context, "scene", None), "ho_vertex_color_tools", None)
-        if settings is None or not hasattr(settings, "view_mode"):
-            return
-        try:
-            settings.view_mode = False
-        except (AttributeError, TypeError, ValueError, RuntimeError):
-            pass
-
-    @classmethod
-    def poll(cls, context):
-        space = find_space(context, "VIEW_3D")
-        shading = getattr(space, "shading", None)
-        return shading is not None and hasattr(shading, "color_type")
-
-    def execute(self, context):
-        space = find_space(context, "VIEW_3D")
-        shading = getattr(space, "shading", None)
-        if shading is None or not hasattr(shading, "color_type"):
-            return {"CANCELLED"}
-
-        current = getattr(shading, "color_type", None)
-        if current == "RANDOM":
-            color_type = self._restore()
-            try:
-                shading.color_type = color_type
-            except (AttributeError, TypeError, ValueError, RuntimeError):
-                return {"CANCELLED"}
-            if color_type == "MATERIAL":
-                self._disable_vertex_color_preview(context)
-            return {"FINISHED"}
-
-        try:
-            shading.color_type = "RANDOM"
-        except (AttributeError, TypeError, ValueError, RuntimeError):
-            return {"CANCELLED"}
-        self._remember(current)
-        return {"FINISHED"}
-
-
 class HO_OT_HoMainPieSeparateLoose(Operator):
     """把当前网格物体按松散块拆成多个物体。"""
 
@@ -123,7 +55,7 @@ class HO_OT_HoMainPieSeparateLoose(Operator):
 
 
 class HO_OT_HoMainPieSetEdgeCrease(Operator):
-    """Directly assign the crease value of the selected mesh edges."""
+    """直接设置边属性"""
 
     bl_idname = "ho.main_pie_set_edge_crease"
     bl_label = "Set Edge Crease"
@@ -281,36 +213,32 @@ def _draw_view_options(layout: LayoutBuilder, context):
 
     row = layout.row(align=True)
     row.label(text="",icon="OBJECT_DATA")
-    row.prop(obj,"display_type",text="",icon="SHADING_WIRE")
-    row.prop(obj,"show_in_front",text="最前显示",icon="XRAY")
+    row.prop(obj,"show_wire",text="线框",icon="MOD_WIREFRAME")
+    row.prop(obj,"show_in_front",text="最前",icon="XRAY")
+    row.item().popover(panel="OBJECT_PT_display", text="")
+
 
     if obj.type == "ARMATURE":
         armature: bpy.types.Armature = getattr(obj, "data", None)
         row = layout.row(align=True)
         row.label(text="",icon="OUTLINER_OB_ARMATURE")
-        row.prop(armature, "show_names", text="显示名称",icon="SYNTAX_OFF")
-        row.prop(armature, "show_axes", text="显示轴",icon="EMPTY_AXIS")
+        row.prop(armature, "show_names", text="名称",icon="SYNTAX_OFF")
+        row.prop(armature, "show_axes", text="轴",icon="EMPTY_AXIS")
         row.prop(armature, "display_type", text="",icon="SHADING_WIRE")
 
-    row = layout.row()
-    row.item().operator("view3d.view_persportho",text="开关正交",icon="VIEW_ORTHO")
-    draw_prop(row, overlay, "show_text", "文本", icon="COLORSET_10_VEC")
-    row.item().popover(panel="OBJECT_PT_display", text="视图显示", icon="VIEW3D")
-
     row = layout.row(align=True)
+    row.scale_y = 2
     draw_prop(row, overlay, "show_weight", "权重", icon="STRIP_COLOR_01")
     draw_prop(row, overlay, "show_face_orientation", "朝向", icon="STRIP_COLOR_05")
     draw_prop(row, overlay, "show_wireframes", "线框", icon="STRIP_COLOR_09")
     draw_prop(row, overlay, "show_gizmo_object_translate", "轴", icon="STRIP_COLOR_03")
 
     row = layout.row(align=True)
-    shading = getattr(space, "shading", None)
-    random_active = getattr(shading, "color_type", None) == "RANDOM"
-    row.item().operator(HO_OT_HoMainPieToggleRandomPreview.bl_idname,
-        text="随机预览",icon="COLORSET_05_VEC",depress=random_active,)
+    row.scale_y = 2
     settings = getattr(scene, "ho_vertex_color_tools", None)
     draw_prop(row, settings, "view_mode", "顶点色", icon="COLORSET_06_VEC")
     draw_prop(row, scene, "ho_checker_overlay_show", "棋盘格", icon="TEXTURE_DATA")
+    draw_prop(row, overlay, "show_text", "文本", icon="COLORSET_10_VEC")
     # if scene is not None and hasattr(scene, "ho_checker_overlay_realtime_refresh"):
     #     checker_row = layout.row(align=True)
     #     checker_row.raw_layout.enabled = bool(getattr(scene, "ho_checker_overlay_show", False))
@@ -629,14 +557,13 @@ class HO_MT_HoMainPie(Menu):
                 text="叠加层",icon="OVERLAY",depress=bool(getattr(overlay, "show_overlays", False)),)
 
         pie.top_left.expand(_draw_view_options,
-            width=1.2,height=1.8,height_offset=10.0,)
+            width=1.2,height=1,height_offset=10.0,)
         pie.top_right.expand(_draw_main_top_right,
             height_offset=5.0,)
         pie.finish()
 
 
 HO_MAIN_PIE_CLASSES = (
-    HO_OT_HoMainPieToggleRandomPreview,
     HO_OT_HoMainPieSeparateLoose,
     HO_OT_HoMainPieSetEdgeCrease,
     HO_OT_HoMainPieSelectHalf,
