@@ -224,10 +224,6 @@ def _draw_view_options(layout: LayoutBuilder, context):
     draw_prop(row, settings, "view_mode", "顶点色", icon="COLORSET_06_VEC")
     draw_prop(row, scene, "ho_checker_overlay_show", "棋盘格", icon="TEXTURE_DATA")
     draw_prop(row, overlay, "show_text", "文本", icon="COLORSET_10_VEC")
-    # if scene is not None and hasattr(scene, "ho_checker_overlay_realtime_refresh"):
-    #     checker_row = layout.row(align=True)
-    #     checker_row.raw_layout.enabled = bool(getattr(scene, "ho_checker_overlay_show", False))
-        # draw_prop(checker_row,scene,"ho_checker_overlay_realtime_refresh","实时刷新",icon="FILE_REFRESH")
     image_space = find_space(context, "IMAGE_EDITOR")
     uv_editor = getattr(image_space, "uv_editor", None)
     if uv_editor is not None and hasattr(uv_editor, "show_stretch"):
@@ -285,32 +281,12 @@ def _draw_quick_edge_tools(layout: LayoutBuilder, context):
     col.scale_y = 2
     col.scale_x = 2
 
-    buttons = (
-        ("mesh.mark_seam", "COLLECTION_COLOR_01", {"clear": True}),
-        ("mesh.mark_sharp", "COLLECTION_COLOR_05", {"clear": True}),
-    )
-    for operator_id, icon, properties in buttons:
-        col.operator(operator_id, text="", icon=icon, props=properties)
-
-    col.operator(
-        HO_OT_HoMainPieSetEdgeCrease.bl_idname,
-        text="",
-        icon="COLLECTION_COLOR_07",
-        props={"value": 0.0},
-    )
-
-    for operator_id, icon, properties in (
-        ("mesh.mark_seam", "STRIP_COLOR_01", {"clear": False}),
-        ("mesh.mark_sharp", "STRIP_COLOR_05", {"clear": False}),
-    ):
-        col.operator(operator_id, text="", icon=icon, props=properties)
-
-    col.operator(
-        HO_OT_HoMainPieSetEdgeCrease.bl_idname,
-        text="",
-        icon="STRIP_COLOR_07",
-        props={"value": 1.0},
-    )
+    col.operator("mesh.mark_seam", text="", icon="COLLECTION_COLOR_01", props={"clear": True})
+    col.operator("mesh.mark_sharp", text="", icon="COLLECTION_COLOR_05", props={"clear": True})
+    col.operator(HO_OT_HoMainPieSetEdgeCrease.bl_idname,text="",icon="COLLECTION_COLOR_07",props={"value": 0.0},)
+    col.operator("mesh.mark_seam", text="", icon="STRIP_COLOR_01", props={"clear": False})
+    col.operator("mesh.mark_sharp", text="", icon="STRIP_COLOR_05", props={"clear": False})
+    col.operator(HO_OT_HoMainPieSetEdgeCrease.bl_idname,text="",icon="STRIP_COLOR_07",props={"value": 1.0},)
 
     tool_settings = getattr(getattr(context, "scene", None), "tool_settings", None)
     if tool_settings is not None and hasattr(tool_settings, "use_uv_select_sync"):
@@ -328,52 +304,36 @@ def _draw_mesh_selection_tools(layout: LayoutBuilder, context):
 
     row = col.row(align=True)
     row.scale_y = 2
-    row.operator("mesh.region_to_loop",
-        text="边界",icon="SELECT_SET",)
-    row.operator("mesh.loop_to_region",
-        text="边界内",icon="VIEW_ORTHO",)
-    row.operator("mesh.select_linked",
-        text="拓补关联",icon="UV_FACESEL",props={"delimit": {"NORMAL"}},)
+    row.operator("mesh.region_to_loop",text="边界",icon="SELECT_SET",)
+    row.operator("mesh.loop_to_region",text="边界内",icon="VIEW_ORTHO",)
+    row.operator("mesh.select_linked",text="拓补关联",icon="UV_FACESEL",props={"delimit": {"NORMAL"}},)
 
     row = col.row(align=True)
-    row.operator("mesh.select_linked",
-        text="选择UV岛",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
-    row.operator("mesh.select_linked",
-        text="选择光滑组",icon="STRIP_COLOR_05",props={"delimit": {"SHARP"}},)
+    row.operator("mesh.select_linked",text="选择UV岛",icon="STRIP_COLOR_01",props={"delimit": {"SEAM"}},)
+    row.operator("mesh.select_linked",text="选择光滑组",icon="STRIP_COLOR_05",props={"delimit": {"SHARP"}},)
 
     row = col.row(align=True)
-    row.operator("mesh.edges_select_sharp",
-        text="锐利边缘",icon="STRIP_COLOR_05",)
-    row.operator("mesh.select_nth",
-        text="间隔性弃选",icon="SELECT_SUBTRACT",props={"skip": 1, "nth": 1, "offset": 0},)
+    row.operator("mesh.edges_select_sharp",text="锐利边缘",icon="STRIP_COLOR_05",)
+    row.operator("mesh.select_nth",text="间隔性弃选",icon="SELECT_SUBTRACT",props={"skip": 1, "nth": 1, "offset": 0},)
 
     row = col.row(align=True)
-    row.operator("mesh.select_face_by_sides",
-        text="选择Ngon",icon="FACESEL",props={"number": 4, "type": "GREATER"},)
-    row.operator("mesh.select_by_pole_count",
-        text="选择极点",icon="VERTEXSEL",props={"pole_count": 4, "type": "GREATER"},)
+    row.operator("mesh.select_face_by_sides",text="选择Ngon",icon="FACESEL",props={"number": 4, "type": "GREATER"},)
+    row.operator("mesh.select_by_pole_count",text="选择极点",icon="VERTEXSEL",props={"pole_count": 4, "type": "GREATER"},)
 
     row = col.row(align=True)
-    row.operator("mesh.faces_select_linked_flat",
-        text="相邻平展",icon="VIEW_PERSPECTIVE",props={"sharpness": 0.25},)
-    row.operator("ho.lselect", 
-        text="L选", icon="FILE_VOLUME")
+    row.operator("mesh.faces_select_linked_flat",text="相邻平展",icon="VIEW_PERSPECTIVE",props={"sharpness": 0.25},)
+    row.operator("ho.lselect", text="L选", icon="FILE_VOLUME")
 
     row = col.row(align=True)
     row.scale_y = 2
-    row.operator("mesh.loop_multi_select",
-        text="选择循环",icon="FILE_VOLUME",props={"ring": False},)
-    row.operator("mesh.loop_multi_select",
-        text="选择并排",icon="ALIGN_JUSTIFY",props={"ring": True},)
+    row.operator("mesh.loop_multi_select",text="选择循环",icon="FILE_VOLUME",props={"ring": False},)
+    row.operator("mesh.loop_multi_select",text="选择并排",icon="ALIGN_JUSTIFY",props={"ring": True},)
 
     row = col.row(align=True)
     row.scale_y = 2
-    row.operator("ho.vertexgrouptools_select_oneside",
-        text="左半",props={"reverse": True},icon="TRIA_LEFT",)
-    row.operator("ho.vertexgrouptools_select_oneside",
-        text="右半",props={"reverse": False},icon="TRIA_RIGHT",)
-    row.operator("ho.vertexgrouptools_select_mirror",
-        text="选择镜像",icon="ARROW_LEFTRIGHT",)
+    row.operator("ho.vertexgrouptools_select_oneside",text="左半",props={"reverse": True},icon="TRIA_LEFT",)
+    row.operator("ho.vertexgrouptools_select_oneside",text="右半",props={"reverse": False},icon="TRIA_RIGHT",)
+    row.operator("ho.vertexgrouptools_select_mirror",text="选择镜像",icon="ARROW_LEFTRIGHT",)
 
 
 def _draw_mesh_left_tools(layout: LayoutBuilder, context):
@@ -394,13 +354,8 @@ def _draw_edge_flow_tools(layout: LayoutBuilder, context):
     row.operator("ho.set_edge_linear", text="并排设直",icon="FILE_VOLUME")
 
     row = col.row(align=True)
-    row.operator("ho.slide_cut",
-        text="滑切",icon="MOD_INSTANCE",
-        operator_context="INVOKE_DEFAULT",)
-    row.operator("ho.parallel_manifold_subdivide",
-        text="并排流形细分",icon="FILE_VOLUME",
-        operator_context="EXEC_DEFAULT",)
-
+    row.operator("ho.slide_cut",text="滑切",icon="MOD_INSTANCE",operator_context="INVOKE_DEFAULT",)
+    row.operator("ho.parallel_manifold_subdivide",text="并排流形细分",icon="FILE_VOLUME",operator_context="EXEC_DEFAULT",)
 
     row = col.row(align=True)
     row.operator("ho.mesh_flatten", text="压平", icon="NOCURVE")
@@ -454,16 +409,12 @@ def _draw_object_export_panel(layout: LayoutBuilder, context):
     col.scale_y = 1.5
 
     row = col.row(align=True)
-    row.operator("export_scene.fbx",
-        text="FBX导出",icon="EXPORT",)
-    row.operator("ho.final_fbx_export",
-        text="HoFBX导出",icon="EXPORT",)
+    row.operator("export_scene.fbx",text="FBX导出",icon="EXPORT",)
+    row.operator("ho.final_fbx_export",text="HoFBX导出",icon="EXPORT",)
 
     row = col.row(align=True)
-    row.operator("wm.obj_export",
-        text="OBJ导出",icon="EXPORT",)
-    row.operator("wm.stl_export",
-        text="STL导出",icon="EXPORT",)
+    row.operator("wm.obj_export",text="OBJ导出",icon="EXPORT",)
+    row.operator("wm.stl_export",text="STL导出",icon="EXPORT",)
 
 
 def _draw_object_quick_panel(layout: LayoutBuilder, context):
@@ -495,14 +446,10 @@ class HO_MT_HoMainPieMesh(Menu):
     def draw(self, context):
         pie = HoPie(self.layout, context)
         pie.left.expand(_draw_mesh_left_tools)
-        pie.right.expand(_draw_edge_flow_tools,
-            height=1.5,)
-        pie.top.expand(_draw_edge_display,
-            height=1.5)
-        pie.top_right.expand(_draw_quick_modifier_buttons,
-            height_offset=15.0)
-        pie.bottom.expand(_draw_mesh_down_tools,
-            height=1.5)
+        pie.right.expand(_draw_edge_flow_tools,height=1.5,)
+        pie.top.expand(_draw_edge_display,height=1.5)
+        pie.top_right.expand(_draw_quick_modifier_buttons,height_offset=15.0)
+        pie.bottom.expand(_draw_mesh_down_tools,height=1.5)
         pie.finish()
 
 
@@ -527,12 +474,8 @@ class HO_MT_HoMainPie(Menu):
 
     def draw(self, context):
         pie = HoPie(self.layout, context)
-        pie.left.pie(HO_MT_HoMainPieMesh.bl_idname,
-            text="网格工具",icon="MESH_DATA",)
-        pie.right.pie(HO_MT_HoMainPieObject.bl_idname,
-            text="物体面板",icon="OBJECT_DATA",)
-
-
+        pie.left.pie(HO_MT_HoMainPieMesh.bl_idname,text="网格工具",icon="MESH_DATA",)
+        pie.right.pie(HO_MT_HoMainPieObject.bl_idname,text="物体面板",icon="OBJECT_DATA",)
 
         space = find_space(context, "VIEW_3D")
         overlay = getattr(space, "overlay", None)
@@ -541,10 +484,8 @@ class HO_MT_HoMainPie(Menu):
                 "C.space_data.overlay.show_overlays = not C.space_data.overlay.show_overlays",
                 text="叠加层",icon="OVERLAY",depress=bool(getattr(overlay, "show_overlays", False)),)
 
-        pie.top_left.expand(_draw_view_options,
-            width=1.2,height=1,height_offset=10.0,)
-        pie.top_right.expand(_draw_main_top_right,
-            height_offset=5.0,)
+        pie.top_left.expand(_draw_view_options,width=1.2,height=1,height_offset=10.0,)
+        pie.top_right.expand(_draw_main_top_right,height_offset=5.0,)
         pie.finish()
 
 
