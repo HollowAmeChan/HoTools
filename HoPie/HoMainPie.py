@@ -196,14 +196,15 @@ def _draw_view_options(layout: LayoutBuilder, context):
     row.prop(scene.view_settings,"view_transform",text="")
     row.prop(scene.display_settings,"display_device",text="")
 
-    row = layout.row(align=True)
-    row.label(text="",icon="OBJECT_DATA")
-    row.prop(obj,"show_wire",text="线框",icon="MOD_WIREFRAME")
-    row.prop(obj,"show_in_front",text="最前",icon="XRAY")
-    row.item().popover(panel="OBJECT_PT_display", text="")
+    if obj and obj.type == "MESH":
+        row = layout.row(align=True)
+        row.label(text="",icon="OBJECT_DATA")
+        row.prop(obj,"show_wire",text="线框",icon="MOD_WIREFRAME")
+        row.prop(obj,"show_in_front",text="最前",icon="XRAY")
+        row.item().popover(panel="OBJECT_PT_display", text="")
 
 
-    if obj.type == "ARMATURE":
+    if obj and obj.type == "ARMATURE":
         armature: bpy.types.Armature = getattr(obj, "data", None)
         row = layout.row(align=True)
         row.label(text="",icon="OUTLINER_OB_ARMATURE")
