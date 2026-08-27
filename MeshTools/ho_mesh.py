@@ -732,16 +732,16 @@ class HO_OT_MeshRelax(bpy.types.Operator):
     bl_description = "点、边、面模式统一使用 Laplacian 松弛，并固定选区边界"
     bl_options = {'REGISTER', 'UNDO'}
 
-    iterations: IntProperty(name="迭代", default=3, min=1, max=100) # type: ignore
+    iterations: IntProperty(name="迭代", default=1, min=1, max=100) # type: ignore
     strength: FloatProperty(
-        name="强度", default=1.0, min=0.0, max=1.0,
+        name="强度", default=0.5, min=0.0, max=1.0,
         subtype='FACTOR',
     ) # type: ignore
     method: EnumProperty(
         name="权重", items=(
             ('UNIFORM', "均匀", "均匀邻域平均，适合任意多边形"),
             ('COTANGENT', "余切", "三角网格使用余切 Laplacian，其他面回退均匀权重"),
-        ), default='COTANGENT',
+        ), default='UNIFORM',
     ) # type: ignore
     preserve_shape: BoolProperty(
         name="抑制收缩", default=False,
