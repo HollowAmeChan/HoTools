@@ -31,15 +31,23 @@ class OP_MergeOverlapping_VertexNormals(Operator):
             return {"CANCELLED"}
         bpy.ops.object.mode_set(mode="OBJECT")
         items, any_selected = [], False
+        mesh_state = {}
         for obj in objects:
             normal_matrix = obj.matrix_world.to_3x3().inverted().transposed()
+            mesh = obj.data
+            had_custom_normals = mesh.has_custom_normals
+            # Keep the evaluated split normals so the per-corner differences
+            # around sharp edges can be preserved when the vertex normal moves.
+            split_normals = [loop.normal.copy() for loop in mesh.loops]
             if any(vertex.select and not vertex.hide for vertex in obj.data.vertices):
                 any_selected = True
             for vertex in obj.data.vertices:
                 if not vertex.hide:
                     items.append({"obj": obj, "vi": vertex.index, "selected": vertex.select,
                                   "co": obj.matrix_world @ vertex.co,
+                                  "normal_local": vertex.normal.copy(),
                                   "normal_world": (normal_matrix @ vertex.normal).normalized()})
+            mesh_state[obj] = (split_normals, had_custom_normals)
         if any_selected:
             items = [item for item in items if item["selected"]]
         if len(items) < 2:
@@ -86,13 +94,29 @@ class OP_MergeOverlapping_VertexNormals(Operator):
                     item["obj"].matrix_world.to_3x3().transposed() @ average
                 ).normalized()
         for obj, normal_map in target_normals.items():
-            normals = [vertex.normal.copy() for vertex in obj.data.vertices]
+            mesh = obj.data
+            split_normals, had_custom_normals = mesh_state[obj]
+            # Zero vectors retain Blender's automatically calculated normals
+            # for untouched corners when the mesh did not already have a
+            # custom-normal layer.
+            normals = split_normals if had_custom_normals else [Vector() for _ in mesh.loops]
+            vertex_normals = {item["vi"]: item["normal_local"]
+                              for item in items if item["obj"] == obj}
+            loops_by_vertex = defaultdict(list)
+            for loop in mesh.loops:
+                loops_by_vertex[loop.vertex_index].append(loop.index)
             for vertex_index, normal in normal_map.items():
-                normals[vertex_index] = normal
-            for polygon in obj.data.polygons:
-                polygon.use_smooth = True
-            obj.data.normals_split_custom_set_from_vertices(normals)
-            obj.data.update()
+                source = vertex_normals.get(vertex_index)
+                if source is None or source.length <= 1e-8 or normal.length <= 1e-8:
+                    continue
+                # Rotate the whole normal fan by the same amount. Smooth
+                # corners follow the merged vertex normal, while corners on
+                # opposite sides of a sharp edge keep their original split.
+                rotation = source.rotation_difference(normal)
+                for loop_index in loops_by_vertex[vertex_index]:
+                    normals[loop_index] = (rotation @ split_normals[loop_index]).normalized()
+            mesh.normals_split_custom_set(normals)
+            mesh.update()
         bpy.ops.object.mode_set(mode="EDIT")
         return {"FINISHED"}
 
