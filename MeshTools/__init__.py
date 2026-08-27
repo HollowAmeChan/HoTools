@@ -60,6 +60,7 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         )
         layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname, icon='ADD')
         layout.operator(OP_ModalFillMeshHole.bl_idname, icon='FACESEL')
+        layout.operator(OP_MergeOverlapping_VertexNormals.bl_idname, icon='NORMALS_FACE')
         layout.separator()
         layout.operator_context = 'INVOKE_DEFAULT'
         layout.operator(HO_OT_SetEdgeFlow.bl_idname, icon='MOD_CURVE')
