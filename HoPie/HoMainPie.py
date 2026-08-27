@@ -203,6 +203,12 @@ def _draw_view_options(layout: LayoutBuilder, context):
         row.prop(obj,"show_in_front",text="最前",icon="XRAY")
         row.item().popover(panel="OBJECT_PT_display", text="")
 
+    if obj and obj.type == "CURVE":
+        curve :bpy.types.Curve = getattr(obj, "data", None)
+        row = layout.row(align=True)
+        row.label(text="",icon="CURVE_DATA")
+        row.prop(curve,"twist_mode",text="")
+        row.prop(curve,"twist_smooth",text="平滑")
 
     if obj and obj.type == "ARMATURE":
         armature: bpy.types.Armature = getattr(obj, "data", None)
@@ -211,6 +217,7 @@ def _draw_view_options(layout: LayoutBuilder, context):
         row.prop(armature, "show_names", text="名称",icon="SYNTAX_OFF")
         row.prop(armature, "show_axes", text="轴",icon="EMPTY_AXIS")
         row.prop(armature, "display_type", text="",icon="SHADING_WIRE")
+
 
     row = layout.row(align=True)
     row.scale_y = 2
