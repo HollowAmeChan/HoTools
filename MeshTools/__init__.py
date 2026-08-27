@@ -50,7 +50,7 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
     """Mesh editing context menu."""
 
     bl_idname = "VIEW3D_MT_edit_mesh_hotools"
-    bl_label = "Hotools Mesh"
+    bl_label = "HoMeshTools"
 
     def draw(self, context):
         layout = self.layout
@@ -117,9 +117,8 @@ def register():
     boolean.register()
     for operator_class in CLASSES:
         bpy.utils.register_class(operator_class)
-    bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(
-        draw_in_VIEW3D_MT_edit_mesh_context_menu
-    )
+    bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(draw_in_VIEW3D_MT_edit_mesh_context_menu)
+    bpy.types.VIEW3D_MT_object_context_menu.prepend(draw_in_VIEW3D_MT_edit_mesh_context_menu)
     bpy.types.DATA_PT_customdata.append(draw_in_DATA_PT_customdata)
     bpy.types.VIEW3D_MT_edit_mesh_merge.append(draw_in_VIEW3D_MT_edit_mesh_merge)
     keyconfig = bpy.context.window_manager.keyconfigs.addon
@@ -201,9 +200,8 @@ def unregister():
         keymap.keymap_items.remove(keymap_item)
     addon_keymaps.clear()
 
-    bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(
-        draw_in_VIEW3D_MT_edit_mesh_context_menu
-    )
+    bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(draw_in_VIEW3D_MT_edit_mesh_context_menu)
+    bpy.types.VIEW3D_MT_object_context_menu.remove(draw_in_VIEW3D_MT_edit_mesh_context_menu)
     bpy.types.DATA_PT_customdata.remove(draw_in_DATA_PT_customdata)
     bpy.types.VIEW3D_MT_edit_mesh_merge.remove(draw_in_VIEW3D_MT_edit_mesh_merge)
     for operator_class in reversed(CLASSES):
