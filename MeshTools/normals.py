@@ -1,12 +1,181 @@
 """Mesh custom-normal editing operators."""
 
 import math
+import bmesh
+import json
 from collections import defaultdict
 
 import bpy
 from bpy.props import BoolProperty, FloatProperty
 from bpy.types import Operator
 from mathutils import Vector
+
+
+_NORMAL_CLIPBOARD_KEY = "hotools_vertex_normals"
+
+
+def _normal_matrix(obj):
+    return obj.matrix_world.to_3x3().inverted().transposed()
+
+
+def _world_to_local_normal(obj, normal):
+    """Transform a world-space normal into the mesh's local space."""
+    return (obj.matrix_world.to_3x3().transposed() @ normal).normalized()
+
+
+def _selected_vertex_indices(mesh):
+    return {
+        vertex.index
+        for vertex in mesh.vertices
+        if vertex.select and not vertex.hide
+    }
+
+
+class OP_CopyActiveVertexNormal(Operator):
+    """Copy all split-normal corners belonging to the active edit-mode vertex."""
+
+    bl_idname = "ho.copy_active_vertex_normal"
+    bl_label = "复制活动顶点法线"
+    bl_description = "将活动顶点的分裂法线复制到剪贴板（保留锐边）"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return bool(obj and obj.type == "MESH" and context.mode == "EDIT_MESH")
+
+    def execute(self, context):
+        obj = context.active_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.index_update()
+        active = bm.select_history.active
+        if not isinstance(active, bmesh.types.BMVert) or active.hide:
+            self.report({"WARNING"}, "请先激活一个顶点")
+            return {"CANCELLED"}
+
+        active_index = active.index
+        bpy.ops.object.mode_set(mode="OBJECT")
+        try:
+            mesh = obj.data
+            normal_matrix = _normal_matrix(obj)
+            corners = []
+            for polygon in mesh.polygons:
+                face_normal = (normal_matrix @ polygon.normal).normalized()
+                for loop_index in polygon.loop_indices:
+                    loop = mesh.loops[loop_index]
+                    if loop.vertex_index != active_index:
+                        continue
+                    loop_normal = (normal_matrix @ loop.normal).normalized()
+                    if loop_normal.length > 1e-8:
+                        corners.append({
+                            "normal": list(loop_normal),
+                            "face_normal": list(face_normal),
+                        })
+            if not corners:
+                self.report({"WARNING"}, "活动顶点没有可用法线")
+                return {"CANCELLED"}
+
+            payload = {
+                _NORMAL_CLIPBOARD_KEY: 1,
+                "corners": corners,
+            }
+            context.window_manager.clipboard = json.dumps(
+                payload, separators=(",", ":")
+            )
+        finally:
+            bpy.ops.object.mode_set(mode="EDIT")
+
+        self.report({"INFO"}, f"已复制活动顶点的 {len(corners)} 个法线")
+        return {"FINISHED"}
+
+
+class OP_PasteVertexNormals(Operator):
+    """Paste copied split-normal corners to every selected edit-mode vertex."""
+
+    bl_idname = "ho.paste_vertex_normals"
+    bl_label = "粘贴法线到选中点"
+    bl_description = "将剪贴板中的顶点法线粘贴到所有选中顶点（保留锐边）"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return bool(obj and obj.type == "MESH" and context.mode == "EDIT_MESH")
+
+    def execute(self, context):
+        obj = context.active_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.index_update()
+        selected_indices = {
+            vertex.index
+            for vertex in bm.verts
+            if vertex.select and not vertex.hide
+        }
+        if not selected_indices:
+            self.report({"WARNING"}, "没有选中的顶点")
+            return {"CANCELLED"}
+
+        try:
+            payload = json.loads(context.window_manager.clipboard)
+            if payload.get(_NORMAL_CLIPBOARD_KEY) != 1:
+                raise ValueError
+            corners = payload["corners"]
+            if not corners:
+                raise ValueError
+            source_corners = [
+                (
+                    Vector(item["normal"]).normalized(),
+                    Vector(item["face_normal"]).normalized(),
+                )
+                for item in corners
+            ]
+        except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            self.report({"WARNING"}, "剪贴板中没有 HoTools 顶点法线数据")
+            return {"CANCELLED"}
+
+        bpy.ops.object.mode_set(mode="OBJECT")
+        try:
+            mesh = obj.data
+            target_normal_matrix = _normal_matrix(obj)
+            target_face_normals = {}
+            loops_by_vertex = defaultdict(list)
+            for polygon in mesh.polygons:
+                face_normal = (target_normal_matrix @ polygon.normal).normalized()
+                for loop_index in polygon.loop_indices:
+                    target_face_normals[loop_index] = face_normal
+                    loop = mesh.loops[loop_index]
+                    loops_by_vertex[loop.vertex_index].append(loop_index)
+
+            normals = [loop.normal.copy() for loop in mesh.loops]
+            pasted = 0
+            for vertex_index in selected_indices:
+                loop_indices = loops_by_vertex.get(vertex_index, ())
+                for loop_index in loop_indices:
+                    target_face_normal = target_face_normals.get(loop_index)
+                    if target_face_normal is None:
+                        source_normal = source_corners[0][0]
+                    else:
+                        source_normal = max(
+                            source_corners,
+                            key=lambda corner: corner[1].dot(target_face_normal),
+                        )[0]
+                    desired = _world_to_local_normal(obj, source_normal)
+                    if desired.length > 1e-8:
+                        normals[loop_index] = desired
+                if loop_indices:
+                    pasted += 1
+
+            if pasted:
+                mesh.normals_split_custom_set(normals)
+                mesh.update()
+        finally:
+            bpy.ops.object.mode_set(mode="EDIT")
+
+        if not pasted:
+            self.report({"WARNING"}, "选中顶点没有可粘贴的法线")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"已粘贴到 {pasted} 个选中顶点")
+        return {"FINISHED"}
 
 
 class OP_MergeOverlapping_VertexNormals(Operator):
@@ -137,4 +306,8 @@ class OP_MergeOverlapping_VertexNormals(Operator):
         return {"FINISHED"}
 
 
-__all__ = ["OP_MergeOverlapping_VertexNormals"]
+__all__ = [
+    "OP_CopyActiveVertexNormal",
+    "OP_MergeOverlapping_VertexNormals",
+    "OP_PasteVertexNormals",
+]

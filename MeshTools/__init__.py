@@ -31,7 +31,11 @@ from .custom_normals import (
     OP_CustomSplitNormals_Export,
     OP_CustomSplitNormals_Import,
 )
-from .normals import OP_MergeOverlapping_VertexNormals
+from .normals import (
+    OP_CopyActiveVertexNormal,
+    OP_MergeOverlapping_VertexNormals,
+    OP_PasteVertexNormals,
+)
 from .parallel_manifold_subdivide import OP_ParallelManifoldSubdivide
 from .offset_edges_modal import OP_SlideCut
 
@@ -61,6 +65,8 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname, icon='ADD')
         layout.operator(OP_ModalFillMeshHole.bl_idname, icon='FACESEL')
         layout.operator(OP_MergeOverlapping_VertexNormals.bl_idname, icon='NORMALS_FACE')
+        layout.operator(OP_CopyActiveVertexNormal.bl_idname, icon='COPYDOWN')
+        layout.operator(OP_PasteVertexNormals.bl_idname, icon='PASTEDOWN')
         layout.separator()
         layout.operator_context = 'INVOKE_DEFAULT'
         layout.operator(HO_OT_SetEdgeFlow.bl_idname, icon='MOD_CURVE')
@@ -86,6 +92,8 @@ _SUPPLEMENTAL_CLASSES = (
     OP_CustomSplitNormals_Export,
     OP_CustomSplitNormals_Import,
     OP_MergeOverlapping_VertexNormals,
+    OP_CopyActiveVertexNormal,
+    OP_PasteVertexNormals,
 )
 
 CLASSES = [
