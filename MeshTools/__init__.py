@@ -33,6 +33,7 @@ from .custom_normals import (
 )
 from .normals import (
     OP_CopyActiveVertexNormal,
+    OP_MergeNearestVertexNormals,
     OP_MergeOverlapping_VertexNormals,
     OP_PasteVertexNormals,
 )
@@ -48,6 +49,7 @@ def draw_in_DATA_PT_customdata(self, context):
 
 def draw_in_VIEW3D_MT_edit_mesh_merge(self, context):
     self.layout.operator(OP_MergeOverlapping_VertexNormals.bl_idname)
+    self.layout.operator(OP_MergeNearestVertexNormals.bl_idname)
 
 
 class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
@@ -64,7 +66,9 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         )
         layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname, icon='ADD')
         layout.operator(OP_ModalFillMeshHole.bl_idname, icon='FACESEL')
+        layout.separator()
         layout.operator(OP_MergeOverlapping_VertexNormals.bl_idname, icon='NORMALS_FACE')
+        layout.operator(OP_MergeNearestVertexNormals.bl_idname, icon='NORMALS_FACE')
         layout.operator(OP_CopyActiveVertexNormal.bl_idname, icon='COPYDOWN')
         layout.operator(OP_PasteVertexNormals.bl_idname, icon='PASTEDOWN')
         layout.separator()
@@ -91,6 +95,7 @@ _SUPPLEMENTAL_CLASSES = (
     *HO_MESH_CLASSES,
     OP_CustomSplitNormals_Export,
     OP_CustomSplitNormals_Import,
+    OP_MergeNearestVertexNormals,
     OP_MergeOverlapping_VertexNormals,
     OP_CopyActiveVertexNormal,
     OP_PasteVertexNormals,
