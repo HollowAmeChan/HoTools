@@ -172,6 +172,9 @@ class BoneSplitCore:
     def objs_bone_split(bn, count, armature,soft_factor,objs):
         """处理骨架-骨骼-物体的细分"""
 
+        #没有物体绑定该骨骼的权重时无需处理(避免 objs[0] 越界)
+        if not objs:
+            return
         #由于首个细分破坏了原有的结构，导致后续需要单独处理
         obj = objs[0]
         b_vg = obj.vertex_groups.get(bn)
@@ -297,16 +300,30 @@ class OP_SplitBoneWithWeight(Operator):
         if self.process_symmetry:
             tmp = []
             for bone_name in bones:
-                if self.process_symmetry:                    
-                    tmp.extend(bone_utils.get_mirrored_bone(bone_name, armature_obj.data))
+                tmp.extend(bone_utils.get_mirrored_bone(bone_name, armature_obj.data))
             bones = tmp
+        #去重：对称展开可能把同一骨骼加入多次(如同时选了 L/R 两侧),
+        #重复处理时该骨骼与顶点组已被移除,会因空列表而崩溃
+        seen = set()
+        unique_bones = []
+        for bn in bones:
+            if bn not in seen:
+                seen.add(bn)
+                unique_bones.append(bn)
+        bones = unique_bones
+
         #逐骨骼
+        skipped=[]
         for bn in bones:
             #仅处理找得到这个权重的物体
             objs_withBone=[]
             for obj in mesh_objs:
                 if obj.vertex_groups.get(bn):
                     objs_withBone.append(obj)
+            #没有任何物体绑定该骨骼权重(如控制骨/无权重骨),跳过
+            if not objs_withBone:
+                skipped.append(bn)
+                continue
             #物体总处理
             BoneSplitCore.objs_bone_split(bn, self.count, armature_obj,self.soft_factor,objs_withBone)
         
@@ -320,7 +337,10 @@ class OP_SplitBoneWithWeight(Operator):
             original_active.select_set(True)
             bpy.context.view_layer.objects.active = original_active
             bone_utils.set_object_mode(original_active,'WEIGHT_PAINT')
-        self.report({'INFO'},"细分成功")
+        if skipped:
+            self.report({'WARNING'}, "细分完成,以下骨骼未绑定任何网格权重,已跳过: " + ", ".join(skipped))
+        else:
+            self.report({'INFO'},"细分成功")
         return {'FINISHED'}
     
     def invoke(self, context, event):
