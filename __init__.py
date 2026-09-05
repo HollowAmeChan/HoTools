@@ -21,7 +21,7 @@ sys.path.append(py_lib_dir)
 sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
 
 
-from . import VertexColorTools, ShapekeyTools, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,ModifierTools,HoPie
+from . import VertexColorTools, ShapekeyTools, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,ModifierTools,HoPie, AttributeTools
 from . import ProjectTools, ObjectTools, CurveTools
 from . import OmniNode, HoTab
 from .Utils.keymap_utils import find_user_keymap_item
@@ -411,6 +411,7 @@ def register():
     MeshTools.register()
     CurveTools.register()
     VertexColorTools.register()
+    AttributeTools.register()
     VertexGroupTools.register()
     ShapekeyTools.register()
     ModifierTools.register()
@@ -451,6 +452,7 @@ def unregister():
     ObjectTools.unregister()
     ProjectTools.unregister()
     VertexColorTools.unregister()
+    AttributeTools.unregister()
     VertexGroupTools.unregister()
     ShapekeyTools.unregister()
     BoneTools.unregister()
