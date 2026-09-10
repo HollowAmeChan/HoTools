@@ -117,7 +117,7 @@ def reset_export_undo():
 
 class FBXExporter:
     UNITY_METADATA_DIRECTORY = "HoFBX"
-    CURVE_MESHIFY_TYPES = {"CURVE"}
+    CURVE_OBJECT_TYPES = {"CURVE"}
 
     @staticmethod
     def unity_metadata_directory(fbx_filepath):
@@ -224,23 +224,42 @@ class FBXExporter:
                 bpy.context.view_layer.objects.active = active_object
 
     @staticmethod
-    def convert_selected_curves_to_mesh(selection, active_object):
-        """把当前选中的曲线类对象临时转成 Mesh，供后续 FBX 导出使用。"""
+    def meshify_selected_objects(selection, active_object):
+        """把选中的曲线类对象转成 Mesh，并解除 Alt+D 网格对象的数据共享。"""
         selection_names = [ob.name for ob in selection]
         active_object_name = active_object.name if active_object else None
-        target_names = [
+        convertible_names = [
             ob.name
             for ob in selection
-            if ob.type in FBXExporter.CURVE_MESHIFY_TYPES
+            if ob.type in FBXExporter.CURVE_OBJECT_TYPES
             and ob.name in bpy.context.view_layer.objects
         ]
-        if not target_names:
-            return 0, [], selection, active_object
+        shared_mesh_names = [
+            ob.name
+            for ob in selection
+            if ob.type == "MESH"
+            and getattr(getattr(ob, "data", None), "users", 1) > 1
+            and ob.name in bpy.context.view_layer.objects
+        ]
+        if not convertible_names and not shared_mesh_names:
+            return 0, 0, [], selection, active_object
 
-        converted = 0
+        converted_objects = 0
+        made_single_user = 0
         failed = []
         try:
-            for object_name in target_names:
+            for object_name in shared_mesh_names:
+                ob = bpy.data.objects.get(object_name)
+                if ob is None or ob.name not in bpy.context.view_layer.objects:
+                    continue
+                try:
+                    if ob.data and ob.data.users > 1:
+                        ob.data = ob.data.copy()
+                        made_single_user += 1
+                except Exception as exc:
+                    failed.append((object_name, exc))
+
+            for object_name in convertible_names:
                 ob = bpy.data.objects.get(object_name)
                 if ob is None or ob.name not in bpy.context.view_layer.objects:
                     continue
@@ -249,7 +268,7 @@ class FBXExporter:
                     ob.select_set(True)
                     bpy.context.view_layer.objects.active = ob
                     bpy.ops.object.convert(target='MESH')
-                    converted += 1
+                    converted_objects += 1
                 except Exception as exc:
                     failed.append((object_name, exc))
         finally:
@@ -262,7 +281,7 @@ class FBXExporter:
             and ob.name in bpy.context.view_layer.objects
         ]
         active_object = bpy.context.view_layer.objects.active
-        return converted, failed, selection, active_object
+        return converted_objects, made_single_user, failed, selection, active_object
 
     @staticmethod
     def get_weighted_bone_names(armature_ob):
@@ -1289,7 +1308,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
     humanoidMappingSuffix:bpy.props.StringProperty(name="Humanoid后缀",description="HoFBX文件夹内的Humanoid mapping JSON文件后缀",default="_humanoid") # type: ignore
     exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成Rig约束IR、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
-    meshifyCurves:BoolProperty(name="网格化曲线",description="导出前把选中的曲线临时转换为网格，让 HoFBX 能导出 Blender FBX 不直接支持的曲线对象。随导出末尾撤销,工程不留痕",default=True) # type: ignore
+    # 保留 RNA 属性名以兼容已保存的预设；界面名称已扩展为同时处理曲线和共享网格对象。
+    meshifyCurves:BoolProperty(name="网格化对象",description="导出前把选中的曲线临时转换为网格，并为共享 Mesh 数据的对象（包括 Alt+D）创建独立数据，让 HoFBX 能正确导出。随导出末尾撤销,工程不留痕",default=True) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。随导出末尾撤销,工程不留痕",default=False) # type: ignore
     cleanEmptyMaterialSlots:BoolProperty(name="清理未使用材质槽",description="导出前删除选中网格中没有被任何面使用的材质槽（无论槽中是否已有材质）。随导出末尾撤销,工程不留痕",default=True) # type: ignore
@@ -1424,15 +1444,18 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
 
             if self.meshifyCurves:
-                converted_curves, failed_curves, selection, active_object = (
-                    FBXExporter.convert_selected_curves_to_mesh(selection, active_object)
+                converted_objects, made_single_user, failed_meshify, selection, active_object = (
+                    FBXExporter.meshify_selected_objects(selection, active_object)
                 )
-                if failed_curves:
-                    print("[HoTools FBX] Failed to meshify curve objects:")
-                    for ob_name, exc in failed_curves:
+                if failed_meshify:
+                    print("[HoTools FBX] Failed to meshify objects:")
+                    for ob_name, exc in failed_meshify:
                         print(f"  {ob_name}: {type(exc).__name__}: {exc}")
-                    self.report({"WARNING"}, f"{len(failed_curves)} 个曲线对象网格化失败，详见控制台")
-                print(f"[HoTools FBX] 曲线网格化：处理了 {converted_curves} 个对象")
+                    self.report({"WARNING"}, f"{len(failed_meshify)} 个对象网格化失败，详见控制台")
+                print(
+                    f"[HoTools FBX] 对象网格化：转换了 {converted_objects} 个曲线类对象，"
+                    f"创建了 {made_single_user} 个独立 Mesh 数据"
+                )
 
             if self.cleanEmptyMaterialSlots:
                 cleaned_meshes, removed_slots = FBXExporter.clean_unused_material_slots(
