@@ -2182,6 +2182,9 @@ def draw_rt_bake_targets(layout: bpy.types.UILayout, context):
     row = layout.row(align=True)
     row.prop(rt_settings, "use_target_groups", text="启用分组", toggle=True)
 
+    if not rt_settings.use_target_groups:
+        row.label(text="当前整体考虑选中物体")
+        return
     box = layout.box()
 
     active_group = None
