@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "version": "dev",
+  "release_tag": "dev",
+  "release_name": "HoTools development build",
+  "repository": "HollowAmeChan/HoTools",
+  "channel": "dev"
+}

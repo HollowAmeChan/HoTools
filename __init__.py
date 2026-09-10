@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
 from . import VertexColorTools, ShapekeyTools, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,ModifierTools,HoPie, AttributeTools
 from . import ProjectTools, ObjectTools, CurveTools
 from . import OmniNode, HoTab
+from . import updater
 from .Utils.keymap_utils import find_user_keymap_item
 from bpy.props import BoolProperty, FloatProperty
 
@@ -287,6 +288,12 @@ class AddonPreference(bpy.types.AddonPreferences):
     hoTools_ui_hopie_expanded: BoolProperty(name='展开 HoPie', default=False)  # type: ignore
     hoTools_ui_keymaps_expanded: BoolProperty(name='展开快捷键', default=True)  # type: ignore
 
+    hoTools_update_status: bpy.props.StringProperty(name="更新状态", default="尚未检查")  # type: ignore
+    hoTools_update_current: bpy.props.StringProperty(name="当前版本", default="")  # type: ignore
+    hoTools_update_latest: bpy.props.StringProperty(name="最新版本", default="")  # type: ignore
+    hoTools_update_download_url: bpy.props.StringProperty(name="更新下载地址", default="", options={'HIDDEN'})  # type: ignore
+    hoTools_update_asset_name: bpy.props.StringProperty(name="更新安装包", default="", options={'HIDDEN'})  # type: ignore
+
     hoTools_ExIconSize: FloatProperty(name="图标大小", default=0.5)  # type: ignore
     hoTools_ExiconAlpha: FloatProperty(
         name="图标不透明度", default=0.5, min=0.0, max=1.0)  # type: ignore
@@ -331,6 +338,26 @@ class AddonPreference(bpy.types.AddonPreferences):
         columns = layout.split(factor=0.3, align=False)
         left = columns.column(align=True)
         right = columns.column(align=True)
+
+        version_box = left.box()
+        version_box.label(text="HoTools 版本")
+        metadata = updater.read_version_info()
+        version_box.label(text=f"当前版本: {metadata.get('version') or metadata.get('release_tag', 'dev')}")
+        version_box.label(text=f"发布标签: {metadata.get('release_tag', 'dev')}")
+        status = (
+            "本地开发版本，不参与自动更新"
+            if updater.is_development_build(metadata)
+            else self.hoTools_update_status
+        )
+        version_box.label(text=status, icon='INFO')
+        version_row = version_box.row(align=True)
+        version_row.enabled = not updater.is_development_build(metadata)
+        version_row.operator('ho.check_for_update', icon='FILE_REFRESH')
+        install_row = version_row.row(align=True)
+        install_row.enabled = bool(self.hoTools_update_download_url and self.hoTools_update_latest)
+        install_row.operator('ho.install_update', icon='IMPORT', text='安装更新')
+        if self.hoTools_update_latest:
+            version_box.label(text=f"远程版本: {self.hoTools_update_latest}")
 
         intro = left.box()
         intro.label(text='HoTools 模块设置')
@@ -407,6 +434,7 @@ def register():
         bpy.utils.register_class(i)
     
     ProjectTools.register()
+    updater.register()
     ObjectTools.register()
     MeshTools.register()
     CurveTools.register()
@@ -443,6 +471,8 @@ def register():
 
 
 def unregister():
+    updater.unregister()
+    ProjectTools.unregister()
     for i in cls:
         bpy.utils.unregister_class(i)
 
@@ -450,7 +480,6 @@ def unregister():
     CurveTools.unregister()
     MeshTools.unregister()
     ObjectTools.unregister()
-    ProjectTools.unregister()
     VertexColorTools.unregister()
     AttributeTools.unregister()
     VertexGroupTools.unregister()

@@ -32,8 +32,12 @@ jobs:
 
           # 每个安装包只携带目标 Blender 使用的 Python ABI 依赖，避免把两套大型
           # Pillow/OIDN/native runtime 一起塞进同一个 ZIP。
-          python tools/build_release_zip.py --abi py311 --output "$ZIP_45"
-          python tools/build_release_zip.py --abi py313 --output "$ZIP_52"
+          python tools/build_release_zip.py --abi py311 --output "$ZIP_45" \
+            --version "$VERSION" --release-tag "$RELEASE_TAG" \
+            --release-name "$RELEASE_TITLE" --commit "$GITHUB_SHA"
+          python tools/build_release_zip.py --abi py313 --output "$ZIP_52" \
+            --version "$VERSION" --release-tag "$RELEASE_TAG" \
+            --release-name "$RELEASE_TITLE" --commit "$GITHUB_SHA"
 
           # GitHub 页面仍会自动显示源码压缩包；用户应下载这里上传的对应 Blender 版本 ZIP。
           gh release create "$RELEASE_TAG" "$ZIP_45" "$ZIP_52" \

@@ -13,6 +13,12 @@ class OP_RestartBlender(Operator):
     bl_description = "不保存并重启 Blender"
     bl_options = {"REGISTER"}
 
+    confirm_restart: BoolProperty(
+        name="确认重启",
+        description="重启不会自动保存当前未保存的内容",
+        default=True,
+    )
+
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
 
@@ -20,6 +26,9 @@ class OP_RestartBlender(Operator):
         self.layout.prop(self, "confirm_restart")
 
     def execute(self, context):
+        if not self.confirm_restart:
+            self.report({'WARNING'}, "请确认重启 Blender")
+            return {'CANCELLED'}
         args = [bpy.app.binary_path]
         if bpy.data.filepath:
             args.append(bpy.data.filepath)

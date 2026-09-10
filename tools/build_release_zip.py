@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import json
 from pathlib import Path, PurePosixPath
 import sys
 import zipfile
@@ -91,6 +92,7 @@ def validate_inputs(repo_root: Path, abi: str, files: list[Path]) -> None:
     native_tag = SUPPORTED_ABIS[abi]
     required_files = {
         PurePosixPath("__init__.py"),
+        PurePosixPath("version_info.json"),
         PurePosixPath("ShapekeyTools/shapekey_catalog.csv"),
         PurePosixPath(f"_Lib/{abi}/PIL/__init__.py"),
         PurePosixPath(f"_Lib/{abi}/cffi/__init__.py"),
@@ -137,7 +139,47 @@ def validate_archive(output: Path, abi: str) -> tuple[int, list[str]]:
     return len(members), members
 
 
-def build_zip(repo_root: Path, output: Path, abi: str) -> None:
+def release_metadata(
+    repo_root: Path,
+    *,
+    version: str | None = None,
+    release_tag: str | None = None,
+    release_name: str | None = None,
+    commit: str | None = None,
+) -> bytes:
+    source = repo_root / "version_info.json"
+    try:
+        metadata = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if version is not None:
+        metadata["version"] = version
+    if release_tag is not None:
+        metadata["release_tag"] = release_tag
+    if release_name is not None:
+        metadata["release_name"] = release_name
+    if commit is not None:
+        metadata["commit"] = commit
+    if release_tag is not None:
+        metadata["channel"] = "stable"
+    metadata.setdefault("schema", 1)
+    metadata.setdefault("repository", "HollowAmeChan/HoTools")
+    metadata.setdefault("channel", "stable")
+    return (json.dumps(metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+
+def build_zip(
+    repo_root: Path,
+    output: Path,
+    abi: str,
+    *,
+    version: str | None = None,
+    release_tag: str | None = None,
+    release_name: str | None = None,
+    commit: str | None = None,
+) -> None:
     files = collect_files(repo_root, abi)
     validate_inputs(repo_root, abi, files)
 
@@ -148,7 +190,20 @@ def build_zip(repo_root: Path, output: Path, abi: str) -> None:
     ) as archive:
         for source in files:
             relative = PurePosixPath(source.relative_to(repo_root).as_posix())
-            archive.write(source, (PurePosixPath("HoTools") / relative).as_posix())
+            member = (PurePosixPath("HoTools") / relative).as_posix()
+            if relative == PurePosixPath("version_info.json"):
+                archive.writestr(
+                    member,
+                    release_metadata(
+                        repo_root,
+                        version=version,
+                        release_tag=release_tag,
+                        release_name=release_name,
+                        commit=commit,
+                    ),
+                )
+            else:
+                archive.write(source, member)
 
     try:
         member_count, _ = validate_archive(output, abi)
@@ -164,6 +219,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--abi", choices=sorted(SUPPORTED_ABIS), required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--version", help="Version stored in version_info.json")
+    parser.add_argument("--release-tag", help="GitHub release tag stored in metadata")
+    parser.add_argument("--release-name", help="GitHub release title stored in metadata")
+    parser.add_argument("--commit", help="Source commit stored in metadata")
     parser.add_argument(
         "--repo-root",
         type=Path,
@@ -176,7 +235,15 @@ def main() -> int:
     args = parse_args()
     repo_root = args.repo_root.resolve()
     output = args.output.resolve()
-    build_zip(repo_root, output, args.abi)
+    build_zip(
+        repo_root,
+        output,
+        args.abi,
+        version=args.version,
+        release_tag=args.release_tag,
+        release_name=args.release_name,
+        commit=args.commit,
+    )
     return 0
 
 
