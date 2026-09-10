@@ -549,6 +549,80 @@ class FBXExporter:
 
         return processed, removed
 
+    @staticmethod
+    def sort_export_meshes_by_material(mesh_objects, selection, active_object):
+        """按材质索引统一整理导出网格的面顺序，规避 Unity 的材质槽重排。"""
+        selection_names = [ob.name for ob in selection]
+        active_object_name = active_object.name if active_object else None
+        target_objects = []
+        visited_meshes = set()
+        failed = []
+
+        for ob in mesh_objects:
+            if ob.type != "MESH" or ob.name not in bpy.context.view_layer.objects:
+                continue
+            mesh = getattr(ob, "data", None)
+            if mesh is None or not mesh.polygons:
+                continue
+            mesh_id = mesh.as_pointer()
+            if mesh_id in visited_meshes:
+                continue
+            visited_meshes.add(mesh_id)
+            target_objects.append(ob)
+
+        if not target_objects:
+            return 0, [], selection, active_object
+
+        processed = 0
+        try:
+            bpy.ops.object.select_all(action="DESELECT")
+            for ob in target_objects:
+                ob.select_set(True)
+            bpy.context.view_layer.objects.active = target_objects[0]
+            bpy.context.view_layer.update()
+
+            result = bpy.ops.object.mode_set(mode="EDIT")
+            if "FINISHED" not in result:
+                raise RuntimeError(f"mode_set returned {result}")
+
+            # 隐式修复：Unity 对 FBX 多物体材质列表的重建会受每个网格
+            # 的面首次出现顺序影响。Blender 的 Sort Elements > Material
+            # 会按材质索引统一整理面顺序，避免同组网格导入 Unity 后
+            # 出现材质 slot 顺序不一致。只整理 FACE，不改变材质槽。
+            result = bpy.ops.mesh.select_all(action="SELECT")
+            if "FINISHED" not in result:
+                raise RuntimeError(f"mesh.select_all returned {result}")
+            result = bpy.ops.mesh.sort_elements(
+                type="MATERIAL",
+                elements={"FACE"},
+                reverse=False,
+            )
+            if "FINISHED" not in result:
+                raise RuntimeError(f"mesh.sort_elements returned {result}")
+
+            result = bpy.ops.object.mode_set(mode="OBJECT")
+            if "FINISHED" not in result:
+                raise RuntimeError(f"mode_set returned {result}")
+            processed = len(target_objects)
+        except Exception as exc:
+            failed.append(("<所有导出网格>", exc))
+            if bpy.context.mode != "OBJECT" and bpy.ops.object.mode_set.poll():
+                try:
+                    bpy.ops.object.mode_set(mode="OBJECT")
+                except Exception as mode_exc:
+                    failed.append(("<退出编辑模式>", mode_exc))
+        finally:
+            FBXExporter.restore_selection_by_names(selection_names, active_object_name)
+
+        selection = [
+            ob
+            for object_name in selection_names
+            if (ob := bpy.data.objects.get(object_name))
+            and ob.name in bpy.context.view_layer.objects
+        ]
+        active_object = bpy.context.view_layer.objects.active
+        return processed, failed, selection, active_object
+
     LEAF_SUFFIX = "_end"
     @staticmethod
     def build_leaf_bones(ob, weighted_names):
@@ -1532,6 +1606,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         ]
         humanoid_mapping_data = None
         failed_data_transfer_count = 0
+        failed_material_sort_count = 0
         failed_armature_pose_count = 0
 
         #准备操作，全显场景中的对象与集合，并且全选
@@ -1626,6 +1701,33 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 print(
                     f"[HoTools FBX] 数据传递修改器隐式修复：手动应用了 "
                     f"{data_transfer_applied} 个修改器"
+                )
+             # blender默认的fbx导出对材质slot顺序的处理不是unity喜欢的按面排序，会导致多物体多材质fbx导出进unity时材质slot顺序不对（同fbx导回bl正常），这不是bl/fbx的问题，是两边习惯的问题。解决问题只需要在bl中重排面序
+            (
+                material_sort_processed,
+                failed_material_sort,
+                selection,
+                active_object,
+            ) = FBXExporter.sort_export_meshes_by_material(
+                selection,
+                selection,
+                active_object,
+            )
+            failed_material_sort_count = len(failed_material_sort)
+            if failed_material_sort:
+                print("[HoTools FBX] Failed to sort mesh faces by material:")
+                for target_name, exc in failed_material_sort:
+                    print(
+                        f"  {target_name}: {type(exc).__name__}: {exc}"
+                    )
+                self.report(
+                    {"WARNING"},
+                    "导出网格按材质整理面顺序失败，详见控制台",
+                )
+            elif material_sort_processed:
+                print(
+                    f"[HoTools FBX] 材质面顺序隐式修复：整理了 "
+                    f"{material_sort_processed} 个 Mesh"
                 )
 
             if self.applyArmaturePose:
@@ -1789,12 +1891,18 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             FBXExporter.restore_armatures_pose_position(pose_position_state)
             report_exception(self, "导出后重置场景失败", e)
             return {'CANCELLED'}
-        if failed_data_transfer_count or failed_armature_pose_count:
+        if (
+            failed_data_transfer_count
+            or failed_material_sort_count
+            or failed_armature_pose_count
+        ):
             warning_parts = []
             if failed_data_transfer_count:
                 warning_parts.append(
                     f"{failed_data_transfer_count} 个数据传递修改器隐式修复失败"
                 )
+            if failed_material_sort_count:
+                warning_parts.append("导出网格按材质整理面顺序失败")
             if failed_armature_pose_count:
                 warning_parts.append(
                     f"{failed_armature_pose_count} 个骨架应用姿态失败"
