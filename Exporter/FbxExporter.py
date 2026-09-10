@@ -285,6 +285,85 @@ class FBXExporter:
         return converted_objects, made_single_user, failed, selection, active_object
 
     @staticmethod
+    def apply_data_transfer_modifiers(mesh_objects, selection, active_object):
+        """在完整视图层上下文中手动应用数据传递修改器，规避 FBX 评估差异。"""
+        selection_names = [ob.name for ob in selection]
+        active_object_name = active_object.name if active_object else None
+        applied = 0
+        failed = []
+
+        target_names = [
+            ob.name
+            for ob in mesh_objects
+            if ob.type == "MESH"
+            and ob.name in bpy.context.view_layer.objects
+            and any(
+                mod.type == "DATA_TRANSFER"
+                and (mod.show_viewport or mod.show_render)
+                for mod in ob.modifiers
+            )
+        ]
+        if not target_names:
+            return 0, [], selection, active_object
+
+        try:
+            for object_name in target_names:
+                ob = bpy.data.objects.get(object_name)
+                if ob is None or ob.name not in bpy.context.view_layer.objects:
+                    continue
+
+                modifier_names = [
+                    mod.name
+                    for mod in ob.modifiers
+                    if mod.type == "DATA_TRANSFER"
+                    and (mod.show_viewport or mod.show_render)
+                ]
+                if not modifier_names:
+                    continue
+
+                try:
+                    bpy.ops.object.select_all(action="DESELECT")
+                    ob.select_set(True)
+                    bpy.context.view_layer.objects.active = ob
+                    bpy.context.view_layer.update()
+
+                    # 隐式修复：FBX 通过 evaluated mesh 自动应用 DATA_TRANSFER
+                    # 时，结果可能与界面中手动应用不同；先在完整视图层中
+                    # 走标准 modifier_apply，避免导出阶段的隔离评估差异。
+                    for modifier_name in modifier_names:
+                        mod = ob.modifiers.get(modifier_name)
+                        if mod is None or mod.type != "DATA_TRANSFER":
+                            continue
+                        if not (mod.show_viewport or mod.show_render):
+                            continue
+                        try:
+                            result = bpy.ops.object.modifier_apply(
+                                modifier=modifier_name,
+                                merge_customdata=True,
+                            )
+                            if "FINISHED" not in result:
+                                raise RuntimeError(
+                                    f"modifier_apply returned {result}"
+                                )
+                            applied += 1
+                            bpy.context.view_layer.update()
+                        except Exception as exc:
+                            failed.append((object_name, modifier_name, exc))
+                except Exception as exc:
+                    failed.append((object_name, "<准备应用>", exc))
+        finally:
+            FBXExporter.restore_selection_by_names(selection_names, active_object_name)
+
+        selection = [
+            ob
+            for object_name in selection_names
+            if (ob := bpy.data.objects.get(object_name))
+            and ob.name in bpy.context.view_layer.objects
+        ]
+        active_object = bpy.context.view_layer.objects.active
+        return applied, failed, selection, active_object
+
+    @staticmethod
     def apply_selected_armature_poses(armature_objects, selection, active_object):
         """将选中骨架的当前 Pose 临时应用为静置姿态。"""
         selection_names = [ob.name for ob in selection]
@@ -1452,6 +1531,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             ob for ob in selection if ob.type == "ARMATURE"
         ]
         humanoid_mapping_data = None
+        failed_data_transfer_count = 0
         failed_armature_pose_count = 0
 
         #准备操作，全显场景中的对象与集合，并且全选
@@ -1515,6 +1595,37 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 print(
                     f"[HoTools FBX] 对象网格化：转换了 {converted_objects} 个曲线类对象，"
                     f"创建了 {made_single_user} 个独立 Mesh 数据"
+                )
+
+            # blender数据传递修改器在fbx导出时应用环境不齐全需要手动应用防止错误效果
+            (
+                data_transfer_applied,
+                failed_data_transfer,
+                selection,
+                active_object,
+            ) = (
+                FBXExporter.apply_data_transfer_modifiers(
+                    selection,
+                    selection,
+                    active_object,
+                )
+            )
+            failed_data_transfer_count = len(failed_data_transfer)
+            if failed_data_transfer:
+                print("[HoTools FBX] Failed to apply data transfer modifiers:")
+                for ob_name, modifier_name, exc in failed_data_transfer:
+                    print(
+                        f"  {ob_name}.{modifier_name}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                self.report(
+                    {"WARNING"},
+                    f"{len(failed_data_transfer)} 个数据传递修改器隐式修复失败，详见控制台",
+                )
+            if data_transfer_applied:
+                print(
+                    f"[HoTools FBX] 数据传递修改器隐式修复：手动应用了 "
+                    f"{data_transfer_applied} 个修改器"
                 )
 
             if self.applyArmaturePose:
@@ -1678,10 +1789,19 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             FBXExporter.restore_armatures_pose_position(pose_position_state)
             report_exception(self, "导出后重置场景失败", e)
             return {'CANCELLED'}
-        if failed_armature_pose_count:
+        if failed_data_transfer_count or failed_armature_pose_count:
+            warning_parts = []
+            if failed_data_transfer_count:
+                warning_parts.append(
+                    f"{failed_data_transfer_count} 个数据传递修改器隐式修复失败"
+                )
+            if failed_armature_pose_count:
+                warning_parts.append(
+                    f"{failed_armature_pose_count} 个骨架应用姿态失败"
+                )
             self.report(
                 {"WARNING"},
-                f"导出成功，但 {failed_armature_pose_count} 个骨架应用姿态失败，已跳过，详见控制台",
+                f"导出成功，但 {'，'.join(warning_parts)}，详见控制台",
             )
         elif removed_hidden_modifiers:
             self.report({"INFO"}, f"导出成功，临时删除隐藏修改器 {len(removed_hidden_modifiers)} 个")
