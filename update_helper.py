@@ -19,6 +19,36 @@ import time
 import zipfile
 
 
+def _detached_creationflags() -> int:
+    if os.name != "nt":
+        return 0
+    return (
+        getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+    )
+
+
+def _launch_blender(args: list[str]) -> None:
+    kwargs = {
+        "close_fds": True,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if os.name == "nt":
+        try:
+            subprocess.Popen(args, creationflags=_detached_creationflags(), **kwargs)
+            return
+        except OSError:
+            fallback = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+            )
+            subprocess.Popen(args, creationflags=fallback, **kwargs)
+            return
+    subprocess.Popen(args, start_new_session=True, **kwargs)
+
+
 def _config_path() -> Path:
     try:
         marker = sys.argv.index("--")
@@ -109,8 +139,8 @@ def main() -> int:
     args = [blender_path]
     if blend_path:
         args.append(blend_path)
-    subprocess.Popen(args)
-    return 0 if success else 1
+    _launch_blender(args)
+    return 0
 
 
 if __name__ == "__main__":

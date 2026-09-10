@@ -7,7 +7,6 @@ import re
 import shutil
 import sys
 import os
-import subprocess
 import tempfile
 import urllib.error
 import urllib.request
@@ -212,18 +211,14 @@ def schedule_package_update(zip_path: Path, plugin_dir: Path = PLUGIN_DIR) -> Pa
         encoding="utf-8",
     )
     try:
-        subprocess.Popen(
-            [
-                bpy.app.binary_path,
-                "--background",
-                "--factory-startup",
-                "--python",
-                str(helper_copy),
-                "--",
-                str(config_path),
-            ],
-            close_fds=True,
+        result = bpy.ops.ho.restart_blender(
+            "EXEC_DEFAULT",
+            confirm_restart=True,
+            startup_script=str(helper_copy),
+            startup_script_config=str(config_path),
         )
+        if "CANCELLED" in result:
+            raise RuntimeError("Blender 拒绝启动更新脚本")
     except Exception:
         config_path.unlink(missing_ok=True)
         helper_copy.unlink(missing_ok=True)
@@ -336,9 +331,7 @@ class HO_OT_install_update(Operator):
                 pass
             return {"CANCELLED"}
 
-        # Do not touch this operator after quitting: the helper owns the
-        # downloaded ZIP and will restart Blender after replacing the package.
-        bpy.ops.wm.quit_blender()
+        # restart_blender owns the delayed quit and the injected helper script.
         return {"FINISHED"}
 
 
