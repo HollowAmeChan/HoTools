@@ -6,6 +6,8 @@ import json
 import re
 import shutil
 import sys
+import os
+import subprocess
 import tempfile
 import urllib.error
 import urllib.request
@@ -187,6 +189,48 @@ def download_release(url: str, target: Path) -> None:
         raise ValueError("Downloaded release ZIP is empty")
 
 
+def schedule_package_update(zip_path: Path, plugin_dir: Path = PLUGIN_DIR) -> Path:
+    """Start a background Blender helper that replaces the package after exit."""
+    helper_source = plugin_dir / "update_helper.py"
+    if not helper_source.is_file():
+        raise RuntimeError("HoTools update helper is missing")
+    helper_copy = Path(tempfile.gettempdir()) / f"HoTools-update-helper-{os.getpid()}.py"
+    shutil.copy2(helper_source, helper_copy)
+    config_path = Path(tempfile.gettempdir()) / f"HoTools-update-{os.getpid()}.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "old_pid": os.getpid(),
+                "zip_path": str(zip_path),
+                "plugin_dir": str(plugin_dir),
+                "blender_path": bpy.app.binary_path,
+                "blend_path": bpy.data.filepath or "",
+                "helper_path": str(helper_copy),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    try:
+        subprocess.Popen(
+            [
+                bpy.app.binary_path,
+                "--background",
+                "--factory-startup",
+                "--python",
+                str(helper_copy),
+                "--",
+                str(config_path),
+            ],
+            close_fds=True,
+        )
+    except Exception:
+        config_path.unlink(missing_ok=True)
+        helper_copy.unlink(missing_ok=True)
+        raise
+    return config_path
+
+
 def _prefs(context):
     addon = context.preferences.addons.get(__package__ or "HoTools")
     return addon.preferences if addon else None
@@ -249,7 +293,7 @@ class HO_OT_check_update(Operator):
 class HO_OT_install_update(Operator):
     bl_idname = "ho.install_update"
     bl_label = "安装 HoTools 更新"
-    bl_description = "下载最新安装包，卸载当前版本后安装并重启 Blender"
+    bl_description = "下载最新安装包，关闭 Blender 后替换插件并重启"
     confirm_install: BoolProperty(
         name="确认安装并重启",
         description="安装完成后会重启 Blender；当前未保存内容不会自动保存",
@@ -277,18 +321,7 @@ class HO_OT_install_update(Operator):
         temp_path = Path(tempfile.gettempdir()) / f"HoTools-update-{safe_tag}.zip"
         try:
             download_release(url, temp_path)
-            disable_result = bpy.ops.preferences.addon_disable(module=__package__ or "HoTools")
-            if "CANCELLED" in disable_result:
-                raise RuntimeError("Blender 拒绝禁用当前插件")
-            remove_result = bpy.ops.preferences.addon_remove(module=__package__ or "HoTools")
-            if "CANCELLED" in remove_result:
-                raise RuntimeError("Blender 拒绝卸载当前插件")
-            install_result = bpy.ops.preferences.addon_install(filepath=str(temp_path), overwrite=True)
-            if "CANCELLED" in install_result:
-                raise RuntimeError("Blender 安装新插件失败")
-            enable_result = bpy.ops.preferences.addon_enable(module="HoTools")
-            if "CANCELLED" in enable_result:
-                raise RuntimeError("Blender 安装成功但启用新插件失败")
+            schedule_package_update(temp_path)
         except (OSError, ValueError, RuntimeError, urllib.error.URLError) as exc:
             try:
                 if prefs:
@@ -297,16 +330,15 @@ class HO_OT_install_update(Operator):
                 # The addon may already be unregistered after addon_remove.
                 pass
             self.report({"ERROR"}, f"更新安装失败: {exc}")
-            return {"CANCELLED"}
-        finally:
             try:
                 temp_path.unlink(missing_ok=True)
             except OSError:
                 pass
+            return {"CANCELLED"}
 
-        self.report({"INFO"}, "HoTools 已更新，Blender 将重启")
-        # The existing restart operator preserves the current .blend path.
-        bpy.ops.ho.restart_blender("EXEC_DEFAULT", confirm_restart=True)
+        # Do not touch this operator after quitting: the helper owns the
+        # downloaded ZIP and will restart Blender after replacing the package.
+        bpy.ops.wm.quit_blender()
         return {"FINISHED"}
 
 
