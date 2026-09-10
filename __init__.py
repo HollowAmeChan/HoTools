@@ -345,6 +345,9 @@ class AddonPreference(bpy.types.AddonPreferences):
         version_row = version_box.row(align=True)
         version_row.label(text=f"版本: {metadata.get('version') or metadata.get('release_tag', 'dev')}")
         version_row.label(text=f"标签: {metadata.get('release_tag', 'dev')}")
+        if self.hoTools_update_latest:
+            version_row = version_box.row(align=True)
+            version_row.label(text=f"远程: {self.hoTools_update_latest}")
 
         version_row = version_box.row(align=True)
         version_row.enabled = not updater.is_development_build(metadata)
@@ -352,8 +355,6 @@ class AddonPreference(bpy.types.AddonPreferences):
         install_row = version_row.row(align=True)
         install_row.enabled = bool(self.hoTools_update_download_url and self.hoTools_update_latest)
         install_row.operator('ho.install_update', text='安装更新')
-        if self.hoTools_update_latest:
-            version_box.label(text=f"远程版本: {self.hoTools_update_latest}")
 
         intro = left.box()
         _draw_asset_library_controls(intro)
