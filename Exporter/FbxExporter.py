@@ -24,42 +24,46 @@
 #    Sort Elements > Material（仅 FACE）。
 #    解决多物体 FBX 导入 Unity 后，Unity 根据面/子网格顺序重建材质列表，
 #    导致各物体材质 slot 顺序出现不一致的问题；不改变材质槽本身。
-# 7. 清理未使用材质槽（默认开启）：删除没有被任何面使用的全部材质槽，
+# 7. 三角化（默认开启）：使用 Blender Triangulate 修改器固定四边形分割方式为
+#    FIXED，多边形分割为 BEAUTY，最少顶点为 4，并开启保持法向。
+#    解决 Blender 导出四边面后，Substance Painter 等软件因空间划分算法不同，
+#    重新三角化后产生法线、贴图或烘焙结果扭曲的问题。
+# 8. 清理未使用材质槽（默认开启）：删除没有被任何面使用的全部材质槽，
 #    不区分槽中是否已有材质。
 #    解决空槽或未被面引用的槽进入 FBX 后，造成 Unity 子网格和材质列表错位的问题。
-# 8. 忽略几何节点（默认开启）：导出前临时移除 NODES 修改器。
+# 9. 忽略几何节点（默认开启）：导出前临时移除 NODES 修改器。
 #    解决几何节点改变导出拓扑、实例结果或形态键兼容性的问题。
 #    gn无法被区分是否修改拓补，bl内部导出器选择保守方案认为他是拓补修改
-# 9. 忽略描边修改器（默认开启）：临时移除开启翻转法线的 SOLIDIFY 描边修改器。
+# 10. 忽略描边修改器（默认开启）：临时移除开启翻转法线的 SOLIDIFY 描边修改器。
 #    解决渲染用外壳被误当成模型几何导出，导致重复表面和法线异常的问题。
-# 10. 删除隐藏修改器（默认开启）：临时移除视口隐藏的修改器。
+# 11. 删除隐藏修改器（默认开启）：临时移除视口隐藏的修改器。
 #     解决隐藏修改器仍参与 FBX 评估，阻塞形态键/骨架等预处理或产生意外导出结果的问题。
 #
 # 三、骨架与蒙皮处理
-# 11. 应用骨架姿态（默认开启）：对当前选中的骨架调用 HoTools 内部的
+# 12. 应用骨架姿态（默认开启）：对当前选中的骨架调用 HoTools 内部的
 #     应用骨架姿态操作，把当前 Pose 应用为静置姿态，再以 REST 状态导出。
 #     解决 Blender FBX 导出骨架时忽略当前姿态、自动回到原始静置姿态的问题。
 #     内部操作失败时只跳过该骨架并警告，不使用 pose.armature_apply() 兜底。
-# 12. 清理权重（默认关闭）：删除极小权重、限制每顶点最多 4 个骨骼影响并归一化。
+# 13. 清理权重（默认关闭）：删除极小权重、限制每顶点最多 4 个骨骼影响并归一化。
 #     解决 Unity/运行时对骨骼影响数量有限制，以及微小权重造成不稳定变形的问题。
-# 13. 添加叶骨（默认开启）：为无子级且确实有权重的末端骨补充叶骨，并加入原骨骼集合。
+# 14. 添加叶骨（默认开启）：为无子级且确实有权重的末端骨补充叶骨，并加入原骨骼集合。
 #     解决 FBX/Unity 末端骨方向或层级显示不完整，同时避免给无权重骨和辅助骨乱加叶骨。
-# 14. 生成 MCH 骨（默认开启）：为标记的骨创建 MCH 旁路骨，清理主骨变换并转移约束引用。
+# 15. 生成 MCH 骨（默认开启）：为标记的骨创建 MCH 旁路骨，清理主骨变换并转移约束引用。
 #     解决动捕/运行时需要中立主骨、同时保留原始约束关系的问题；结果只存在于导出副本。
 #
 # 四、对象变换与附加元数据
-# 15. 矫正物体变换（默认开启）：按 HoTools 的导出约定修正顶级对象变换。
+# 16. 矫正物体变换（默认开启）：按 HoTools 的导出约定修正顶级对象变换。
 #     解决 Blender 对象局部变换、父子逆矩阵和 Unity 导入朝向不一致的问题。
 #     尤其解决骨架物体进unity还带旋转的问题
-# 16. 导出 Unity 元数据（默认开启）：在 FBX 旁的 HoFBX 文件夹生成约束 IR、
+# 17. 导出 Unity 元数据（默认开启）：在 FBX 旁的 HoFBX 文件夹生成约束 IR、
 #     骨骼集合和 Humanoid 映射等 JSON；也可分别关闭各类 JSON。
 #     解决 FBX 本身无法完整表达 HoTools 约束、骨骼集合和精确 Humanoid 映射的问题，
 #     让 Unity 导入端可以按原始语义重建运行时信息。
-# 17. 导出预设：保存主导出器的开关和 JSON 后缀设置。
+# 18. 导出预设：保存主导出器的开关和 JSON 后缀设置。
 #     解决不同资产重复配置导出参数、容易漏勾选的问题。
 #
 # 五、临时状态原则
-# 18. 导出期间会临时解除隐藏、切换选择/活动对象、修改修改器、Mesh 数据和骨架状态；
+# 19. 导出期间会临时解除隐藏、切换选择/活动对象、修改修改器、Mesh 数据和骨架状态；
 #     主导出结束后统一撤销，并恢复骨架 pose_position、选择状态和可见性。
 #     这些预处理主要服务于导出文件，不应把临时修复结果永久写回 Blender 工程。
 
@@ -101,6 +105,7 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
     # 需要保存/恢复的属性
     preset_values = [
         "op.meshifyCurves",
+        "op.triangulateMeshes",
         "op.applyArmaturePose",
         "op.addLeafBones",
         "op.generateMCHBones",
@@ -678,6 +683,81 @@ class FBXExporter:
                     failed.append(("<退出编辑模式>", mode_exc))
         finally:
             FBXExporter.restore_selection_by_names(selection_names, active_object_name)
+
+        selection = [
+            ob
+            for object_name in selection_names
+            if (ob := bpy.data.objects.get(object_name))
+            and ob.name in bpy.context.view_layer.objects
+        ]
+        active_object = bpy.context.view_layer.objects.active
+        return processed, failed, selection, active_object
+
+    @staticmethod
+    def triangulate_export_meshes(mesh_objects, selection, active_object):
+        """用 Blender Triangulate 修改器固定导出网格的三角形分割方式。"""
+        selection_names = [ob.name for ob in selection]
+        active_object_name = active_object.name if active_object else None
+        target_objects = []
+        visited_meshes = set()
+        failed = []
+
+        for ob in mesh_objects:
+            if ob.type != "MESH" or ob.name not in bpy.context.view_layer.objects:
+                continue
+            mesh = getattr(ob, "data", None)
+            if mesh is None or not mesh.polygons:
+                continue
+            mesh_id = mesh.as_pointer()
+            if mesh_id in visited_meshes:
+                continue
+            visited_meshes.add(mesh_id)
+            target_objects.append(ob)
+
+        if not target_objects:
+            return 0, [], selection, active_object
+
+        processed = 0
+        for ob in target_objects:
+            triangulate_modifier = None
+            triangulate_modifier_name = None
+            try:
+                bpy.ops.object.select_all(action="DESELECT")
+                ob.select_set(True)
+                bpy.context.view_layer.objects.active = ob
+                bpy.context.view_layer.update()
+
+                triangulate_modifier = ob.modifiers.new(
+                    name="HoFBX Triangulate",
+                    type="TRIANGULATE",
+                )
+                triangulate_modifier_name = triangulate_modifier.name
+                triangulate_modifier.quad_method = "FIXED"
+                triangulate_modifier.ngon_method = "BEAUTY"
+                triangulate_modifier.min_vertices = 4
+                triangulate_modifier.keep_custom_normals = True
+                bpy.context.view_layer.update()
+
+                result = bpy.ops.object.modifier_apply(
+                    modifier=triangulate_modifier_name,
+                )
+                if "FINISHED" not in result:
+                    raise RuntimeError(f"modifier_apply returned {result}")
+                processed += 1
+            except Exception as exc:
+                failed.append((ob.name, exc))
+                if (
+                    triangulate_modifier_name is not None
+                    and ob.modifiers.get(triangulate_modifier_name) is not None
+                ):
+                    try:
+                        ob.modifiers.remove(
+                            ob.modifiers.get(triangulate_modifier_name)
+                        )
+                    except (ReferenceError, RuntimeError):
+                        pass
+
+        FBXExporter.restore_selection_by_names(selection_names, active_object_name)
 
         selection = [
             ob
@@ -1565,7 +1645,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ) # type: ignore
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。无权重骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="为勾选了generateMCH的骨生成MCH_前缀同级旁路骨、清空主骨变换并写入HoTools_MCH_Parent绑定。仅存在于导出的FBX,工程不留痕",default=True) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="为勾选了generateMCH的骨生成MCH_前缀同级旁路骨、清空主骨变换并写入HoTools_MCH_Parent绑定。不留痕",default=True) # type: ignore
     showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
@@ -1576,15 +1656,16 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
     humanoidMappingSuffix:bpy.props.StringProperty(name="Humanoid后缀",description="HoFBX文件夹内的Humanoid mapping JSON文件后缀",default="_humanoid") # type: ignore
     exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成Rig约束IR、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
-    applyArmaturePose:BoolProperty(name="应用骨架姿态",description="导出前调用 HoTools 的应用骨架姿态操作，将当前选中骨架的 Pose 应用为静置姿态。操作失败时跳过该骨架并提示警告。随导出末尾撤销,工程不留痕",default=True) # type: ignore
+    applyArmaturePose:BoolProperty(name="应用骨架姿态",description="导出前调用 HoTools 的应用骨架姿态操作，将当前选中骨架的 Pose 应用为静置姿态。操作失败时跳过该骨架并提示警告。不留痕",default=True) # type: ignore
     # 保留 RNA 属性名以兼容已保存的预设；界面名称已扩展为同时处理曲线和共享网格对象。
-    meshifyCurves:BoolProperty(name="网格化对象",description="导出前把选中的曲线临时转换为网格，并为共享 Mesh 数据的对象（包括 Alt+D）创建独立数据，让 HoFBX 能正确导出。随导出末尾撤销,工程不留痕",default=True) # type: ignore
+    meshifyCurves:BoolProperty(name="网格化对象",description="导出前把选中的曲线临时转换为网格，并为共享 Mesh 数据的对象（包括 Alt+D）创建独立数据，让 HoFBX 能正确导出。不留痕",default=True) # type: ignore
+    triangulateMeshes:BoolProperty(name="三角化",description="导出前使用 Blender Triangulate 修改器固定四边形为 FIXED、多边形为 BEAUTY、最少顶点为4，并开启保持法向。不留痕",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
-    cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。随导出末尾撤销,工程不留痕",default=False) # type: ignore
-    cleanEmptyMaterialSlots:BoolProperty(name="清理未使用材质槽",description="导出前删除选中网格中没有被任何面使用的材质槽（无论槽中是否已有材质）。随导出末尾撤销,工程不留痕",default=True) # type: ignore
+    cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。不留痕",default=False) # type: ignore
+    cleanEmptyMaterialSlots:BoolProperty(name="清理未使用材质槽",description="导出前删除选中网格中没有被任何面使用的材质槽（无论槽中是否已有材质）。不留痕",default=True) # type: ignore
     removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
-    ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器，避免几何节点改变导出网格拓扑；导出后自动恢复",default=True) # type: ignore
-    ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）；导出后自动恢复",default=True) # type: ignore
+    ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器，避免几何节点改变导出网格拓扑。不留痕",default=True) # type: ignore
+    ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）。不留痕",default=True) # type: ignore
 
     def getParams(self,context, report_errors=True):
         """返回写死的 export_scene.fbx 参数。
@@ -1672,6 +1753,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         humanoid_mapping_data = None
         failed_data_transfer_count = 0
         failed_material_sort_count = 0
+        failed_triangulate_count = 0
         failed_armature_pose_count = 0
 
         #准备操作，全显场景中的对象与集合，并且全选
@@ -1767,7 +1849,59 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     f"[HoTools FBX] 数据传递修改器隐式修复：手动应用了 "
                     f"{data_transfer_applied} 个修改器"
                 )
-             # blender默认的fbx导出对材质slot顺序的处理不是unity喜欢的按面排序，会导致多物体多材质fbx导出进unity时材质slot顺序不对（同fbx导回bl正常），这不是bl/fbx的问题，是两边习惯的问题。解决问题只需要在bl中重排面序
+            if self.applyArmaturePose:
+                applied_armatures, failed_armatures, selection, active_object = (
+                    FBXExporter.apply_selected_armature_poses(
+                        selected_armature_objects,
+                        selection,
+                        active_object,
+                    )
+                )
+                failed_armature_pose_count = len(failed_armatures)
+                if failed_armatures:
+                    print("[HoTools FBX] Failed to apply armature poses:")
+                    for ob_name, exc in failed_armatures:
+                        print(f"  {ob_name}: {type(exc).__name__}: {exc}")
+                    self.report(
+                        {"WARNING"},
+                        f"{len(failed_armatures)} 个骨架应用姿态失败，已跳过，详见控制台",
+                    )
+                print(f"[HoTools FBX] 应用骨架姿态：成功处理 {applied_armatures} 个骨架")
+
+            # 应用姿态后再切换到 REST 显示，避免 FBX 导出时回到原始静置姿态。
+            FBXExporter.set_armatures_pose_position(armature_objects, "REST")
+
+            if self.triangulateMeshes:
+                (
+                    triangulated_meshes,
+                    failed_triangulate,
+                    selection,
+                    active_object,
+                ) = FBXExporter.triangulate_export_meshes(
+                    selection,
+                    selection,
+                    active_object,
+                )
+                failed_triangulate_count = len(failed_triangulate)
+                if failed_triangulate:
+                    print("[HoTools FBX] Failed to triangulate meshes:")
+                    for ob_name, exc in failed_triangulate:
+                        print(
+                            f"  {ob_name}: {type(exc).__name__}: {exc}"
+                        )
+                    self.report(
+                        {"WARNING"},
+                        "导出网格三角化失败，详见控制台",
+                    )
+                elif triangulated_meshes:
+                    print(
+                        f"[HoTools FBX] 三角化：处理了 "
+                        f"{triangulated_meshes} 个 Mesh"
+                    )
+
+            # blender默认的fbx导出对材质slot顺序的处理不是unity喜欢的按面排序，
+            # 会导致多物体多材质fbx导出进unity时材质slot顺序不对（同fbx导回bl正常）。
+            # 这不是材质引用丢失，而是两边对面/子网格顺序的处理习惯不同。
             (
                 material_sort_processed,
                 failed_material_sort,
@@ -1794,28 +1928,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     f"[HoTools FBX] 材质面顺序隐式修复：整理了 "
                     f"{material_sort_processed} 个 Mesh"
                 )
-
-            if self.applyArmaturePose:
-                applied_armatures, failed_armatures, selection, active_object = (
-                    FBXExporter.apply_selected_armature_poses(
-                        selected_armature_objects,
-                        selection,
-                        active_object,
-                    )
-                )
-                failed_armature_pose_count = len(failed_armatures)
-                if failed_armatures:
-                    print("[HoTools FBX] Failed to apply armature poses:")
-                    for ob_name, exc in failed_armatures:
-                        print(f"  {ob_name}: {type(exc).__name__}: {exc}")
-                    self.report(
-                        {"WARNING"},
-                        f"{len(failed_armatures)} 个骨架应用姿态失败，已跳过，详见控制台",
-                    )
-                print(f"[HoTools FBX] 应用骨架姿态：成功处理 {applied_armatures} 个骨架")
-
-            # 应用姿态后再切换到 REST 显示，避免 FBX 导出时回到原始静置姿态。
-            FBXExporter.set_armatures_pose_position(armature_objects, "REST")
 
             if self.cleanEmptyMaterialSlots:
                 cleaned_meshes, removed_slots = FBXExporter.clean_unused_material_slots(
@@ -1959,6 +2071,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         if (
             failed_data_transfer_count
             or failed_material_sort_count
+            or failed_triangulate_count
             or failed_armature_pose_count
         ):
             warning_parts = []
@@ -1968,6 +2081,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 )
             if failed_material_sort_count:
                 warning_parts.append("导出网格按材质整理面顺序失败")
+            if failed_triangulate_count:
+                warning_parts.append("导出网格三角化失败")
             if failed_armature_pose_count:
                 warning_parts.append(
                     f"{failed_armature_pose_count} 个骨架应用姿态失败"
@@ -2020,11 +2135,19 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_box = layout.box()
         option_box.label(text="预处理", icon='MODIFIER')
         option_col = option_box.column(align=True, heading="")
+        option_col.prop(self, "triangulateMeshes")
+        if self.triangulateMeshes:
+            info = option_col.row()
+            info.enabled = False
+            info.label(
+                text="blender预览时遇到三角化不一致时，可添加同样设置的 Triangulate 修改器对齐",
+                icon='INFO',
+            )
+        option_col.prop(self, "cleanWeights")
         option_col.prop(self, "meshifyCurves")
         option_col.prop(self, "applyArmaturePose")
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
-        option_col.prop(self, "cleanWeights")
         option_col.prop(self, "cleanEmptyMaterialSlots")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
