@@ -36,6 +36,7 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
     # 需要保存/恢复的属性
     preset_values = [
         "op.meshifyCurves",
+        "op.applyArmaturePose",
         "op.addLeafBones",
         "op.generateMCHBones",
         "op.cleanWeights",
@@ -282,6 +283,45 @@ class FBXExporter:
         ]
         active_object = bpy.context.view_layer.objects.active
         return converted_objects, made_single_user, failed, selection, active_object
+
+    @staticmethod
+    def apply_selected_armature_poses(armature_objects, selection, active_object):
+        """将选中骨架的当前 Pose 临时应用为静置姿态。"""
+        selection_names = [ob.name for ob in selection]
+        active_object_name = active_object.name if active_object else None
+        applied = 0
+        failed = []
+
+        try:
+            for armature in armature_objects:
+                if armature.name not in bpy.context.view_layer.objects:
+                    continue
+
+                try:
+                    bpy.ops.object.select_all(action='DESELECT')
+                    armature.select_set(True)
+                    bpy.context.view_layer.objects.active = armature
+
+                    result = bpy.ops.ho.apply_rest_pose("EXEC_DEFAULT")
+
+                    if "FINISHED" not in result:
+                        raise RuntimeError(f"operator returned {result}")
+                    applied += 1
+                except Exception as exc:
+                    failed.append((armature.name, exc))
+                    if bpy.context.mode != "OBJECT" and bpy.ops.object.mode_set.poll():
+                        bpy.ops.object.mode_set(mode="OBJECT")
+        finally:
+            FBXExporter.restore_selection_by_names(selection_names, active_object_name)
+
+        selection = [
+            ob
+            for object_name in selection_names
+            if (ob := bpy.data.objects.get(object_name))
+            and ob.name in bpy.context.view_layer.objects
+        ]
+        active_object = bpy.context.view_layer.objects.active
+        return applied, failed, selection, active_object
 
     @staticmethod
     def get_weighted_bone_names(armature_ob):
@@ -1094,6 +1134,16 @@ class FBXExporter:
             state.append((armature.name, armature.pose_position))
             armature.pose_position = pose_position
         return state
+
+    @staticmethod
+    def capture_armatures_pose_position(armature_objects):
+        state = []
+        for ob in armature_objects:
+            armature = ob.data
+            if not hasattr(armature, "pose_position"):
+                continue
+            state.append((armature.name, armature.pose_position))
+        return state
     @staticmethod
     def restore_armatures_pose_position(state):
         for armature_name, pose_position in state:
@@ -1308,6 +1358,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
     humanoidMappingSuffix:bpy.props.StringProperty(name="Humanoid后缀",description="HoFBX文件夹内的Humanoid mapping JSON文件后缀",default="_humanoid") # type: ignore
     exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成Rig约束IR、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
+    applyArmaturePose:BoolProperty(name="应用骨架姿态",description="导出前调用 HoTools 的应用骨架姿态操作，将当前选中骨架的 Pose 应用为静置姿态。操作失败时跳过该骨架并提示警告。随导出末尾撤销,工程不留痕",default=True) # type: ignore
     # 保留 RNA 属性名以兼容已保存的预设；界面名称已扩展为同时处理曲线和共享网格对象。
     meshifyCurves:BoolProperty(name="网格化对象",description="导出前把选中的曲线临时转换为网格，并为共享 Mesh 数据的对象（包括 Alt+D）创建独立数据，让 HoFBX 能正确导出。随导出末尾撤销,工程不留痕",default=True) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
@@ -1401,6 +1452,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             ob for ob in selection if ob.type == "ARMATURE"
         ]
         humanoid_mapping_data = None
+        failed_armature_pose_count = 0
 
         #准备操作，全显场景中的对象与集合，并且全选
         if bpy.ops.object.mode_set.poll():
@@ -1410,7 +1462,15 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         FBXExporter.unhide_objects()
 
         try:
-            pose_position_state = FBXExporter.set_armatures_pose_position(armature_objects, "REST")
+            pose_position_state = FBXExporter.capture_armatures_pose_position(
+                armature_objects
+            )
+            if self.applyArmaturePose:
+                # Keep the authored Pose evaluated while mesh modifiers are baked
+                # by ho.apply_rest_pose below.
+                FBXExporter.set_armatures_pose_position(armature_objects, "POSE")
+            else:
+                FBXExporter.set_armatures_pose_position(armature_objects, "REST")
 
             # Capture authored labels while the original Blender hierarchy and
             # bone properties are still intact.  MCH generation below changes
@@ -1456,6 +1516,28 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     f"[HoTools FBX] 对象网格化：转换了 {converted_objects} 个曲线类对象，"
                     f"创建了 {made_single_user} 个独立 Mesh 数据"
                 )
+
+            if self.applyArmaturePose:
+                applied_armatures, failed_armatures, selection, active_object = (
+                    FBXExporter.apply_selected_armature_poses(
+                        selected_armature_objects,
+                        selection,
+                        active_object,
+                    )
+                )
+                failed_armature_pose_count = len(failed_armatures)
+                if failed_armatures:
+                    print("[HoTools FBX] Failed to apply armature poses:")
+                    for ob_name, exc in failed_armatures:
+                        print(f"  {ob_name}: {type(exc).__name__}: {exc}")
+                    self.report(
+                        {"WARNING"},
+                        f"{len(failed_armatures)} 个骨架应用姿态失败，已跳过，详见控制台",
+                    )
+                print(f"[HoTools FBX] 应用骨架姿态：成功处理 {applied_armatures} 个骨架")
+
+            # 应用姿态后再切换到 REST 显示，避免 FBX 导出时回到原始静置姿态。
+            FBXExporter.set_armatures_pose_position(armature_objects, "REST")
 
             if self.cleanEmptyMaterialSlots:
                 cleaned_meshes, removed_slots = FBXExporter.clean_unused_material_slots(
@@ -1596,7 +1678,12 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             FBXExporter.restore_armatures_pose_position(pose_position_state)
             report_exception(self, "导出后重置场景失败", e)
             return {'CANCELLED'}
-        if removed_hidden_modifiers:
+        if failed_armature_pose_count:
+            self.report(
+                {"WARNING"},
+                f"导出成功，但 {failed_armature_pose_count} 个骨架应用姿态失败，已跳过，详见控制台",
+            )
+        elif removed_hidden_modifiers:
             self.report({"INFO"}, f"导出成功，临时删除隐藏修改器 {len(removed_hidden_modifiers)} 个")
         elif exported_json:
             self.report({"INFO"}, f"导出成功，同时导出约束 JSON {len(exported_json)} 个")
@@ -1641,6 +1728,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_box.label(text="预处理", icon='MODIFIER')
         option_col = option_box.column(align=True, heading="")
         option_col.prop(self, "meshifyCurves")
+        option_col.prop(self, "applyArmaturePose")
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
         option_col.prop(self, "cleanWeights")

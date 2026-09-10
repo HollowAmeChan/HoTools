@@ -339,28 +339,23 @@ class AddonPreference(bpy.types.AddonPreferences):
         left = columns.column(align=True)
         right = columns.column(align=True)
 
+        # 绘制版本信息和更新检查
         version_box = left.box()
-        version_box.label(text="HoTools 版本")
         metadata = updater.read_version_info()
-        version_box.label(text=f"当前版本: {metadata.get('version') or metadata.get('release_tag', 'dev')}")
-        version_box.label(text=f"发布标签: {metadata.get('release_tag', 'dev')}")
-        status = (
-            "本地开发版本，不参与自动更新"
-            if updater.is_development_build(metadata)
-            else self.hoTools_update_status
-        )
-        version_box.label(text=status, icon='INFO')
+        version_row = version_box.row(align=True)
+        version_row.label(text=f"版本: {metadata.get('version') or metadata.get('release_tag', 'dev')}")
+        version_row.label(text=f"标签: {metadata.get('release_tag', 'dev')}")
+
         version_row = version_box.row(align=True)
         version_row.enabled = not updater.is_development_build(metadata)
         version_row.operator('ho.check_for_update', icon='FILE_REFRESH')
         install_row = version_row.row(align=True)
         install_row.enabled = bool(self.hoTools_update_download_url and self.hoTools_update_latest)
-        install_row.operator('ho.install_update', icon='IMPORT', text='安装更新')
+        install_row.operator('ho.install_update', text='安装更新')
         if self.hoTools_update_latest:
             version_box.label(text=f"远程版本: {self.hoTools_update_latest}")
 
         intro = left.box()
-        intro.label(text='HoTools 模块设置')
         _draw_asset_library_controls(intro)
 
         def draw_exicon(content):
