@@ -185,7 +185,7 @@ class RTBakeChannel:
     def get_bake_margin(self, context):
         return context.scene.render.bake.margin
 
-    def is_non_color_output(self):
+    def is_non_color_output(self, context=None):
         return self.bake_type in NON_COLOR_BAKE_TYPES
 
     def use_active_camera_view(self, context):
@@ -214,8 +214,21 @@ class RTBakeChannel:
             "oidn_hdr": rt_settings.oidn_hdr,
         }
 
-    def postprocess_saved_image(self, filepath, image_name, context, operator):
-        return self._postprocess_oidn_denoise(filepath, image_name, context, operator)
+    def postprocess_saved_image(
+        self,
+        filepath,
+        image_name,
+        context,
+        operator,
+        source_array=None,
+    ):
+        return self._postprocess_oidn_denoise(
+            filepath,
+            image_name,
+            context,
+            operator,
+            source_array=source_array,
+        )
 
     # ------------------------------------------------------------------
     # 主执行流程
@@ -291,7 +304,11 @@ class RTBakeChannel:
             "margin_type": bake_settings.margin_type,
             "use_selected_to_active": False,
             "target": 'IMAGE_TEXTURES',
-            "save_mode": 'EXTERNAL',
+            # Keep the bake result in the target Image datablock. The channel
+            # pipeline applies its own filenames, padding and OIDN pass before
+            # writing the final file, so Blender's external bake writer would
+            # otherwise leave these temporary images blank.
+            "save_mode": 'INTERNAL',
             "use_clear": False,
             "use_cage": False,
             "use_split_materials": bake_settings.use_split_materials,
@@ -460,9 +477,11 @@ class RTBakeChannel:
                             f"HoRTBake_{mat.name}",
                             bake_settings.width,
                             bake_settings.height,
-                            alpha=True
+                            alpha=True,
+                            # Keep data outputs in a float buffer. The bake
+                            # writes scene-linear values before export.
+                            float_buffer=self.is_non_color_output(context),
                         )
-                        self._set_image_color_space(image)
                         image_by_material[image_key] = image
                 else:
                     if shared_image is None:
@@ -470,9 +489,9 @@ class RTBakeChannel:
                             "HoRTBake_Merged",
                             bake_settings.width,
                             bake_settings.height,
-                            alpha=True
+                            alpha=True,
+                            float_buffer=self.is_non_color_output(context),
                         )
-                        self._set_image_color_space(shared_image)
                     image = shared_image
 
                 node = nodes.new(type='ShaderNodeTexImage')
@@ -516,8 +535,27 @@ class RTBakeChannel:
 
             image.filepath_raw = filepath
             image.file_format = image_settings.file_format
-            image.save()
-            self.postprocess_saved_image(filepath, image_name, context, operator)
+            # Baking or an earlier channel may leave the temporary image with
+            # a different color-space assignment. Re-apply the channel choice
+            # immediately before Blender performs the file encoding.
+            if self.is_non_color_output(context):
+                source_array = self._read_non_color_pixels(image)
+                self._save_array_image(filepath, source_array)
+                # Set the datablock metadata only after its baked pixels have
+                # been copied out; changing colorspace can invalidate/reload
+                # the image buffer in Blender.
+                self._set_image_color_space(image, context)
+                self.postprocess_saved_image(
+                    filepath,
+                    image_name,
+                    context,
+                    operator,
+                    source_array=source_array,
+                )
+            else:
+                self._set_image_color_space(image, context)
+                image.save()
+                self.postprocess_saved_image(filepath, image_name, context, operator)
 
     def _restore_active_image_targets(self, targets):
         images = []
@@ -574,13 +612,29 @@ class RTBakeChannel:
 
         return os.path.join(directory, stem + ext)
 
-    def _set_image_color_space(self, image):
-        if not self.is_non_color_output():
+    def _set_image_color_space(self, image, context):
+        if not self.is_non_color_output(context):
             return
         try:
             image.colorspace_settings.name = 'Non-Color'
         except TypeError:
             pass
+
+    def _read_non_color_pixels(self, image):
+        """Read baked data directly from Blender's float pixel buffer.
+
+        Blender stores rows bottom-up while Pillow expects top-down rows.
+        """
+        width, height = image.size[:]
+        if width <= 0 or height <= 0:
+            return np.zeros((0, 0, 4), dtype=np.uint8)
+
+        pixel_count = width * height * 4
+        pixels = np.empty(pixel_count, dtype=np.float32)
+        image.pixels.foreach_get(pixels)
+        pixels = np.clip(pixels, 0.0, 1.0)
+        rgba = np.rint(pixels.reshape((height, width, 4)) * 255.0).astype(np.uint8)
+        return rgba[::-1]
 
     def _clean_filename_part(self, name):
         return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
@@ -588,11 +642,22 @@ class RTBakeChannel:
     # ------------------------------------------------------------------
     # 输出图片后处理
 
-    def _postprocess_oidn_denoise(self, filepath, image_name, context, operator):
+    def _postprocess_oidn_denoise(
+        self,
+        filepath,
+        image_name,
+        context,
+        operator,
+        source_array=None,
+    ):
         uv_padding_context = self.build_oidn_padding_context(context, image_name)
         if uv_padding_context["debug_output"]:
             self._save_debug_image(filepath, "BLRaw", filepath)
-        oidn_input = self._expand_image_for_oidn(filepath, uv_padding_context)
+        oidn_input = self._expand_image_for_oidn(
+            filepath,
+            uv_padding_context,
+            source_array=source_array,
+        )
         if uv_padding_context["debug_output"]:
             self._save_debug_image(filepath, "InfinitePadding", oidn_input["array"])
         if uv_padding_context["use_oidn_denoise"]:
@@ -615,9 +680,12 @@ class RTBakeChannel:
             self._save_array_image(debug_path, image_data)
         return debug_path
 
-    def _expand_image_for_oidn(self, filepath, uv_padding_context):
-        image = Image.open(filepath).convert("RGBA")
-        arr = np.array(image, dtype=np.uint8)
+    def _expand_image_for_oidn(self, filepath, uv_padding_context, source_array=None):
+        if source_array is None:
+            image = Image.open(filepath).convert("RGBA")
+            arr = np.array(image, dtype=np.uint8)
+        else:
+            arr = np.asarray(source_array, dtype=np.uint8)
         surface_mask = self._build_uv_mask(
             uv_padding_context["objects"],
             arr.shape[1],
@@ -727,22 +795,79 @@ class RTBakeChannel:
                     if mat is None or mat.name != material_name:
                         continue
 
-                pts = []
+                uv_points = []
                 for loop_index in poly.loop_indices:
                     uv = uv_layer.data[loop_index].uv
-                    x = int(round(uv.x * (width - 1)))
-                    y = int(round((1.0 - uv.y) * (height - 1)))
+                    uv_points.append((float(uv.x), float(uv.y)))
+
+                # Restrict the mask to the primary 0-1 UV tile. Clamping
+                # vertices to the image border makes islands outside that tile
+                # collapse onto an edge and incorrectly fill valid pixels.
+                uv_points = self._clip_uv_polygon_to_unit_tile(uv_points)
+                if len(uv_points) < 3:
+                    continue
+
+                pts = []
+                for u, v in uv_points:
+                    x = int(round(u * (width - 1)))
+                    y = int(round((1.0 - v) * (height - 1)))
                     pts.append((max(0, min(width - 1, x)), max(0, min(height - 1, y))))
 
                 if len(pts) < 3:
                     continue
-                for i in range(1, len(pts) - 1):
-                    draw.polygon([pts[0], pts[i], pts[i + 1]], fill=255)
+                draw.polygon(pts, fill=255)
 
         mask = np.array(mask_img, dtype=np.uint8) > 0
         if margin > 0:
             mask = self._dilate_mask(mask, margin)
         return mask
+
+    def _clip_uv_polygon_to_unit_tile(self, points):
+        """Clip a UV polygon against the [0, 1] x [0, 1] tile."""
+        clipped = list(points)
+        for axis, boundary, keep_greater in (
+            (0, 0.0, True),
+            (0, 1.0, False),
+            (1, 0.0, True),
+            (1, 1.0, False),
+        ):
+            if not clipped:
+                break
+
+            output = []
+            previous = clipped[-1]
+            previous_value = previous[axis]
+            previous_inside = (
+                previous_value >= boundary if keep_greater
+                else previous_value <= boundary
+            )
+
+            for current in clipped:
+                current_value = current[axis]
+                current_inside = (
+                    current_value >= boundary if keep_greater
+                    else current_value <= boundary
+                )
+
+                if current_inside != previous_inside:
+                    delta = current_value - previous_value
+                    if abs(delta) > 1e-12:
+                        factor = (boundary - previous_value) / delta
+                        output.append((
+                            previous[0] + (current[0] - previous[0]) * factor,
+                            previous[1] + (current[1] - previous[1]) * factor,
+                        ))
+
+                if current_inside:
+                    output.append(current)
+
+                previous = current
+                previous_value = current_value
+                previous_inside = current_inside
+
+            clipped = output
+
+        return clipped
 
     def _dilate_mask(self, mask, radius):
         if radius <= 0 or not mask.any():
@@ -1403,6 +1528,24 @@ class RTDirectChannel(RTBakeChannel):
             pass_filter={'DIRECT', 'INDIRECT', 'DIFFUSE', 'GLOSSY', 'TRANSMISSION', 'EMIT'}
         )
 
+    def draw_settings(self, layout, context):
+        super().draw_settings(layout, context)
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(
+            rt_settings,
+            "direct_non_color",
+            text="非彩色图像",
+        )
+
+    def is_non_color_output(self, context=None):
+        if context is None:
+            return False
+        rt_settings = getattr(context.scene, "ho_uvtools_rt_bake_settings", None)
+        return bool(rt_settings and rt_settings.direct_non_color)
+
 
 class RTAOChannel(RTShadowCastChannel):
     """
@@ -1448,7 +1591,7 @@ class RTAOChannel(RTShadowCastChannel):
         strength_col.enabled = rt_settings.ao_search_normal_map
         strength_col.prop(rt_settings, "ao_normal_strength")
 
-    def is_non_color_output(self):
+    def is_non_color_output(self, context=None):
         return True
 
     def use_active_camera_view(self, context):
@@ -1552,10 +1695,20 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
         default='HIGH'
     )  # type: ignore
     oidn_hdr: BoolProperty(name="HDR", default=False)  # type: ignore
+    ignore_geometry_nodes: BoolProperty(
+        name="忽略几何节点",
+        description="烘焙期间临时关闭场景中所有Geometry Nodes修改器，结束后恢复原状态",
+        default=True,
+    )  # type: ignore
 
     use_direct: BoolProperty(name="直出", default=True)  # type: ignore
     suffix_direct: StringProperty(name="直出后缀", default="Direct")  # type: ignore
     show_direct_settings: BoolProperty(name="直出设置", default=False)  # type: ignore
+    direct_non_color: BoolProperty(
+        name="非彩色图像",
+        description="以 Non-Color 数据图像方式保存直出结果，适合需要避免 sRGB 编码的贴图",
+        default=False,
+    )  # type: ignore
     use_ao: BoolProperty(name="环境光遮蔽 (AO)", default=False)  # type: ignore
     suffix_ao: StringProperty(name="环境光遮蔽后缀", default="AO")  # type: ignore
     show_ao_settings: BoolProperty(name="环境光遮蔽设置", default=False)  # type: ignore
@@ -1865,8 +2018,15 @@ class OT_UVTools_RTBake(Operator):
         original_bake_type = scene.cycles.bake_type
         original_cycles_sampling = self._capture_cycles_sampling(scene)
         original_view_from = bake_settings.view_from
+        original_save_mode = bake_settings.save_mode
+        rt_settings = scene.ho_uvtools_rt_bake_settings
+        geometry_nodes_state = []
 
         try:
+            if getattr(rt_settings, "ignore_geometry_nodes", True):
+                geometry_nodes_state = self._disable_geometry_nodes(scene)
+                if geometry_nodes_state:
+                    context.view_layer.update()
             self._apply_bake_defaults(context)
             self._apply_cycles_sampling(scene)
 
@@ -1878,6 +2038,10 @@ class OT_UVTools_RTBake(Operator):
             scene.cycles.bake_type = original_bake_type
             self._restore_cycles_sampling(scene, original_cycles_sampling)
             bake_settings.view_from = original_view_from
+            bake_settings.save_mode = original_save_mode
+            self._restore_geometry_nodes(geometry_nodes_state)
+            if geometry_nodes_state:
+                context.view_layer.update()
 
         self.report({'INFO'}, f"已导出 {len(bake_channels)} 个RT烘焙通道")
         return {'FINISHED'}
@@ -1897,10 +2061,48 @@ class OT_UVTools_RTBake(Operator):
         bake_settings = scene.render.bake
         rt_settings = scene.ho_uvtools_rt_bake_settings
         bake_settings.target = 'IMAGE_TEXTURES'
-        bake_settings.save_mode = 'EXTERNAL'
+        # The add-on saves the populated target images after padding/OIDN.
+        # Keep Cycles' bake result internal so those target images contain it.
+        bake_settings.save_mode = 'INTERNAL'
         bake_settings.width = rt_settings.resolution
         bake_settings.height = rt_settings.resolution
         bake_settings.margin_type = rt_settings.margin_space
+
+    def _disable_geometry_nodes(self, scene):
+        """Temporarily disable all Geometry Nodes modifiers in the scene."""
+        state = []
+        for obj in scene.objects:
+            for modifier in obj.modifiers:
+                if modifier.type != 'NODES':
+                    continue
+
+                original = {
+                    "show_viewport": getattr(modifier, "show_viewport", None),
+                    "show_render": getattr(modifier, "show_render", None),
+                }
+                state.append((obj, modifier, original))
+
+                try:
+                    if original["show_viewport"] is not None:
+                        modifier.show_viewport = False
+                    if original["show_render"] is not None:
+                        modifier.show_render = False
+                except (ReferenceError, RuntimeError, TypeError):
+                    continue
+
+        return state
+
+    def _restore_geometry_nodes(self, state):
+        for obj, modifier, original in state:
+            try:
+                if obj is None or modifier is None:
+                    continue
+                if original["show_viewport"] is not None:
+                    modifier.show_viewport = original["show_viewport"]
+                if original["show_render"] is not None:
+                    modifier.show_render = original["show_render"]
+            except (ReferenceError, RuntimeError, TypeError):
+                continue
 
     # ------------------------------------------------------------------
     # Cycles 采样和降噪临时设置
@@ -1942,6 +2144,7 @@ def draw_rt_bake_output(layout: bpy.types.UILayout, context):
     col.prop(rt_settings, "resolution")
     col.prop(bake_settings.image_settings, "file_format", text="格式")
     col.prop(bake_settings, "use_split_materials", text="按材质分离")
+    col.prop(rt_settings, "ignore_geometry_nodes")
     col.prop(rt_settings, "debug_output")
 
     margin_col = box.column(align=True)
