@@ -38,6 +38,7 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
         "op.addLeafBones",
         "op.generateMCHBones",
         "op.cleanWeights",
+        "op.cleanEmptyMaterialSlots",
         "op.fixObjectTransform",
         "op.removeHiddenModifiers",
         "op.ignoreGeometryNodes",
@@ -308,6 +309,51 @@ class FBXExporter:
                 tool_settings.use_auto_normalize = prev_auto_normalize
             bpy.context.view_layer.objects.active = prev_active
         return processed
+
+    @staticmethod
+    def clean_unused_material_slots(mesh_objects):
+        """删除导出网格中没有被任何面使用的材质槽。
+
+        不论槽中是否已有材质，只保留被面材质索引引用的槽；导出结束后由统一的
+        undo 回滚。返回 (处理网格数, 删除槽数)。
+        """
+        processed = 0
+        removed = 0
+        visited_meshes = set()
+
+        for ob in mesh_objects:
+            if ob.type != "MESH" or ob.name not in bpy.context.view_layer.objects:
+                continue
+
+            mesh = getattr(ob, "data", None)
+            if mesh is None:
+                continue
+            mesh_id = mesh.as_pointer()
+            if mesh_id in visited_meshes:
+                continue
+            visited_meshes.add(mesh_id)
+
+            slot_count = len(mesh.materials)
+            if not slot_count:
+                continue
+
+            used_indices = {
+                polygon.material_index
+                for polygon in mesh.polygons
+                if 0 <= polygon.material_index < slot_count
+            }
+            removable_indices = [
+                index for index in range(slot_count) if index not in used_indices
+            ]
+            if not removable_indices:
+                continue
+
+            for index in reversed(removable_indices):
+                mesh.materials.pop(index=index)
+            processed += 1
+            removed += len(removable_indices)
+
+        return processed, removed
 
     LEAF_SUFFIX = "_end"
     @staticmethod
@@ -1189,6 +1235,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成Rig约束IR、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。随导出末尾撤销,工程不留痕",default=False) # type: ignore
+    cleanEmptyMaterialSlots:BoolProperty(name="清理未使用材质槽",description="导出前删除选中网格中没有被任何面使用的材质槽（无论槽中是否已有材质）。随导出末尾撤销,工程不留痕",default=True) # type: ignore
     removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器，避免几何节点改变导出网格拓扑；导出后自动恢复",default=True) # type: ignore
     ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）；导出后自动恢复",default=True) # type: ignore
@@ -1318,6 +1365,15 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     for ob_name, mod_name, exc in failed_outline:
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
                     self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
+
+            if self.cleanEmptyMaterialSlots:
+                cleaned_meshes, removed_slots = FBXExporter.clean_unused_material_slots(
+                    selection
+                )
+                print(
+                    f"[HoTools FBX] 未使用材质槽清理：处理了 {cleaned_meshes} 个网格，"
+                    f"删除了 {removed_slots} 个槽"
+                )
 
             # 清理权重（须在补叶骨之前：叶骨依据"有权重"判定，清理后判定更准；仅动骨骼权重组）
             if self.cleanWeights:
@@ -1496,6 +1552,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
         option_col.prop(self, "cleanWeights")
+        option_col.prop(self, "cleanEmptyMaterialSlots")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
         option_col.prop(self, "ignoreGeometryNodes")
