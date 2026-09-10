@@ -35,6 +35,7 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
 
     # 需要保存/恢复的属性
     preset_values = [
+        "op.meshifyCurves",
         "op.addLeafBones",
         "op.generateMCHBones",
         "op.cleanWeights",
@@ -116,6 +117,7 @@ def reset_export_undo():
 
 class FBXExporter:
     UNITY_METADATA_DIRECTORY = "HoFBX"
+    CURVE_MESHIFY_TYPES = {"CURVE"}
 
     @staticmethod
     def unity_metadata_directory(fbx_filepath):
@@ -208,6 +210,60 @@ class FBXExporter:
         # Children may be in the current view layer even if their parent isn't.
         for child in ob.children:
             FBXExporter.fix_object(child)
+
+    @staticmethod
+    def restore_selection_by_names(object_names, active_object_name=None):
+        bpy.ops.object.select_all(action='DESELECT')
+        for object_name in object_names:
+            ob = bpy.data.objects.get(object_name)
+            if ob and ob.name in bpy.context.view_layer.objects:
+                ob.select_set(True)
+        if active_object_name:
+            active_object = bpy.data.objects.get(active_object_name)
+            if active_object and active_object.name in bpy.context.view_layer.objects:
+                bpy.context.view_layer.objects.active = active_object
+
+    @staticmethod
+    def convert_selected_curves_to_mesh(selection, active_object):
+        """把当前选中的曲线类对象临时转成 Mesh，供后续 FBX 导出使用。"""
+        selection_names = [ob.name for ob in selection]
+        active_object_name = active_object.name if active_object else None
+        target_names = [
+            ob.name
+            for ob in selection
+            if ob.type in FBXExporter.CURVE_MESHIFY_TYPES
+            and ob.name in bpy.context.view_layer.objects
+        ]
+        if not target_names:
+            return 0, [], selection, active_object
+
+        converted = 0
+        failed = []
+        try:
+            for object_name in target_names:
+                ob = bpy.data.objects.get(object_name)
+                if ob is None or ob.name not in bpy.context.view_layer.objects:
+                    continue
+                try:
+                    bpy.ops.object.select_all(action='DESELECT')
+                    ob.select_set(True)
+                    bpy.context.view_layer.objects.active = ob
+                    bpy.ops.object.convert(target='MESH')
+                    converted += 1
+                except Exception as exc:
+                    failed.append((object_name, exc))
+        finally:
+            FBXExporter.restore_selection_by_names(selection_names, active_object_name)
+
+        selection = [
+            ob
+            for object_name in selection_names
+            if (ob := bpy.data.objects.get(object_name))
+            and ob.name in bpy.context.view_layer.objects
+        ]
+        active_object = bpy.context.view_layer.objects.active
+        return converted, failed, selection, active_object
+
     @staticmethod
     def get_weighted_bone_names(armature_ob):
         """采集本骨架下"有权重"的骨名集合（供叶骨判定用）。
@@ -1233,6 +1289,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
     humanoidMappingSuffix:bpy.props.StringProperty(name="Humanoid后缀",description="HoFBX文件夹内的Humanoid mapping JSON文件后缀",default="_humanoid") # type: ignore
     exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成Rig约束IR、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
+    meshifyCurves:BoolProperty(name="网格化曲线",description="导出前把选中的曲线临时转换为网格，让 HoFBX 能导出 Blender FBX 不直接支持的曲线对象。随导出末尾撤销,工程不留痕",default=True) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。随导出末尾撤销,工程不留痕",default=False) # type: ignore
     cleanEmptyMaterialSlots:BoolProperty(name="清理未使用材质槽",description="导出前删除选中网格中没有被任何面使用的材质槽（无论槽中是否已有材质）。随导出末尾撤销,工程不留痕",default=True) # type: ignore
@@ -1365,6 +1422,17 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     for ob_name, mod_name, exc in failed_outline:
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
                     self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
+
+            if self.meshifyCurves:
+                converted_curves, failed_curves, selection, active_object = (
+                    FBXExporter.convert_selected_curves_to_mesh(selection, active_object)
+                )
+                if failed_curves:
+                    print("[HoTools FBX] Failed to meshify curve objects:")
+                    for ob_name, exc in failed_curves:
+                        print(f"  {ob_name}: {type(exc).__name__}: {exc}")
+                    self.report({"WARNING"}, f"{len(failed_curves)} 个曲线对象网格化失败，详见控制台")
+                print(f"[HoTools FBX] 曲线网格化：处理了 {converted_curves} 个对象")
 
             if self.cleanEmptyMaterialSlots:
                 cleaned_meshes, removed_slots = FBXExporter.clean_unused_material_slots(
@@ -1549,6 +1617,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_box = layout.box()
         option_box.label(text="预处理", icon='MODIFIER')
         option_col = option_box.column(align=True, heading="")
+        option_col.prop(self, "meshifyCurves")
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
         option_col.prop(self, "cleanWeights")
