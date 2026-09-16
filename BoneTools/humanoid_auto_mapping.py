@@ -4,6 +4,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from functools import lru_cache
 
 
 TARGET_LAYOUT = [
@@ -286,33 +287,39 @@ MANUAL_ALIASES = {
 
     "little_proximal.L": (
         "little1", "little01", "pinky1", "pinkie1",
+        "littlefinger1", "pinkyfinger1",
         "pinky1_ref.l",
         "左小指1", "小指1",
     ),
     "little_proximal.R": (
         "little1", "little01", "pinky1", "pinkie1",
+        "littlefinger1", "pinkyfinger1",
         "pinky1_ref.r",
         "右小指1", "小指1",
     ),
 
     "little_intermediate.L": (
         "little2", "little02", "pinky2", "pinkie2",
+        "littlefinger2", "pinkyfinger2",
         "pinky2_ref.l",
         "左小指2", "小指2",
     ),
     "little_intermediate.R": (
         "little2", "little02", "pinky2", "pinkie2",
+        "littlefinger2", "pinkyfinger2",
         "pinky2_ref.r",
         "右小指2", "小指2",
     ),
 
     "little_distal.L": (
         "little3", "little03", "pinky3", "pinkie3",
+        "littlefinger3", "pinkyfinger3",
         "pinky3_ref.l",
         "左小指3", "小指3",
     ),
     "little_distal.R": (
         "little3", "little03", "pinky3", "pinkie3",
+        "littlefinger3", "pinkyfinger3",
         "pinky3_ref.r",
         "右小指3", "小指3",
     ),
@@ -381,6 +388,25 @@ HELPER_MARKERS = (
     "pivot",
     "reverse",
 )
+
+# finger 提示词：族名 -> 手指族（LittleFinger1_L / pinky01_L / 小指1 / 親指0 ...）
+FINGER_FAMILIES = {
+    "thumb": "thumb",
+    "親指": "thumb", "拇指": "thumb", "大指": "thumb",
+    "index": "index", "fore": "index",
+    "人指": "index", "人差指": "index", "食指": "index",
+    "middle": "middle", "中指": "middle",
+    "ring": "ring",
+    "薬指": "ring", "無名指": "ring", "无名指": "ring",
+    "little": "little", "pinky": "little", "pinkie": "little", "小指": "little",
+}
+
+# finger 提示词：节段词 -> 节段序号（1=近端 2=中端 3=远端）；数字写法由 _finger_key 解析
+FINGER_SEGMENTS = {
+    "proximal": 1, "proxim": 1, "prox": 1, "meta": 1, "base": 1,
+    "intermediate": 2, "intermed": 2, "inter": 2,
+    "distal": 3, "dist": 3, "tip": 3,
+}
 
 @dataclass(frozen=True)
 class HumanoidBoneSpec:
@@ -478,6 +504,44 @@ def _tokenize(name: str) -> tuple[str, ...]:
     return tuple(token for token in core.split(" ") if token)
 
 
+@lru_cache(maxsize=2048)
+def _finger_key(name: str) -> tuple[str, int] | None:
+    """把名字解析成手指的 (族, 节段序号)，序号 1=近端 2=中端 3=远端。
+
+    只在“族名所在的词及其之后的词”里找节段词和序号，因此 Forearm / SpringBone1 /
+    PinkyToe 之类不会被当成手指；解析不出来返回 None，仍走原来的模糊匹配。
+    """
+    name = re.sub(r"\.\d{3}$", "", name or "")  # Blender 重名后缀不是节段序号
+    tokens = [token for token in _strip_side_markers(name).split(" ") if token]
+
+    for index, token in enumerate(tokens):
+        stem = re.sub(r"\d+$", "", token)
+        family = None
+        for hint, family_name in FINGER_FAMILIES.items():
+            # little1 / littlefinger / LittleFinger1_L（大小写与分隔符已归一）
+            if stem == hint or (stem.startswith(hint) and stem[len(hint):] in ("finger", "fingers")):
+                family = family_name
+                break
+            if not hint.isascii() and stem.endswith(hint):
+                family = family_name
+                break
+
+        if family is None:
+            continue
+
+        tail = "".join(tokens[index:])
+        for hint, slot in FINGER_SEGMENTS.items():
+            if hint in tail:
+                return family, slot
+
+        numbers = re.findall(r"\d+", tail)
+        if not numbers:
+            return None
+        return family, min(max(int(numbers[0]), 1), 3)
+
+    return None
+
+
 def load_humanoid_specs() -> list[HumanoidBoneSpec]:
     parent_map = {name: parent for name, parent, _, _ in TARGET_LAYOUT}
     specs: list[HumanoidBoneSpec] = []
@@ -504,6 +568,9 @@ def _name_similarity_score(spec: HumanoidBoneSpec, bone: SourceBoneInfo) -> tupl
     best_score = 0.0
     best_reason = "name"
     bone_token_set = set(bone.tokens)
+    # 大小写/分隔符归一：LittleFinger1_L、little finger1、LITTLE_FINGER_1 得到同一个 key
+    bone_compact = bone.normalized_core.replace(" ", "")
+    bone_finger = _finger_key(bone.name)
 
     for alias in spec.aliases:
         alias_core = _strip_side_markers(alias)
@@ -513,18 +580,34 @@ def _name_similarity_score(spec: HumanoidBoneSpec, bone: SourceBoneInfo) -> tupl
         if alias_core == bone.normalized_core:
             return 100.0, f"exact:{alias}"
 
-        sequence_ratio = SequenceMatcher(None, alias_core, bone.normalized_core).ratio()
-        token_overlap = 0.0
-        if alias_tokens and bone_token_set:
-            token_overlap = len(alias_tokens & bone_token_set) / len(alias_tokens | bone_token_set)
+        if bone_compact and alias_core.replace(" ", "") == bone_compact:
+            score, reason = 96.0, f"exact-compact:{alias}"
+        else:
+            sequence_ratio = SequenceMatcher(None, alias_core, bone.normalized_core).ratio()
+            token_overlap = 0.0
+            if alias_tokens and bone_token_set:
+                token_overlap = len(alias_tokens & bone_token_set) / len(alias_tokens | bone_token_set)
 
-        score = sequence_ratio * 55.0 + token_overlap * 35.0
-        if alias_core in bone.normalized_core or bone.normalized_core in alias_core:
-            score += 10.0
+            score = sequence_ratio * 55.0 + token_overlap * 35.0
+            if alias_core in bone.normalized_core or bone.normalized_core in alias_core:
+                score += 10.0
+
+            # finger 提示词关联打分：族与节段序号都对上才加分，对不上就扣分，
+            # 避免 littlefinger1/2/3 因为字符串相似度几乎相同而串位
+            alias_finger = _finger_key(alias_core)
+            if alias_finger and bone_finger:
+                if alias_finger[0] != bone_finger[0]:
+                    score -= 40.0
+                elif alias_finger[1] != bone_finger[1]:
+                    score -= 25.0
+                else:
+                    score += 45.0
+
+            reason = f"alias:{alias}"
 
         if score > best_score:
             best_score = score
-            best_reason = f"alias:{alias}"
+            best_reason = reason
 
     return best_score, best_reason
 

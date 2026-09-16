@@ -426,17 +426,6 @@ class OP_Mapping_AddItem(Operator):
                 list.move(len(list) - 1, target_index)
 
         return {'FINISHED'}
-        #添加并移位
-        for name in names:
-            new_item = list.add()
-            _set_mapping_item(new_item, name, self.isTargetList)
-            selected_idx = next((i for i, item in enumerate(
-                    list) if item.isSelected), None)
-            if selected_idx is not None:
-                list.move(len(list) - 1, selected_idx + 1)
-
-
-        return {'FINISHED'}
 
 class OP_Mapping_RemoveItem(Operator):
     bl_idname = "ho.mapping_removeitem"
