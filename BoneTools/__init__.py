@@ -61,6 +61,7 @@ class VIEW3D_MT_armature_context_menu_hotools(Menu):
         layout.operator(boneOperators.OP_AddEndBone.bl_idname)
         layout.operator(boneOperators.OP_ForceClearBoneRotation.bl_idname)
         layout.operator(boneOperators.OP_Fix_EmptyRotate_Bone.bl_idname)
+        layout.operator("armature.symmetrize", text="生成镜像骨骼", icon='MOD_MIRROR')
 
 def drawIn_VIEW3D_MT_armature_context_menu(self, context):
     self.layout.menu("VIEW3D_MT_armature_context_menu_hotools") 
