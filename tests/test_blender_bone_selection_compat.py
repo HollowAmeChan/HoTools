@@ -36,12 +36,30 @@ def make_armature():
     second.head = first.tail
     second.tail = (0.0, 2.0, 0.0)
     second.parent = first
+    second.use_connect = True
     return obj
 
 
 obj = make_armature()
 select_bones(obj, ["First"], extend=False)
 assert [bone.name for bone in selected_edit_bones(bpy.context, obj)] == ["First"]
+assert selected_bone_names(bpy.context, obj) == ["First"]
+
+# 相连骨的共享关节：Blender 选中相连子骨骼时会同时点亮父级尾端，
+# 父级不能因此被算作选中（反之共享关节本身也不代表任何一方被选中）。
+first_edit = obj.data.edit_bones["First"]
+second_edit = obj.data.edit_bones["Second"]
+assert second_edit.use_connect
+select_bones(obj, ["Second"], extend=False)
+first_edit.select_tail = True
+assert selected_bone_names(bpy.context, obj) == ["Second"]
+
+select_bones(obj, [], extend=False)
+first_edit.select_tail = True
+second_edit.select_head = True
+assert selected_bone_names(bpy.context, obj) == []
+
+select_bones(obj, ["First"], extend=False)
 assert selected_bone_names(bpy.context, obj) == ["First"]
 
 bpy.ops.object.mode_set(mode="POSE")

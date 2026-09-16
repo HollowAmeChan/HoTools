@@ -35,12 +35,18 @@ class DataBone52:
 
 
 class EditBone:
-    def __init__(self, name, *, selected=False, head=False, tail=False):
+    def __init__(self, name, *, selected=False, head=False, tail=False,
+                 parent=None, use_connect=False):
         self.name = name
         self.select = selected
         self.select_head = head
         self.select_tail = tail
         self.id_data = None
+        self.parent = parent
+        self.use_connect = use_connect
+        self.children = []
+        if parent is not None:
+            parent.children.append(self)
 
 
 class PoseBone45:
@@ -134,5 +140,36 @@ assert [bone.name for bone in selected_edit_bones(empty_context, arm_edit)] == [
 select_bones(arm_edit, ["B"], extend=False)
 assert selected_bone_names(empty_context, arm_edit) == ["B"]
 assert not edit_a.select_head and edit_b.select and edit_b.select_head and edit_b.select_tail
+
+
+# 相连骨的共享关节不能算作父级被选中：Blender 选中相连子骨骼时会同时点亮父级尾端。
+joint_root = EditBone("Root")
+joint_mid = EditBone("Mid", parent=joint_root, use_connect=True)
+joint_leaf = EditBone("Leaf", parent=joint_mid, use_connect=True)
+arm_joint = make_armature([], [], [joint_root, joint_mid, joint_leaf])
+arm_joint.mode = "EDIT"
+
+select_bones(arm_joint, ["Mid"], extend=False)
+joint_root.select_tail = True  # Blender 的共享关节标记
+assert selected_bone_names(empty_context, arm_joint) == ["Mid"]
+
+# 只点亮共享关节（父级尾端 + 子骨骼头端）时，双方都不算被选中。
+select_bones(arm_joint, [], extend=False)
+joint_root.select_tail = True
+joint_mid.select_head = True
+assert selected_edit_bones(empty_context, arm_joint) == []
+
+# 未共享的端点仍然可以单独作为选中依据。
+joint_root.select_tail = False
+joint_mid.select_head = False
+joint_leaf.select_tail = True  # Leaf 没有相连子骨骼，尾端属于自己
+assert [bone.name for bone in selected_edit_bones(empty_context, arm_joint)] == ["Leaf"]
+free_root = EditBone("FreeRoot")
+free_tip = EditBone("FreeTip", parent=free_root)  # 未开启相连项的子骨骼
+arm_free = make_armature([], [], [free_root, free_tip])
+arm_free.mode = "EDIT"
+select_bones(arm_free, [], extend=False)
+free_root.select_tail = True  # 尾端没有相连子骨骼共享，仍算父级被选中
+assert [bone.name for bone in selected_edit_bones(empty_context, arm_free)] == ["FreeRoot"]
 
 print("BONE_SELECTION_UNIT_OK")

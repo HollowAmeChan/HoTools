@@ -1876,8 +1876,8 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
 
     row = layout.row(align=True)
     row.operator(OP_SplitBoneWithWeight.bl_idname, text="细分骨骼")
-    row.operator(OP_DissolveBoneWithWeight.bl_idname, text="溶并骨骼")
-    row.operator(OP_SimpleDissolveBone.bl_idname, text="简单溶并")
+    row.operator(OP_DissolveBoneWithWeight.bl_idname, text="融并骨骼")
+    row.operator(OP_SimpleDissolveBone.bl_idname, text="简单融并")
 
     col = layout.column(align=True)
     col.operator(OP_ResetAllBonePose.bl_idname, text="重置所有骨骼姿态", icon="LOOP_BACK")

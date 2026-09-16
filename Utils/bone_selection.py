@@ -3,6 +3,10 @@
 Blender 5.0 将姿态骨骼的选择状态从 ``Bone.select`` 移到了
 ``PoseBone.select``。context 中的选择集合还会受到模式与区域上下文影响，因此这里只
 把它们当作快速读取路径，底层选择状态仍会作为必要的回退来源。
+
+编辑模式下还要处理相连骨（``use_connect``）的共享关节：父级尾端与相连子骨骼的头端是
+同一个关节，Blender 点亮一侧时会同时点亮另一侧（见 ``ED_armature_ebone_selectflag_set``
+与 ``ED_armature_edit_sync_selection``），所以共享关节不能作为“这根骨骼被选中”的依据。
 """
 
 from __future__ import annotations
@@ -17,6 +21,38 @@ def _append_unique(items, seen_names, bone) -> None:
     if name and name not in seen_names:
         seen_names.add(name)
         items.append(bone)
+
+
+def _head_joint_shared_with_parent(bone) -> bool:
+    """头端关节是否与父级共享：相连项开启时，头端状态只是父级尾端的副本。"""
+    return (
+        bool(getattr(bone, "use_connect", False))
+        and getattr(bone, "parent", None) is not None
+    )
+
+
+def _tail_joint_shared_with_child(bone) -> bool:
+    """尾端关节是否与相连子骨骼共享：选中该子骨骼会同时点亮本骨骼的尾端。"""
+    for child in getattr(bone, "children", None) or ():
+        if bool(getattr(child, "use_connect", False)):
+            return True
+    return False
+
+
+def edit_bone_is_selected(bone) -> bool:
+    """判断 EditBone 是否真的被选中，共享关节不计入。
+
+    ``select``（BONE_SELECTED）是 Blender 自己的骨骼级选中状态，优先级最高；
+    只有在没有整体选中时，才用“只选了某个端点”作为回退依据，并且排除与相连骨共享的
+    关节——否则只选中相连子骨骼会把父级骨一起算进来（反之亦然）。
+    """
+    if getattr(bone, "select", False):
+        return True
+    if getattr(bone, "select_head", False) and not _head_joint_shared_with_parent(bone):
+        return True
+    if getattr(bone, "select_tail", False) and not _tail_joint_shared_with_child(bone):
+        return True
+    return False
 
 
 def _belongs_to_armature(bone, armature) -> bool:
@@ -51,11 +87,7 @@ def selected_edit_bones(context, armature) -> list:
                 _append_unique(result, seen_names, bone)
 
     for bone in edit_bones:
-        if (
-            getattr(bone, "select", False)
-            or getattr(bone, "select_head", False)
-            or getattr(bone, "select_tail", False)
-        ):
+        if edit_bone_is_selected(bone):
             _append_unique(result, seen_names, bone)
     return result
 
@@ -185,6 +217,7 @@ def select_bones(armature, names, *, extend: bool = False) -> None:
 
 
 __all__ = [
+    "edit_bone_is_selected",
     "select_bones",
     "selected_armature_bones",
     "selected_bone_names",
