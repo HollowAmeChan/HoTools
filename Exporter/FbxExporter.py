@@ -48,6 +48,8 @@
 #     解决 Unity/运行时对骨骼影响数量有限制，以及微小权重造成不稳定变形的问题。
 # 14. 添加叶骨（默认开启）：为无子级且确实有权重的末端骨补充叶骨，并加入原骨骼集合。
 #     解决 FBX/Unity 末端骨方向或层级显示不完整，同时避免给无权重骨和辅助骨乱加叶骨。
+#     “有权重”按导出时的求值网格判定：镜像修改器翻转顶点组、几何节点写出的权重都算。
+#     否则半身几何 + 镜像修改器的资源会被误判成只有一侧有权重，只给一侧加叶骨（与导出结果不符）。
 # 15. 生成 MCH 骨（默认开启）：为标记的骨创建 MCH 旁路骨，清理主骨变换并转移约束引用。
 #     解决动捕/运行时需要中立主骨、同时保留原始约束关系的问题；结果只存在于导出副本。
 #
@@ -473,28 +475,73 @@ class FBXExporter:
         return applied, failed, selection, active_object
 
     @staticmethod
+    def _weighted_names_from_mesh(mesh, group_names, bone_names) -> set:
+        """扫描一份网格数据，返回其中存在 weight>0 顶点的骨名集合。"""
+        found = set()
+        for v in mesh.vertices:
+            for g in v.groups:
+                gname = group_names.get(g.group)
+                if gname is None or gname not in bone_names or gname in found:
+                    continue
+                try:
+                    if g.weight > 0.0:
+                        found.add(gname)
+                except (RuntimeError, AttributeError):
+                    continue
+        return found
+
+    @staticmethod
+    def _modifiers_regroup_weights(ob) -> bool:
+        """物体是否存在会改变“顶点组 → 顶点”映射的修改器。
+
+        镜像修改器开启“翻转顶点组”时会按 .L/.R 互换顶点组索引，几何节点也可能写出
+        原始数据里没有的权重；二者都只在求值结果里存在。
+        """
+        for modifier in ob.modifiers:
+            if modifier.type == 'MIRROR' and getattr(modifier, "use_mirror_vertex_groups", False):
+                return True
+            if modifier.type == 'NODES':
+                return True
+        return False
+
+    @staticmethod
     def get_weighted_bone_names(armature_ob):
         """采集本骨架下"有权重"的骨名集合（供叶骨判定用）。
 
         遍历所有被该骨架形变的网格（骨架修改器指向本骨架，或以 ARMATURE 方式父级到本骨架），
         只要某骨名对应的顶点组存在 weight>0 的顶点，就算该骨有权重。必须在 OBJECT 模式采集。
+
+        FBX 导出会应用修改器（use_mesh_modifiers=True），所以“有权重”必须按求值结果判断：
+        只做了半身几何 + 镜像修改器（翻转顶点组）的网格，另一侧的权重只存在于求值网格里，
+        只扫原始数据会把整侧骨骼判成无权重，于是只给一侧加叶骨。
         """
         bone_names = {b.name for b in armature_ob.data.bones}
         weighted = set()
+        depsgraph = None
         for mesh_ob in bone_utils.collect_mesh_objects_for_armature(armature_ob):
             if not mesh_ob.vertex_groups:
                 continue
 
             group_names = {i: vg.name for i, vg in enumerate(mesh_ob.vertex_groups)}
-            for v in mesh_ob.data.vertices:
-                for g in v.groups:
-                    gname = group_names.get(g.group)
-                    if gname in bone_names and gname not in weighted:
-                        try:
-                            if g.weight > 0.0:
-                                weighted.add(gname)
-                        except (RuntimeError, AttributeError):
-                            continue
+            weighted |= FBXExporter._weighted_names_from_mesh(
+                mesh_ob.data, group_names, bone_names
+            )
+
+            # 求值网格：覆盖镜像翻转顶点组、几何节点生成的权重
+            if FBXExporter._modifiers_regroup_weights(mesh_ob):
+                if depsgraph is None:
+                    depsgraph = bpy.context.evaluated_depsgraph_get()
+                eval_ob = mesh_ob.evaluated_get(depsgraph)
+                eval_mesh = getattr(eval_ob, "data", None)
+                if eval_mesh is not None and eval_mesh is not mesh_ob.data:
+                    eval_group_names = {
+                        i: vg.name
+                        for i, vg in enumerate(getattr(eval_ob, "vertex_groups", ()) or ())
+                    }
+                    weighted |= FBXExporter._weighted_names_from_mesh(
+                        eval_mesh, eval_group_names or group_names, bone_names
+                    )
+
             # 全部骨都已确认有权重则提前结束
             if bone_names <= weighted:
                 break
@@ -775,9 +822,16 @@ class FBXExporter:
 
         规则：
         - 只处理无子级的骨（先快照目标，避免边加边处理）；
-        - 只处理 weighted_names 里的骨（无权重的骨不加）；
+        - 只处理 weighted_names 里的骨（无权重的骨不加）。这里的“有权重”是**导出时求值网格**
+          的口径，由 get_weighted_bone_names 采集：只扫原始网格数据会漏掉修改器生成的权重——
+          镜像修改器开启“翻转顶点组”时把 _R 顶点翻成 _L 组、几何节点写出的权重，
+          都只存在于求值结果里，而 FBX 导出恰恰是应用修改器（use_mesh_modifiers=True）的。
+          典型坑：只做了右半身几何 + 镜像修改器的网格，若按原始数据判定，_L 整侧会被当成
+          无权重，于是只给 _R 一侧加叶骨，与导出的实际蒙皮不一致；
         - 排除 HoTools 约束骨（辅助骨 auxBone.isAuxBone）：fan/twist 等约束骨即使有权重
           也不该补叶骨，否则会污染约束骨末端；
+        - 无权重、辅助骨、零长度、建骨失败都记进 skipped，并在末尾打印一行摘要，
+          便于反查“为什么这一侧没加叶骨”，不再静默跳过；
         - 叶骨长度为主体骨长度的一半，沿主体骨方向延伸（FBX 导出其实不在意长度，但仍写正确值）；
         - 叶骨归入主骨所属的**所有**骨骼集合（自带 add_leaf_bones 不处理集合，这是自实现的主因；
           集合 JSON 导出须排在本步之后才能收录叶骨）；
@@ -796,10 +850,21 @@ class FBXExporter:
             aux = getattr(props, "auxBone", None) if props else None
             return bool(aux and aux.isAuxBone)
 
-        targets = [
-            eb.name for eb in edit_bones
-            if not eb.children and eb.name in weighted_names and not _is_aux_bone(eb.name)
-        ]
+        # 先快照目标，避免边加边处理；同时记录每根末端骨被跳过的原因，便于排查“只加了一侧”
+        targets = []
+        skipped = []
+        for eb in edit_bones:
+            if eb.children:
+                continue
+            if eb.name not in weighted_names:
+                skipped.append(f"{eb.name}(无权重)")
+                continue
+            if _is_aux_bone(eb.name):
+                skipped.append(f"{eb.name}(辅助骨)")
+                continue
+            targets.append(eb.name)
+
+        created = 0
         for name in targets:
             eb = edit_bones.get(name)
             if eb is None:
@@ -807,21 +872,34 @@ class FBXExporter:
             vec = eb.tail - eb.head
             length = vec.length
             if length <= 0.0:
+                skipped.append(f"{name}(零长度)")
                 continue
-            leaf = edit_bones.new(name + FBXExporter.LEAF_SUFFIX)
-            leaf.head = eb.tail.copy()
-            leaf.tail = eb.tail + vec.normalized() * (length * 0.5)
-            leaf.roll = eb.roll
-            leaf.parent = eb
-            leaf.use_connect = True
-            leaf.use_deform = False
-            bone_utils.inherit_bone_collections(eb, leaf)
+            try:
+                leaf = edit_bones.new(name + FBXExporter.LEAF_SUFFIX)
+                leaf.head = eb.tail.copy()
+                leaf.tail = eb.tail + vec.normalized() * (length * 0.5)
+                leaf.roll = eb.roll
+                leaf.parent = eb
+                leaf.use_connect = True
+                leaf.use_deform = False
+                bone_utils.inherit_bone_collections(eb, leaf)
+                created += 1
+            except Exception as exc:  # 单根失败不应中断其余骨骼
+                skipped.append(f"{name}(建骨失败:{exc})")
+
+        summary = f"[HoTools FBX] 叶骨 {ob.name}：新建 {created} 根（候选 {len(targets)}）"
+        if skipped:
+            shown = "、".join(skipped[:20])
+            summary += f"，跳过 {len(skipped)} 根：{shown}" + ("…" if len(skipped) > 20 else "")
+        print(summary)
 
     @staticmethod
     def add_leaf_bones_to_armatures(armature_objects, selection, active_object):
         """给各骨架的无子级有权重骨补叶骨。须在 MCH 步骤之前调用。
 
-        先在 OBJECT 模式采集每个骨架的有权重骨名，再进 EDIT 模式建叶骨。
+        先在 OBJECT 模式按“导出时的求值网格”采集每个骨架的有权重骨名
+        （见 get_weighted_bone_names：镜像修改器翻转顶点组、几何节点写出的权重都算），
+        再进 EDIT 模式建叶骨。判定口径与 build_leaf_bones 的规则一致。
         """
         view_layer_armatures = [ob for ob in armature_objects if ob.name in bpy.context.view_layer.objects]
         if not view_layer_armatures:
@@ -1644,7 +1722,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         default="*.fbx", options={'HIDDEN'}, maxlen=255,
     ) # type: ignore
 
-    addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。无权重骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
+    addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。权重按导出时的求值网格判定(镜像修改器/几何节点生成的权重也算),无权重骨与辅助骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
     generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="为勾选了generateMCH的骨生成MCH_前缀同级旁路骨、清空主骨变换并写入HoTools_MCH_Parent绑定。不留痕",default=True) # type: ignore
     showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
@@ -2190,7 +2268,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
     bl_description = ""
     bl_options = {'REGISTER', 'UNDO'}
 
-    addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自实现,长度为主体骨的一半),在MCH步骤之前执行;仅预处理模式不撤销,叶骨会留在工程供检视",default=True) # type: ignore
+    addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自实现,长度为主体骨的一半)。权重按导出时的求值网格判定(镜像修改器/几何节点生成的权重也算),无权重骨与辅助骨不加,在MCH步骤之前执行;仅预处理模式不撤销,叶骨会留在工程供检视",default=True) # type: ignore
     generateMCHBones:BoolProperty(name="生成MCH骨",description="对 generateMCH=True 的骨生成 MCH_ 同级旁路骨、清空主骨变换并写入HoTools_MCH_Parent绑定;仅预处理模式不会自动撤销",default=False) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。仅预处理模式不自动撤销,修改会留在工程里,需手动 Ctrl+Z 还原",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
