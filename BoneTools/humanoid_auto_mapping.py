@@ -8,7 +8,6 @@ from functools import lru_cache
 
 
 TARGET_LAYOUT = [
-    ("root", None, None, "root"),
     ("hips", "root", None, "hips"),
     ("spine", "hips", None, "spine"),
     ("chest", "spine", None, "spine"),
@@ -66,12 +65,6 @@ TARGET_LAYOUT = [
 
 
 MANUAL_ALIASES = {
-    "root": (
-        "center", "centre", "master", "global", "origin", "allroot", "all_root",
-        "root_ref", "root_ref.x",
-        "センター", "全ての親",
-    ),
-
     "hips": (
         "pelvis", "hip", "waist", "cog",
         "pelvis_ref", "pelvis_ref.x", "hips_ref", "hips_ref.x",
