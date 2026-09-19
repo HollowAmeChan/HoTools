@@ -29,6 +29,7 @@ if str(ADDON_DIR) not in sys.path:
 
 from BoneTools import register as bonetools_register, unregister as bonetools_unregister
 from Exporter import FbxExporter
+from ShapekeyTools import operators as shapekey_operators
 
 
 # 导出结果写在测试目录下的临时文件夹里，结束时删除。
@@ -225,6 +226,41 @@ try:
     assert pose_leak < 1e-5, f"当前姿态被烘进了基础网格（双重形变隐患）：z={pose_leak}"
     assert ob_pose.data.shape_keys is not None
     assert [key.name for key in ob_pose.data.shape_keys.key_blocks] == ["Basis", "Wide"]
+
+    # ── 5. 带形态键的网格必须留在 FBX 里（回归：应用骨架姿态替换物体后整块丢失）──
+    # ho.apply_rest_pose 对带形态键的网格会走 ho.apply_armature_modifiers_keepshapekeys，
+    # 那个操作符会“删掉原物体、用副本顶替”。若副本改名时原名还被原物体占着，副本会变成
+    # “xxx.001”，而导出流程按名字跟踪物体 → 该物体直接掉出导出范围，FBX 里整个消失。
+    # 这里复现完整链路：网格必须父级到骨架（apply_rest_pose 只处理骨架的子级网格）。
+    shapekey_operators.register_keepshapekeys_operator = bpy.utils.register_class(
+        shapekey_operators.OP_ApplyArmatureModifiersKeepShapekeys
+    )
+    try:
+        armature_keep, ob_keep = build_scene("keepshapekeys")
+        ob_keep.parent = armature_keep
+        ob_keep.matrix_parent_inverse = armature_keep.matrix_world.inverted()
+        activate_all([armature_keep, ob_keep], armature_keep)
+        filepath_keep = OUT_DIR / "shapekey_keepshapekeys.fbx"
+        assert bpy.ops.ho.final_fbx_export(
+            "EXEC_DEFAULT",
+            filepath=str(filepath_keep),
+            **NO_METADATA,
+        ) == {"FINISHED"}
+
+        # 导出后工程应回滚：物体还在原名下，没有 .001 残留
+        assert bpy.data.objects.get("Mesh_keepshapekeys") is not None, (
+            "应用骨架姿态后物体没回到原名（副本拿到了 .001 后缀）"
+        )
+        assert bpy.data.objects.get("Mesh_keepshapekeys.001") is None, (
+            "出现了 .001 副本残留，说明改名顺序不对"
+        )
+        imported_keep = readback(filepath_keep)
+        assert imported_keep is not None, "带形态键的网格在 FBX 里整个丢失了"
+        assert imported_keep.name.startswith("Mesh_keepshapekeys")
+        assert imported_keep.data.shape_keys is not None, "FBX 里丢了形态键"
+        assert [k.name for k in imported_keep.data.shape_keys.key_blocks] == ["Basis", "Wide"]
+    finally:
+        bpy.utils.unregister_class(shapekey_operators.OP_ApplyArmatureModifiersKeepShapekeys)
 
 finally:
     bpy.utils.unregister_class(FbxExporter.OP_FinalFBXExport)

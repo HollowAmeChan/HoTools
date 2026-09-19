@@ -1173,23 +1173,27 @@ class OP_ApplyArmatureModifiersKeepShapekeys(Operator):
             # 清理临时物体
             bpy.data.objects.remove(temp_obj, do_unlink=True)
 
-        # 步骤4：替换原始物体
-        # 保存原始修改器状态
+        # 创建最终物体
+        final_obj = self.copy_object(receiver)
+
+        # 先删原物体再改名：改名的顺序不能反。若先 final_obj.name = orig_obj.name，
+        # 原名还被原物体占着，Blender 会给副本加 .001 后缀，随后原物体被删，
+        # 于是场景里只剩下 xxx.001。导出流程（以及所有按名字跟踪物体的步骤）会因此
+        # 找不到这个物体 —— 实测表现为“带形态键的网格在 FBX 里整块消失”。
+        orig_name = orig_obj.name
         orig_mod_states = {
             mod.name: mod.show_viewport for mod in orig_obj.modifiers}
 
-        # 创建最终物体
-        final_obj = self.copy_object(receiver)
-        final_obj.name = orig_obj.name
+        # 清理中间物体（原物体先让名）
+        bpy.data.objects.remove(orig_obj, do_unlink=True)
+        final_obj.name = orig_name
+        bpy.data.objects.remove(receiver, do_unlink=True)
+        bpy.context.view_layer.update()
 
         # 恢复原始修改器可见状态（除了已应用的）
         for mod in final_obj.modifiers:
             if mod.name in orig_mod_states and mod.name not in applied_mods:
                 mod.show_viewport = orig_mod_states[mod.name]
-
-        # 清理中间物体
-        bpy.data.objects.remove(orig_obj, do_unlink=True)
-        bpy.data.objects.remove(receiver, do_unlink=True)
 
         # 恢复形态键名称
         for idx, name in enumerate(shapekey_names):

@@ -2447,6 +2447,24 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             params = self.getParams(context)
             if params is None:
                 raise RuntimeError("FBX 预设参数无效")
+            # 兜底告警：预处理里有步骤会“删掉原物体、用副本顶替”（例如应用骨架姿态对带形态键的
+            # 网格会走 ho.apply_armature_modifiers_keepshapekeys）。这类步骤一旦让副本拿不到原名，
+            # 后面按名字跟踪的步骤就会把它从导出范围里丢掉——FBX 里整个物体消失且毫无提示。
+            # 这里显式对比一次，把静默丢物体变成可见告警。
+            vanished = [
+                ob.name
+                for ob in selection
+                if ob.name not in bpy.context.selected_objects
+            ]
+            if vanished:
+                print(
+                    "[HoTools FBX] 警告：以下物体在预处理中脱离了导出范围，"
+                    f"不会出现在 FBX 里：{'、'.join(vanished)}"
+                )
+                self.report(
+                    {"WARNING"},
+                    f"{len(vanished)} 个物体在预处理中脱离导出范围（详见控制台）",
+                )
             bpy.ops.export_scene.fbx(**params)
 
         except Exception as e:
