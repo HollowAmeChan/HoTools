@@ -44,6 +44,15 @@
 #    在有修改器要应用时走 evaluated mesh（new_from_object），求值网格不带形态键
 #    （Blender 议题 #104714），物体本身能导出但形变数据没了。前提是各形态键求值后的
 #    顶点数一致；不一致会跳过并报warning。不留痕。
+# 9.2 约束处理（开关「应用约束」，默认关闭 = 删除）：与应用骨架姿态是同一件事的两面
+#    （都是“当前求值状态要不要固化”），所以开关在应用姿态那一步就生效——
+#    关闭时先静音姿态约束，避免约束结果被 ho.apply_rest_pose 烘进静置/网格（否则会与
+#    JSON 里的约束在运行时重复生效）；姿态应用完立刻还原静音，约束照常写进 JSON。
+#    真正的删除排在 MCH（要把约束转移到 MCH 骨）与约束 JSON（约束的唯一载体）之后，
+#    且必须早于还会读变换的预处理（矫正物体变换用 matrix_world 复原父级逆矩阵）与内置导出：
+#    内置导出不会删约束，会把约束结果当成实际变换写进 FBX（物体级 matrix_world、
+#    骨骼级 pose matrix），导致 FBX 与 JSON 内外不一致（实测隐患）。
+#    开：约束参与应用姿态的求值，并保留到内置导出应用（资产本来就靠约束摆位时用）。
 # 10. 忽略描边修改器（默认开启）：临时移除开启翻转法线的 SOLIDIFY 描边修改器。
 #    解决渲染用外壳被误当成模型几何导出，导致重复表面和法线异常的问题。
 # 11. 删除隐藏修改器（默认开启）：临时移除视口隐藏的修改器。
@@ -1706,6 +1715,87 @@ class FBXExporter:
         return baked, skipped, failed
 
     @staticmethod
+    def mute_pose_constraints(armature_objects) -> list[tuple]:
+        """临时静音骨架上的全部姿态骨约束，返回可还原的状态列表。
+
+        用途：应用骨架姿态（ho.apply_rest_pose）会把骨架修改器的求值结果烘进子级网格，
+        而求值时约束是生效的——约束结果就这样进了静置/网格，运行时再按 JSON 应用一次就重复了。
+        所以「删除约束」语义下，要在应用姿态这一步先把约束静音，让它不参与这次求值；
+        真正的删除仍放在 MCH 与约束 JSON 之后（那两处都必须看到约束），静音在这里用完即还。
+        """
+        states = []
+        for ob in armature_objects:
+            pose = getattr(ob, "pose", None)
+            if pose is None:
+                continue
+            for pose_bone in pose.bones:
+                for constraint in pose_bone.constraints:
+                    states.append((constraint, bool(getattr(constraint, "mute", False))))
+                    try:
+                        constraint.mute = True
+                    except (AttributeError, ReferenceError, TypeError):
+                        continue
+        return states
+
+    @staticmethod
+    def restore_pose_constraint_mute(states) -> None:
+        """还原 mute_pose_constraints 记录的约束静音状态。"""
+        for constraint, was_muted in states or ():
+            try:
+                constraint.mute = was_muted
+            except (AttributeError, ReferenceError, TypeError):
+                continue
+
+    @staticmethod
+    def clear_exported_constraints(objects) -> tuple[int, int]:
+        """清空即将导出对象上的全部约束，返回 (涉及物体数, 删除的约束数)。
+
+        为什么需要清（实测隐患）：HoTools 的约束只通过 JSON（Rig 约束 IR）中转给运行时，
+        FBX 里不该再有一份；但 Blender 内置 FBX 导出不会删掉约束——它把约束后的结果当成
+        物体/骨骼的实际变换写进 FBX（物体级取 matrix_world、骨骼级取 pose matrix），
+        于是导入引擎后约束效果被“应用”了一次，和 JSON 描述对不上，内外不一致。
+        反过来，如果骨架/物体本来就靠约束摆位（例如被约束驱动的 Empty），清掉约束又会
+        改变导出位置——所以这一步由「导出前清空约束」开关决定（默认清空，保持 JSON 唯一来源）。
+
+        调用时机：MCH 之后（MCH 要把原始约束转移到 MCH 骨上，约束 IR 记录的是转移后的事实）、
+        约束 JSON 写完之后（JSON 是约束的唯一载体），以及所有还会读变换/求值的预处理
+        （矫正物体变换会用 matrix_world 复原父级逆矩阵）与内置导出之前。
+        清空范围：导出范围内的物体级约束 + 其姿态骨约束（含 MCH 步骤刚加的 MCH Parent 约束，
+        因为约束 IR 已经记录了 MCH 预处理后的事实）。
+        本步是临时修改，随导出末尾的 undo 一起回滚，工程不留痕。
+        """
+        cleared_objects: set[str] = set()
+        cleared_constraints = 0
+
+        for ob in objects:
+            if ob is None:
+                continue
+
+            object_constraints = getattr(ob, "constraints", None)
+            if object_constraints is not None:
+                for constraint in list(object_constraints):
+                    try:
+                        object_constraints.remove(constraint)
+                    except (ReferenceError, RuntimeError):
+                        continue
+                    cleared_constraints += 1
+                    cleared_objects.add(ob.name)
+
+            pose = getattr(ob, "pose", None)
+            if pose is None:
+                continue
+            for pose_bone in pose.bones:
+                for constraint in list(pose_bone.constraints):
+                    try:
+                        pose_bone.constraints.remove(constraint)
+                    except (ReferenceError, RuntimeError):
+                        continue
+                    cleared_constraints += 1
+                    cleared_objects.add(ob.name)
+
+        return len(cleared_objects), cleared_constraints
+
+    @staticmethod
     def remove_geometry_nodes_modifiers(objects):
         # 临时删除所有几何节点修改器（type == 'NODES'），不论是否显示在视口。
         # 几何节点会改变导出网格拓扑，且常与形态键、Unity 导入冲突；导出前整体去掉，
@@ -1896,6 +1986,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     cleanEmptyMaterialSlots:BoolProperty(name="清理未使用材质槽",description="导出前删除选中网格中没有被任何面使用的材质槽（无论槽中是否已有材质）。不留痕",default=True) # type: ignore
     removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器，避免几何节点改变导出网格拓扑。不留痕",default=True) # type: ignore
+    applyExportConstraints:BoolProperty(name="应用约束",description="关(默认):约束JSON写完后删除导出范围内的全部约束(物体级+姿态骨),约束只走JSON,避免内置导出把约束结果当成实际变换写进FBX造成内外不一致。开:保留约束交给内置导出应用(资产靠约束摆位时用)。不留痕",default=False) # type: ignore
     ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）。不留痕",default=True) # type: ignore
 
     def getParams(self,context, report_errors=True):
@@ -2108,13 +2199,32 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     f"{data_transfer_applied} 个修改器"
                 )
             if self.applyArmaturePose:
-                applied_armatures, failed_armatures, selection, active_object = (
-                    FBXExporter.apply_selected_armature_poses(
-                        selected_armature_objects,
-                        selection,
-                        active_object,
+                # 约束处理与应用骨架姿态是同一件事的两面：都是“当前求值状态要不要固化”。
+                # ho.apply_rest_pose 会把骨架修改器的求值结果烘进子级网格 + 把姿态应用成静置，
+                # 而求值时约束是生效的。所以「应用约束」开关在这里生效：
+                #   关（默认，删除语义）→ 应用姿态这一步先静音约束，让约束结果不进入静置/网格，
+                #                        约束只走 JSON（真正删除排在 MCH 与 JSON 之后）；
+                #   开（应用语义）    → 约束照常参与这次求值，并保留给内置导出应用。
+                muted_states = []
+                if not self.applyExportConstraints and selected_armature_objects:
+                    muted_states = FBXExporter.mute_pose_constraints(
+                        selected_armature_objects
                     )
-                )
+                    if muted_states:
+                        print(
+                            f"[HoTools FBX] 应用姿态前静音 {len(muted_states)} 条姿态约束"
+                            f"（约束不参与本次固化，之后仍会写进 JSON）"
+                        )
+                try:
+                    applied_armatures, failed_armatures, selection, active_object = (
+                        FBXExporter.apply_selected_armature_poses(
+                            selected_armature_objects,
+                            selection,
+                            active_object,
+                        )
+                    )
+                finally:
+                    FBXExporter.restore_pose_constraint_mute(muted_states)
                 failed_armature_pose_count = len(failed_armatures)
                 if failed_armatures:
                     print("[HoTools FBX] Failed to apply armature poses:")
@@ -2222,7 +2332,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             }
 
             # 导出中立 Rig 约束 IR。约束目标保留 MCH 预处理后的 Blender 事实
-            # （所以必须排在 MCH 之后）。
+            # （所以必须排在 MCH 之后），且必须早于下面清空约束——JSON 是约束的唯一载体。
             # 这里也不依赖可见性/选择状态，提前写不会影响后面的预处理。
             export_constraints = self.exportUnityMetadata or self.exportBoneConstraint
             export_collections = self.exportUnityMetadata or self.exportBoneCollection
@@ -2282,6 +2392,35 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     metadata_entries,
                 )
                 exported_json.append(manifest_path)
+
+            # 约束处理：开关「应用约束」决定语义（默认关 = 删除）。
+            # 与应用骨架姿态是同一件事的两面（都是“当前求值状态要不要固化”），所以在应用姿态
+            # 那一步就已经按开关静音过约束了；这里是“删除语义”下的真正删除。
+            # 为什么删除必须留在这里（不能跟应用姿态放一起）：
+            #   - MCH 要把原始约束转移到 MCH 骨上，约束 IR 记录的也是转移后的事实，删早了 MCH 无约束可转；
+            #   - 约束 JSON 是约束的唯一载体，删早了就没东西可写。
+            # 为什么又必须早于下面：内置导出不会删约束，会把约束结果当成实际变换写进 FBX
+            # （物体级 matrix_world、骨骼级 pose matrix）；矫正物体变换也用 matrix_world 复原
+            # 父级逆矩阵，带约束的 matrix_world 会把约束结果烘进 matrix_basis。
+            # 开着「应用约束」时保留约束，交给内置导出应用（资产本来就靠约束摆位时用）。
+            # 本步随导出末尾的 undo 一起回滚，工程不留痕。
+            if self.applyExportConstraints:
+                print(
+                    "[HoTools FBX] 应用约束（开关开启）：约束参与应用姿态的求值，"
+                    "并保留到内置导出，约束结果会被当作实际变换写进 FBX"
+                )
+            else:
+                cleared_objects, cleared_constraints = FBXExporter.clear_exported_constraints(selection)
+                if cleared_constraints:
+                    print(
+                        f"[HoTools FBX] 删除导出范围内的约束（开关关闭）："
+                        f"{cleared_objects} 个物体、{cleared_constraints} 条约束"
+                        f"（约束内容见同名 JSON）"
+                    )
+                    # 删完必须立刻刷新求值：无父级物体的 matrix_local 取的是求值后的世界矩阵
+                    # （含约束结果），不刷新的话后面读矩阵的步骤（矫正物体变换）会把约束生效时
+                    # 的旧矩阵烘进 matrix_basis，删除就白做了。
+                    bpy.context.view_layer.update()
 
             # 修复物体旋转（所有顶级父级物体）
             if self.fixObjectTransform:
@@ -2412,6 +2551,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
         option_col.prop(self, "ignoreGeometryNodes")
+        option_col.prop(self, "applyExportConstraints")
         option_col.prop(self, "ignoreOutlineModifiers")
 
         # MCH 骨列表折叠预览（勾了生成 MCH 才有意义）
