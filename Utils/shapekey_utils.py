@@ -283,3 +283,195 @@ def mesh_triangle_indices(mesh) -> np.ndarray:
     if len(triangles) > 0:
         mesh.loop_triangles.foreach_get("vertices", triangles)
     return triangles.reshape((-1, 3))
+
+
+def _is_bake_modifier(modifier, *, include_render_only: bool, keep_armature: bool) -> bool:
+    """判断某个修改器是否要被“保持形态键地应用”。"""
+    if keep_armature and modifier.type == 'ARMATURE':
+        return False
+    if bool(getattr(modifier, "show_viewport", True)):
+        return True
+    return include_render_only and bool(getattr(modifier, "show_render", False))
+
+
+def bake_modifiers_keeping_shape_keys(
+    objects,
+    *,
+    include_render_only: bool = False,
+    keep_armature: bool = False,
+) -> tuple[list[str], list[tuple[str, str]], list[tuple[str, Exception]]]:
+    """就地应用修改器并保持形态键，返回 (已处理, 已跳过, 失败)。
+
+    共用实现：修改器面板的「保持形态键应用」按钮与 FBX 导出前的隐式烘焙都调用这里，
+    差别只在参数：
+
+    - ``include_render_only``：False 只烘焙视图显示中的修改器（按钮语义，即“应用视图
+      显示中的修改器”）；True 连只在渲染中显示的也一起烘焙（FBX 导出的评估口径）；
+    - ``keep_armature``：False 连骨架修改器一起烘焙（按钮语义）；True 保留骨架修改器，
+      交给导出做蒙皮。
+
+    原理：Blender 不允许给带形态键的网格应用修改器，而求值网格又不带形态键
+    （``bpy.data.meshes.new_from_object``，见 Blender 议题 #104714），所以：
+    逐个形态键单独置 1、其余置 0，各求值一遍修改器栈，拿到该键形变后的顶点位置；
+    再用基础键的求值结果替换基础网格，按原名称/相对键/设置重建全部形态键；
+    最后移除已烘焙的修改器。就地完成，不新建或删除物体，物体身份与名称保持不变。
+
+    返回：
+    - 已处理：每个物体一条说明文本；
+    - 已跳过：(物体名, 原因)，例如网格数据被共用、没有需要应用的修改器、各键求值后
+      顶点数不一致（说明修改器拓扑依赖形态键，无法烘焙成同一套形态键）；
+    - 失败：(物体名, 异常)，抛出前形态键取值与网格都已恢复原状。
+    """
+    baked: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    failed: list[tuple[str, Exception]] = []
+
+    for obj in objects:
+        if obj is None or getattr(obj, "type", None) != 'MESH':
+            continue
+        if obj.name not in bpy.context.view_layer.objects:
+            continue
+
+        mesh = obj.data
+        shape_keys = getattr(mesh, "shape_keys", None)
+        if shape_keys is None or len(shape_keys.key_blocks) < 2:
+            continue
+
+        bake_modifiers = [
+            modifier
+            for modifier in obj.modifiers
+            if _is_bake_modifier(
+                modifier,
+                include_render_only=include_render_only,
+                keep_armature=keep_armature,
+            )
+        ]
+        if not bake_modifiers:
+            skipped.append((obj.name, "没有需要应用的修改器"))
+            continue
+        if mesh.users > 1:
+            skipped.append((obj.name, f"网格数据被 {mesh.users} 个物体共用，无法就地替换"))
+            continue
+
+        key_blocks = list(shape_keys.key_blocks)
+        key_states = [
+            {
+                "name": block.name,
+                "value": block.value,
+                "mute": block.mute,
+                "relative_key": getattr(getattr(block, "relative_key", None), "name", None),
+            }
+            for block in key_blocks
+        ]
+        use_relative = bool(getattr(shape_keys, "use_relative", True))
+        active_index = getattr(shape_keys, "active_index", None)
+        replaced_mesh = False
+        base_mesh = None
+
+        def restore_key_values():
+            """把被求值过程改动的形态键取值恢复原样。"""
+            if replaced_mesh:
+                return
+            for block, state in zip(key_blocks, key_states):
+                if block.name != state["name"]:
+                    continue
+                block.value = state["value"]
+                block.mute = state["mute"]
+
+        try:
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            positions: dict[str, np.ndarray] = {}
+            vertex_counts = set()
+
+            for index, block in enumerate(key_blocks):
+                for other_index, other in enumerate(key_blocks):
+                    other.value = 1.0 if other_index == index else 0.0
+                bpy.context.view_layer.update()
+
+                eval_mesh = bpy.data.meshes.new_from_object(
+                    obj.evaluated_get(depsgraph),
+                    preserve_all_data_layers=True,
+                    depsgraph=depsgraph,
+                )
+                coords = np.empty(len(eval_mesh.vertices) * 3, dtype=np.float32)
+                eval_mesh.vertices.foreach_get("co", coords)
+                positions[block.name] = coords
+                vertex_counts.add(len(eval_mesh.vertices))
+                if index == 0:
+                    base_mesh = eval_mesh  # 基础键的求值结果直接作为新基础网格
+                elif eval_mesh.users == 0:
+                    bpy.data.meshes.remove(eval_mesh)
+
+            restore_key_values()
+
+            if len(vertex_counts) != 1:
+                if base_mesh is not None and base_mesh.users == 0:
+                    bpy.data.meshes.remove(base_mesh)
+                skipped.append((
+                    obj.name,
+                    "各形态键求值后的顶点数不一致 "
+                    f"{sorted(vertex_counts)}（修改器拓扑依赖形态键，点序/点数对不上）",
+                ))
+                continue
+
+            # 用求值结果替换基础网格，并按原名重建形态键
+            obj.data = base_mesh
+            replaced_mesh = True
+            for state in key_states:
+                new_block = obj.shape_key_add(name=state["name"], from_mix=False)
+                write_shape_key_positions(
+                    new_block, positions[state["name"]].reshape((-1, 3))
+                )
+            new_shape_keys = obj.data.shape_keys
+            for source, state in zip(key_blocks, key_states):
+                target = new_shape_keys.key_blocks.get(state["name"])
+                if source is None or target is None:
+                    continue
+                copy_shape_key_settings(source, target, include_relative_key=False)
+                target.value = state["value"]
+                target.mute = state["mute"]
+            try:
+                new_shape_keys.use_relative = use_relative
+            except (AttributeError, TypeError):
+                pass
+            # 相对键要在全部键都建好之后再按名字连回去
+            for state in key_states:
+                relative_name = state["relative_key"]
+                if not relative_name or relative_name == state["name"]:
+                    continue
+                target = new_shape_keys.key_blocks.get(state["name"])
+                relative = new_shape_keys.key_blocks.get(relative_name)
+                if target is not None and relative is not None:
+                    target.relative_key = relative
+            if active_index is not None and hasattr(new_shape_keys, "active_index"):
+                try:
+                    new_shape_keys.active_index = min(
+                        int(active_index), len(key_states) - 1
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    pass
+
+            # 移除已烘焙的修改器（隐藏的、以及 keep_armature 保留的骨架修改器不动）
+            removed_names = []
+            for modifier in bake_modifiers:
+                name = getattr(modifier, "name", None)
+                current = obj.modifiers.get(name) if name else None
+                if current is None:
+                    continue
+                try:
+                    obj.modifiers.remove(current)
+                except (ReferenceError, RuntimeError):
+                    continue
+                removed_names.append(name)
+
+            baked.append(
+                f"{obj.name}（顶点 {len(obj.data.vertices)}，形态键 {len(key_states)}，"
+                f"已应用修改器 {removed_names or '无'}）"
+            )
+        except Exception as exc:
+            restore_key_values()
+            if not replaced_mesh and base_mesh is not None and base_mesh.users == 0:
+                bpy.data.meshes.remove(base_mesh)
+            failed.append((obj.name, exc))
+
+    return baked, skipped, failed

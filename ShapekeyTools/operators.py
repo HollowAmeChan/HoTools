@@ -1007,87 +1007,21 @@ class OP_SetBasisShapekeyActive(Operator):
         return {'FINISHED'}
 
 class OP_applyShowingModifiersKeepShapekeys(Operator):
-    """
-    应用视图显示的修改器并保持形态键
-    原理:
-    一个拥有多个形态键的物体无法应用修改器
-    相同拓补的物体可以使用“形态键-合并”将位置传递过来变为形态键
-    可以将每个形态键的位置都新建一个物体，他们只有一个形态键，就可以应用修改器
+    """应用视图显示中的修改器并保持形态键。
 
-    复制n个物体,n为形态键数量,全部删除掉形态键保留目标形态键位置为基础位置
-    应用这些物体的修改器
-    复制1个物体作为接收器,删除形态键到只有基型，应用掉修改器
-    使用原生的合并api传递形态键,删除多余的物体
+    实现与 FBX 导出前的隐式烘焙共用 ``Utils.shapekey_utils.bake_modifiers_keeping_shape_keys``，
+    只是参数不同：这里按“视图显示中”（show_viewport）取修改器、骨架修改器也一起烘焙；
+    导出侧则按 FBX 会评估的修改器口径（含只在渲染中显示的）并保留骨架修改器给蒙皮。
+
+    原理：Blender 不允许给带形态键的网格应用修改器，而求值网格又不带形态键
+    （``new_from_object``，见议题 #104714）。所以逐个形态键单独求值一遍修改器栈，
+    拿到该键形变后的顶点位置，再用基础键结果替换基础网格、按原名重建全部形态键。
+    就地修改，不新建或删除物体。
     """
     bl_idname = "ho.apply_showing_modifiers_keepshapekeys"
     bl_label = "应用视图显示中的修改器"
     bl_options = {'REGISTER', 'UNDO'}
 
-    def copy_object(self, obj, times=1, offset=0) -> list[Object]:
-        """复制传入的物体多份返回,并在x轴上偏移,可以指定偏移的起始量"""
-        # TODO 没有必要做的这么复杂
-        objects = []
-        for i in range(0, times):
-            copy_obj = obj.copy()
-            copy_obj.data = obj.data.copy()
-            copy_obj.name = obj.name + "_shapekey_" + str(i+1)
-            copy_obj.location.x += offset*(i+1)
-
-            bpy.context.collection.objects.link(copy_obj)
-            objects.append(copy_obj)
-
-        return objects
-
-    def apply_shapekey(self, obj, sk_keep):
-        """等效于应用形态键，删除某个形态键以外的全部键，总而达到保留那一个键的位置的效果"""
-        shapekeys = obj.data.shape_keys.key_blocks
-
-        if sk_keep < 0 or sk_keep >=  len(shapekeys):
-            return
-        # 倒着删保证目标键最后删，等效应用
-        for i in reversed(range(0, len(shapekeys))):
-            if i != sk_keep:
-                obj.shape_key_remove(shapekeys[i])
-        obj.shape_key_remove(shapekeys[0])
-
-    def apply_modifier(self, obj, modifier_name: str):
-        """应用单独的一个修改器"""
-        modifier = [
-            mod for mod in obj.modifiers if mod.name == modifier_name][0]
-        for o in bpy.context.scene.objects:
-            o.select_set(False)
-        bpy.context.view_layer.objects.active = obj  # 保证只有这个物体选中且为活动项
-
-        with bpy.context.temp_override(object=obj, modifier=obj.modifiers):
-            bpy.ops.object.modifier_apply(modifier=modifier_name)
-        # bpy.ops.object.modifier_apply(modifier=modifier.name)
-
-    def remove_modifiers(self, obj):
-        """倒序移除物体的全部修改器"""
-        for i in reversed(range(0, len(obj.modifiers))):  # 倒序移除防止出问题
-            modifier = obj.modifiers[i]
-            obj.modifiers.remove(modifier)
-
-    def add_objs_shapekeys(self, destination: Object, sources: list[Object]):
-        """
-        批量选择sources物体,将destination物体设置为活动,调用bl的合并形态键合并到活动物体
-        这些物体的拓补一致
-        """
-        # 保证物体的选择是正确的
-        for o in bpy.context.scene.objects:
-            o.select_set(False)
-        for src in sources:
-            src.select_set(True)
-
-        bpy.context.view_layer.objects.active = destination
-        # bpy.ops.object.join_shapes()  # bl原生api
-        # 尝试调用合并操作
-        try:
-            bpy.ops.object.join_shapes()
-        except:
-            return sources[0].name  # 出错的通常就是正在尝试合并的源物体
-        return None  # 成功
-    
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -1105,82 +1039,28 @@ class OP_applyShowingModifiersKeepShapekeys(Operator):
         return True
 
     def execute(self, context):
-
-        shapekey_names = []
         obj = context.active_object
-        for block in obj.data.shape_keys.key_blocks:
-            shapekey_names.append(block.name)
+        baked, skipped, failed = shapekey_utils.bake_modifiers_keeping_shape_keys(
+            [obj],
+            include_render_only=False,
+            keep_armature=False,
+        )
 
-        # 创建新物体（接收对象）
-        receiver = self.copy_object(obj, times=1, offset=0)[0]
-        receiver.name = "sk_receiver"
-        # 烘焙形态键
-        self.apply_shapekey(receiver, 0)
+        if failed:
+            ob_name, exc = failed[0]
+            self.report({'ERROR'}, f"{ob_name}：{type(exc).__name__}: {exc}")
+            return {'CANCELLED'}
 
-        # 只应用自己显示在视图中的修改器（.show_viewport = True）
-        for modifier in obj.modifiers:
-            if modifier.show_viewport:  # 只应用视图中可见的修改器
-                self.apply_modifier(receiver, modifier.name)
+        if skipped:
+            ob_name, reason = skipped[0]
+            self.report({'ERROR'}, f"应用修改器失败：{ob_name} {reason}")
+            return {'CANCELLED'}
 
-        # 每个形态键都创建一个新物体作为副本来传输，跳过基型
-        for i in range(1, len(obj.data.shape_keys.key_blocks)):
-            blendshapeObject = self.copy_object(obj, times=1, offset=0)[0]
-            # 烘焙形态键
-            self.apply_shapekey(blendshapeObject, i)
-            # 应用显示在视图中的所有修改器
-            for modifier in obj.modifiers:
-                if modifier.show_viewport:  # 只应用视图中可见的修改器
-                    self.apply_modifier(blendshapeObject, modifier.name)
+        if not baked:
+            self.report({'WARNING'}, "没有可应用的修改器")
+            return {'CANCELLED'}
 
-            # 删除其他的全部修改器
-            self.remove_modifiers(blendshapeObject)
-
-            # 记录添加前数量
-            if not receiver.data.shape_keys:
-                before = 0
-            else:
-                before = len(receiver.data.shape_keys.key_blocks)
-            # 尝试合并
-            self.add_objs_shapekeys(receiver, [blendshapeObject])
-            # 重新获取（避免引用问题）
-            key_blocks = receiver.data.shape_keys.key_blocks
-            after = len(key_blocks)
-
-            # 统一检测是否成功创建，如果没有成功创建（通常是拓扑不一致导致的），则删除所有临时物体并报错退出
-            if after == before:
-                self.report(
-                    {'ERROR'},
-                    f"形态键 '{shapekey_names[i]}' 添加失败（可能由于修改器的自动焊接，导致点序/点数不一致）"
-                )
-                mesh_data = blendshapeObject.data
-                bpy.data.objects.remove(blendshapeObject)
-                bpy.data.meshes.remove(mesh_data)
-
-                receiver_mesh = receiver.data
-                bpy.data.objects.remove(receiver)
-                bpy.data.meshes.remove(receiver_mesh)
-
-                # 恢复原物体为 active
-                bpy.context.view_layer.objects.active = obj
-                bpy.context.view_layer.update()
-
-                return {'CANCELLED'}
-            key_blocks[-1].name = shapekey_names[i]
-
-            # 删除临时物体
-            mesh_data = blendshapeObject.data
-            bpy.data.objects.remove(blendshapeObject)
-            bpy.data.meshes.remove(mesh_data)
-
-        # 移除原始物体
-        orig_name = obj.name
-        orig_data = obj.data
-        bpy.data.objects.remove(obj)
-        bpy.data.meshes.remove(orig_data)
-
-        # 重命名新物体
-        receiver.name = orig_name
-
+        self.report({'INFO'}, f"已应用修改器并保持形态键：{baked[0]}")
         return {'FINISHED'}
 
 class OP_ApplyArmatureModifiersKeepShapekeys(Operator):
