@@ -34,6 +34,16 @@
 # 9. 忽略几何节点（默认开启）：导出前临时移除 NODES 修改器。
 #    解决几何节点改变导出拓扑、实例结果或形态键兼容性的问题。
 #    gn无法被区分是否修改拓补，bl内部导出器选择保守方案认为他是拓补修改
+# 9.1 烘焙形态键穿过修改器（隐式操作，无开关）：物体既有形态键、又还有会被导出的修改器
+#    （几何节点、数据传递等，骨架修改器除外），或需要三角化时，逐个形态键求值一遍修改器栈，
+#    再用结果替换基础网格并重建同名形态键，最后移除已烘焙的修改器。
+#    复用 Utils.shapekey_utils.bake_modifiers_keeping_shape_keys——与修改器面板的
+#    「保持形态键应用」按钮是同一套实现，差别只在参数：导出按“FBX 会评估的修改器”
+#    （含只在渲染中显示的）、并保留骨架修改器给蒙皮；按钮按“视图显示中”的、连骨架一起烘。
+#    解决“形态键 + 几何节点”物体导出后 BlendShape 静默丢失的问题：Blender 原生导出
+#    在有修改器要应用时走 evaluated mesh（new_from_object），求值网格不带形态键
+#    （Blender 议题 #104714），物体本身能导出但形变数据没了。前提是各形态键求值后的
+#    顶点数一致；不一致会跳过并报warning。不留痕。
 # 10. 忽略描边修改器（默认开启）：临时移除开启翻转法线的 SOLIDIFY 描边修改器。
 #    解决渲染用外壳被误当成模型几何导出，导致重复表面和法线异常的问题。
 # 11. 删除隐藏修改器（默认开启）：临时移除视口隐藏的修改器。
@@ -740,13 +750,49 @@ class FBXExporter:
         active_object = bpy.context.view_layer.objects.active
         return processed, failed, selection, active_object
 
+    TRIANGULATE_MODIFIER_NAME = "HoFBX Triangulate"
+    @staticmethod
+    def remove_modifier_if_present(ob, modifier):
+        """存在则移除指定修改器（用于撤销临时添加的三角化修改器）。"""
+        if modifier is None:
+            return
+        name = getattr(modifier, "name", None)
+        if not name:
+            return
+        current = ob.modifiers.get(name)
+        if current is None:
+            return
+        try:
+            ob.modifiers.remove(current)
+        except (ReferenceError, RuntimeError):
+            pass
+
+    @staticmethod
+    def add_export_triangulate_modifier(ob):
+        """按导出约定添加三角化修改器（FIXED + BEAUTY + 最少顶点 4 + 保持法向）。"""
+        modifier = ob.modifiers.new(
+            name=FBXExporter.TRIANGULATE_MODIFIER_NAME,
+            type="TRIANGULATE",
+        )
+        modifier.quad_method = "FIXED"
+        modifier.ngon_method = "BEAUTY"
+        modifier.min_vertices = 4
+        modifier.keep_custom_normals = True
+        return modifier
+
     @staticmethod
     def triangulate_export_meshes(mesh_objects, selection, active_object):
-        """用 Blender Triangulate 修改器固定导出网格的三角形分割方式。"""
+        """用 Blender Triangulate 修改器固定导出网格的三角形分割方式。
+
+        带形态键的网格不能应用修改器（Blender 限制），这类网格改由
+        bake_shape_keys_through_modifiers 在烘焙形态键时一并三角化，这里只报告跳过，
+        不再算作失败。
+        """
         selection_names = [ob.name for ob in selection]
         active_object_name = active_object.name if active_object else None
         target_objects = []
         visited_meshes = set()
+        shape_key_objects = []
         failed = []
 
         for ob in mesh_objects:
@@ -759,7 +805,17 @@ class FBXExporter:
             if mesh_id in visited_meshes:
                 continue
             visited_meshes.add(mesh_id)
+            if getattr(mesh, "shape_keys", None) is not None:
+                shape_key_objects.append(ob.name)
+                continue
             target_objects.append(ob)
+
+        if shape_key_objects:
+            print(
+                f"[HoTools FBX] 三角化：跳过 {len(shape_key_objects)} 个带形态键的网格"
+                f"（形态键会阻止应用修改器，改由形态键烘焙步骤处理）："
+                f"{'、'.join(shape_key_objects)}"
+            )
 
         if not target_objects:
             return 0, [], selection, active_object
@@ -774,15 +830,8 @@ class FBXExporter:
                 bpy.context.view_layer.objects.active = ob
                 bpy.context.view_layer.update()
 
-                triangulate_modifier = ob.modifiers.new(
-                    name="HoFBX Triangulate",
-                    type="TRIANGULATE",
-                )
+                triangulate_modifier = FBXExporter.add_export_triangulate_modifier(ob)
                 triangulate_modifier_name = triangulate_modifier.name
-                triangulate_modifier.quad_method = "FIXED"
-                triangulate_modifier.ngon_method = "BEAUTY"
-                triangulate_modifier.min_vertices = 4
-                triangulate_modifier.keep_custom_normals = True
                 bpy.context.view_layer.update()
 
                 result = bpy.ops.object.modifier_apply(
@@ -1553,6 +1602,110 @@ class FBXExporter:
 
         return removed, failed
     @staticmethod
+    def mesh_has_evaluated_modifiers(ob) -> bool:
+        """是否存在会被 FBX 导出评估的修改器（骨架修改器由导出单独处理，不算）。"""
+        for modifier in ob.modifiers:
+            if modifier.type == "ARMATURE":
+                continue
+            if modifier.show_viewport or modifier.show_render:
+                return True
+        return False
+
+    @staticmethod
+    def bake_shape_keys_through_modifiers(objects, triangulate=False):
+        """导出前把形态键烘焙穿过修改器栈，返回 (已烘焙, 已跳过, 失败)。
+
+        隐式操作：没有开关，导出流程无条件调用（用户不需要知道这件事，但一旦漏掉
+        就会表现为“形态键没了”）。
+
+        真正的实现在 ``Utils.shapekey_utils.bake_modifiers_keeping_shape_keys``——
+        和修改器面板的「保持形态键应用」按钮**共用同一套逻辑**，这里只负责导出侧的
+        取舍与报告：
+        - 口径按“FBX 会评估的修改器”（show_viewport or show_render），
+          骨架修改器保留给导出做蒙皮（对应 core 的 include_render_only=True / keep_armature=True）；
+        - 需要三角化时先补一个三角化修改器一起烘焙：形态键会阻止单独应用三角化修改器，
+          已经是三角面的网格则不必为三角化多烘一遍；
+        - 未成功烘焙的物体要撤掉临时三角化修改器，避免残留在工程里影响导出。
+
+        必须处理的原因：Blender 原生 FBX 导出在“物体还有修改器要应用”时走 evaluated mesh
+        （io_scene_fbx 的 bpy.data.meshes.new_from_object 分支），而求值网格不带形态键
+        （见 Blender 议题 #104714），于是“形态键 + 几何节点”这类物体导出的 FBX 里
+        BlendShape 会被静默丢掉——物体本身能导出，但形变数据没了。
+
+        触发条件：网格有形态键，且（有待评估的修改器，或开启了三角化）。
+        只带形态键、没有其它修改器、也不需要三角化的网格不会被碰。
+        全部改动随导出末尾的 undo 回滚，工程不留痕。
+        """
+        from Utils import shapekey_utils
+
+        baked = []
+        skipped = []
+        failed = []
+        if not objects:
+            return baked, skipped, failed
+
+        for ob in objects:
+            if ob.type != "MESH" or ob.name not in bpy.context.view_layer.objects:
+                continue
+            mesh = getattr(ob, "data", None)
+            shape_keys = getattr(mesh, "shape_keys", None)
+            if shape_keys is None or len(shape_keys.key_blocks) < 2:
+                continue
+            if not FBXExporter.mesh_has_evaluated_modifiers(ob):
+                # 没有要评估的修改器时，只有“需要三角化”才值得烘焙：
+                # 形态键会阻止三角化修改器单独应用，只能连形态键一起烘。
+                if not triangulate:
+                    continue
+                if all(len(polygon.vertices) == 3 for polygon in mesh.polygons):
+                    continue
+
+            temp_triangulate = (
+                FBXExporter.add_export_triangulate_modifier(ob) if triangulate else None
+            )
+            # 烘焙的是“修改器结果”，必须排除骨架形变：导出流程此时按 applyArmaturePose
+            # 的需要把骨架放在 POSE 显示，直接求值会把当前姿态（含约束结果）烘进基础网格，
+            # 而骨架修改器还留在网格上，导出后会被再形变一次（双重形变）。
+            # Blender 内置导出也是临时切 REST 再求值网格（io_scene_fbx 的 backup_pose_positions），
+            # 这里照做，求值完立刻还原，不影响后面的应用姿态步骤。
+            pose_position_states = []
+            for modifier in ob.modifiers:
+                if modifier.type != "ARMATURE":
+                    continue
+                armature_data = getattr(getattr(modifier, "object", None), "data", None)
+                if armature_data is None or not hasattr(armature_data, "pose_position"):
+                    continue
+                pose_position_states.append((armature_data, armature_data.pose_position))
+                armature_data.pose_position = "REST"
+            try:
+                ob_baked, ob_skipped, ob_failed = (
+                    shapekey_utils.bake_modifiers_keeping_shape_keys(
+                        [ob],
+                        include_render_only=True,
+                        keep_armature=True,
+                    )
+                )
+            except Exception as exc:  # core 内部已尽量自恢复，这里兜底
+                FBXExporter.remove_modifier_if_present(ob, temp_triangulate)
+                failed.append((ob.name, exc))
+                continue
+            finally:
+                for armature_data, pose_position in pose_position_states:
+                    try:
+                        armature_data.pose_position = pose_position
+                    except (ReferenceError, TypeError):
+                        pass
+
+            if ob_baked:
+                baked.extend(ob_baked)
+            else:
+                # 没烘成：临时三角化修改器不能留在工程里
+                FBXExporter.remove_modifier_if_present(ob, temp_triangulate)
+                skipped.extend(ob_skipped)
+                failed.extend(ob_failed)
+
+        return baked, skipped, failed
+
+    @staticmethod
     def remove_geometry_nodes_modifiers(objects):
         # 临时删除所有几何节点修改器（type == 'NODES'），不论是否显示在视口。
         # 几何节点会改变导出网格拓扑，且常与形态键、Unity 导入冲突；导出前整体去掉，
@@ -1897,6 +2050,33 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     f"创建了 {made_single_user} 个独立 Mesh 数据"
                 )
 
+            # 形态键 + 待评估修改器（几何节点等）：先烘焙再导出，否则 Blender 原生导出
+            # 走求值网格会把形态键静默丢掉（物体能导出，但 BlendShape 没了）。
+            # 隐式操作、无开关：用户不需要知道这件事，但一旦出问题就会“形态键没了”。
+            # 须在数据传递/三角化等“应用修改器”步骤之前：烘焙后这些步骤才能正常生效；
+            # 三角化一并交给烘焙步骤（形态键会阻止单独应用三角化修改器）。
+            (
+                baked_shape_keys,
+                skipped_shape_keys,
+                failed_shape_keys,
+            ) = FBXExporter.bake_shape_keys_through_modifiers(
+                selection, triangulate=self.triangulateMeshes
+            )
+            if baked_shape_keys:
+                print("[HoTools FBX] 形态键烘焙穿过修改器：")
+                for line in baked_shape_keys:
+                    print(f"  {line}")
+            for ob_name, reason in skipped_shape_keys:
+                print(f"[HoTools FBX] 形态键烘焙跳过 {ob_name}：{reason}")
+            for ob_name, exc in failed_shape_keys:
+                print(f"[HoTools FBX] 形态键烘焙失败 {ob_name}：{type(exc).__name__}: {exc}")
+            if skipped_shape_keys or failed_shape_keys:
+                self.report(
+                    {"WARNING"},
+                    f"{len(skipped_shape_keys) + len(failed_shape_keys)} 个物体的形态键"
+                    f"未能烘焙穿过修改器，详见控制台",
+                )
+
             # blender数据传递修改器在fbx导出时应用环境不齐全需要手动应用防止错误效果
             (
                 data_transfer_applied,
@@ -2036,33 +2216,14 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     active_object,
                 )
 
-            # 修复物体旋转（所有顶级父级物体）
-            if self.fixObjectTransform:
-                for ob in root_objects:
-                    FBXExporter.fix_object(ob)
-
-            # 刷新场景防止变换没有应用
-            bpy.context.view_layer.update()
-
-            #重置物体与集合的可见可选
-            for ob in hidden_objects:
-                ob.hide_set(True)
-            for ob in disabled_objects:
-                ob.hide_viewport = True
-            for col in hidden_collections:
-                col.hide_viewport = True
-            for col in disabled_collections:
-                col.collection.hide_viewport = True
-
-            # 重置选择状态
-            FBXExporter.restore_selection(selection, active_object)
-
             # JSON 只针对将被导出的骨架 = 原始选中的骨架（与 FBX use_selection=True 一致）
             selected_armature_names = {
                 ob.name for ob in selection if ob.type == "ARMATURE"
             }
 
-            # 导出中立 Rig 约束 IR。约束目标保留 MCH 预处理后的 Blender 事实。
+            # 导出中立 Rig 约束 IR。约束目标保留 MCH 预处理后的 Blender 事实
+            # （所以必须排在 MCH 之后）。
+            # 这里也不依赖可见性/选择状态，提前写不会影响后面的预处理。
             export_constraints = self.exportUnityMetadata or self.exportBoneConstraint
             export_collections = self.exportUnityMetadata or self.exportBoneCollection
             export_humanoid = self.exportUnityMetadata or self.exportHumanoidMapping
@@ -2121,6 +2282,27 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     metadata_entries,
                 )
                 exported_json.append(manifest_path)
+
+            # 修复物体旋转（所有顶级父级物体）
+            if self.fixObjectTransform:
+                for ob in root_objects:
+                    FBXExporter.fix_object(ob)
+
+            # 刷新场景防止变换没有应用
+            bpy.context.view_layer.update()
+
+            #重置物体与集合的可见可选
+            for ob in hidden_objects:
+                ob.hide_set(True)
+            for ob in disabled_objects:
+                ob.hide_viewport = True
+            for col in hidden_collections:
+                col.hide_viewport = True
+            for col in disabled_collections:
+                col.collection.hide_viewport = True
+
+            # 重置选择状态
+            FBXExporter.restore_selection(selection, active_object)
 
             # 导出
             params = self.getParams(context)
@@ -2319,6 +2501,21 @@ class OP_FinalFBXExport_only_preprocess(Operator):
                     for ob_name, mod_name, exc in failed_outline:
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
                     self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
+
+            # 形态键 + 待评估修改器：烘焙穿过修改器，避免导出丢 BlendShape（隐式操作）
+            (
+                baked_shape_keys,
+                skipped_shape_keys,
+                failed_shape_keys,
+            ) = FBXExporter.bake_shape_keys_through_modifiers(selection)
+            if baked_shape_keys:
+                print("[HoTools FBX] 形态键烘焙穿过修改器：")
+                for line in baked_shape_keys:
+                    print(f"  {line}")
+            for ob_name, reason in skipped_shape_keys:
+                print(f"[HoTools FBX] 形态键烘焙跳过 {ob_name}：{reason}")
+            for ob_name, exc in failed_shape_keys:
+                print(f"[HoTools FBX] 形态键烘焙失败 {ob_name}：{type(exc).__name__}: {exc}")
 
             # 清理权重（须在补叶骨之前；仅动骨骼权重组，非骨骼组不碰）
             if self.cleanWeights:
