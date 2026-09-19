@@ -175,6 +175,68 @@ try:
     assert run_button() == {"CANCELLED"}
     assert len(ob_shared.modifiers) == 3, "被共用时不应烘焙修改器"
     assert ob_shared.data.shape_keys is not None
+
+    # ── 4. 实体化修改器（点数翻倍）：形态键与形变都要保留 ────────────────────
+    # 回归：曾经用“改 value 再求值”的做法，遇到实体化/静音键/驱动器会取到基型，
+    # 表现就是应用完之后形态键形变全平。
+    _armature_solid, ob_solid = build_object(
+        "solidify", with_armature=False, hidden_modifier=False, with_gn=False
+    )
+    solidify = ob_solid.modifiers.new("Solidify", "SOLIDIFY")
+    solidify.thickness = 0.2
+    activate(ob_solid)
+    assert run_button() == {"FINISHED"}
+    assert len(ob_solid.data.vertices) == 8, "实体化应当让顶点翻倍"
+    assert [key.name for key in ob_solid.data.shape_keys.key_blocks] == [BASIS_NAME, KEY_NAME]
+    assert [modifier.name for modifier in ob_solid.modifiers] == []
+    key_delta = max(
+        abs(
+            ob_solid.data.shape_keys.key_blocks[BASIS_NAME].data[i].co.x
+            - ob_solid.data.shape_keys.key_blocks[KEY_NAME].data[i].co.x
+        )
+        for i in range(len(ob_solid.data.vertices))
+    )
+    assert key_delta > 0.1, f"实体化后形态键形变丢失（最大差异 {key_delta}）"
+
+    # ── 5. 被静音的形态键：也要取到它自己的形状 ──────────────────────────────
+    _armature_mute, ob_mute = build_object(
+        "muted", with_armature=False, hidden_modifier=False, with_gn=False
+    )
+    mute_solidify = ob_mute.modifiers.new("Solidify", "SOLIDIFY")
+    mute_solidify.thickness = 0.2
+    ob_mute.data.shape_keys.key_blocks[KEY_NAME].mute = True
+    activate(ob_mute)
+    assert run_button() == {"FINISHED"}
+    muted_delta = max(
+        abs(
+            ob_mute.data.shape_keys.key_blocks[BASIS_NAME].data[i].co.x
+            - ob_mute.data.shape_keys.key_blocks[KEY_NAME].data[i].co.x
+        )
+        for i in range(len(ob_mute.data.vertices))
+    )
+    assert muted_delta > 0.1, f"静音的形态键被抹平了（最大差异 {muted_delta}）"
+    assert ob_mute.data.shape_keys.key_blocks[KEY_NAME].mute is True, "静音状态应当保留"
+
+    # ── 6. 形态键数值被驱动器驱动：同样要取到该键自己的形状 ──────────────────
+    _armature_drv, ob_drv = build_object(
+        "driven", with_armature=False, hidden_modifier=False, with_gn=False
+    )
+    drv_solidify = ob_drv.modifiers.new("Solidify", "SOLIDIFY")
+    drv_solidify.thickness = 0.2
+    driver_curve = ob_drv.data.shape_keys.key_blocks[KEY_NAME].driver_add("value")
+    driver_curve.driver.type = "SCRIPTED"
+    driver_curve.driver.expression = "0.0"
+    bpy.context.view_layer.update()
+    activate(ob_drv)
+    assert run_button() == {"FINISHED"}
+    driven_delta = max(
+        abs(
+            ob_drv.data.shape_keys.key_blocks[BASIS_NAME].data[i].co.x
+            - ob_drv.data.shape_keys.key_blocks[KEY_NAME].data[i].co.x
+        )
+        for i in range(len(ob_drv.data.vertices))
+    )
+    assert driven_delta > 0.1, f"被驱动器驱动的形态键被抹平了（最大差异 {driven_delta}）"
 finally:
     bpy.utils.unregister_class(shapekey_operators.OP_applyShowingModifiersKeepShapekeys)
 

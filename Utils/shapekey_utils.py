@@ -294,6 +294,45 @@ def _is_bake_modifier(modifier, *, include_render_only: bool, keep_armature: boo
     return include_render_only and bool(getattr(modifier, "show_render", False))
 
 
+def _evaluated_positions_for_key(obj, key_index: int, depsgraph):
+    """求值“只保留第 key_index 个形态键”的副本，返回 (求值网格数据块, 坐标数组)。
+
+    做法参考「复制物体 → 只留一个形态键 → 应用修改器」的老办法：
+    副本上删掉其它形态键后，剩下的那个键就是参考键，网格形状即该键自身的形状。
+    这样不需要动 value / mute，也不怕形态键数值被驱动器或动画驱动，
+    被静音的形态键同样能取到它自己的形状（改 value 的做法在这三种情况下都会取到基型）。
+
+    调用方负责释放返回的网格数据块；临时物体与临时网格在本函数内清理。
+    """
+    temp_obj = obj.copy()
+    temp_obj.data = obj.data.copy()
+    bpy.context.scene.collection.objects.link(temp_obj)
+    try:
+        key_blocks = list(temp_obj.data.shape_keys.key_blocks)
+        if key_index >= len(key_blocks):
+            raise ShapeKeyUtilsError(f"形态键索引越界：{key_index}")
+        keep_block = key_blocks[key_index]
+        for block in key_blocks:
+            if block != keep_block:
+                temp_obj.shape_key_remove(block)
+
+        # 新挂进来的副本必须先刷新求值，否则下面拿到的还是未求值的网格（修改器没生效）
+        bpy.context.view_layer.update()
+        eval_mesh = bpy.data.meshes.new_from_object(
+            temp_obj.evaluated_get(depsgraph),
+            preserve_all_data_layers=True,
+            depsgraph=depsgraph,
+        )
+        coords = np.empty(len(eval_mesh.vertices) * 3, dtype=np.float32)
+        eval_mesh.vertices.foreach_get("co", coords)
+        return eval_mesh, coords
+    finally:
+        temp_mesh = temp_obj.data
+        bpy.data.objects.remove(temp_obj, do_unlink=True)
+        if temp_mesh is not None and temp_mesh.users == 0:
+            bpy.data.meshes.remove(temp_mesh)
+
+
 def bake_modifiers_keeping_shape_keys(
     objects,
     *,
@@ -311,16 +350,20 @@ def bake_modifiers_keeping_shape_keys(
       交给导出做蒙皮。
 
     原理：Blender 不允许给带形态键的网格应用修改器，而求值网格又不带形态键
-    （``bpy.data.meshes.new_from_object``，见 Blender 议题 #104714），所以：
-    逐个形态键单独置 1、其余置 0，各求值一遍修改器栈，拿到该键形变后的顶点位置；
-    再用基础键的求值结果替换基础网格，按原名称/相对键/设置重建全部形态键；
-    最后移除已烘焙的修改器。就地完成，不新建或删除物体，物体身份与名称保持不变。
+    （``bpy.data.meshes.new_from_object``，见 Blender 议题 #104714），所以逐个形态键
+    各求值一遍修改器栈，拿到该键形变后的顶点位置；再用基础键的求值结果替换基础网格，
+    按原名称/相对键/设置重建全部形态键；最后移除已烘焙的修改器。
+    求值用的是「只保留该形态键的临时副本」（见 ``_evaluated_positions_for_key``），
+    因此被静音的键、被驱动器/动画驱动的数值都不会影响结果。
+
+    就地完成，不新建也不删除原物体；任何一步失败都会把 ``obj.data`` 还原成原网格
+    （原网格与形态键原封不动），不会留下半成品。
 
     返回：
     - 已处理：每个物体一条说明文本；
     - 已跳过：(物体名, 原因)，例如网格数据被共用、没有需要应用的修改器、各键求值后
       顶点数不一致（说明修改器拓扑依赖形态键，无法烘焙成同一套形态键）；
-    - 失败：(物体名, 异常)，抛出前形态键取值与网格都已恢复原状。
+    - 失败：(物体名, 异常)，抛出前已把网格与形态键还原。
     """
     baked: list[str] = []
     skipped: list[tuple[str, str]] = []
@@ -354,59 +397,44 @@ def bake_modifiers_keeping_shape_keys(
             continue
 
         key_blocks = list(shape_keys.key_blocks)
+        # 先把设置抄成普通值：替换 ob.data 之后原形态键数据块就不再是当前网格的了
         key_states = [
             {
                 "name": block.name,
                 "value": block.value,
                 "mute": block.mute,
                 "relative_key": getattr(getattr(block, "relative_key", None), "name", None),
+                "vertex_group": getattr(block, "vertex_group", ""),
+                "slider_min": getattr(block, "slider_min", 0.0),
+                "slider_max": getattr(block, "slider_max", 1.0),
+                "lock_shape": getattr(block, "lock_shape", False),
+                "interpolation": getattr(block, "interpolation", None),
             }
             for block in key_blocks
         ]
         use_relative = bool(getattr(shape_keys, "use_relative", True))
         active_index = getattr(shape_keys, "active_index", None)
-        replaced_mesh = False
+        original_mesh = mesh
         base_mesh = None
-
-        def restore_key_values():
-            """把被求值过程改动的形态键取值恢复原样。"""
-            if replaced_mesh:
-                return
-            for block, state in zip(key_blocks, key_states):
-                if block.name != state["name"]:
-                    continue
-                block.value = state["value"]
-                block.mute = state["mute"]
 
         try:
             depsgraph = bpy.context.evaluated_depsgraph_get()
             positions: dict[str, np.ndarray] = {}
             vertex_counts = set()
 
-            for index, block in enumerate(key_blocks):
-                for other_index, other in enumerate(key_blocks):
-                    other.value = 1.0 if other_index == index else 0.0
-                bpy.context.view_layer.update()
-
-                eval_mesh = bpy.data.meshes.new_from_object(
-                    obj.evaluated_get(depsgraph),
-                    preserve_all_data_layers=True,
-                    depsgraph=depsgraph,
-                )
-                coords = np.empty(len(eval_mesh.vertices) * 3, dtype=np.float32)
-                eval_mesh.vertices.foreach_get("co", coords)
-                positions[block.name] = coords
+            for index, state in enumerate(key_states):
+                eval_mesh, coords = _evaluated_positions_for_key(obj, index, depsgraph)
+                positions[state["name"]] = coords
                 vertex_counts.add(len(eval_mesh.vertices))
                 if index == 0:
                     base_mesh = eval_mesh  # 基础键的求值结果直接作为新基础网格
                 elif eval_mesh.users == 0:
                     bpy.data.meshes.remove(eval_mesh)
 
-            restore_key_values()
-
             if len(vertex_counts) != 1:
                 if base_mesh is not None and base_mesh.users == 0:
                     bpy.data.meshes.remove(base_mesh)
+                base_mesh = None
                 skipped.append((
                     obj.name,
                     "各形态键求值后的顶点数不一致 "
@@ -416,20 +444,29 @@ def bake_modifiers_keeping_shape_keys(
 
             # 用求值结果替换基础网格，并按原名重建形态键
             obj.data = base_mesh
-            replaced_mesh = True
             for state in key_states:
                 new_block = obj.shape_key_add(name=state["name"], from_mix=False)
                 write_shape_key_positions(
                     new_block, positions[state["name"]].reshape((-1, 3))
                 )
             new_shape_keys = obj.data.shape_keys
-            for source, state in zip(key_blocks, key_states):
+            for state in key_states:
                 target = new_shape_keys.key_blocks.get(state["name"])
-                if source is None or target is None:
+                if target is None:
                     continue
-                copy_shape_key_settings(source, target, include_relative_key=False)
                 target.value = state["value"]
                 target.mute = state["mute"]
+                if state["vertex_group"] and hasattr(target, "vertex_group"):
+                    target.vertex_group = state["vertex_group"]
+                if state["interpolation"] is not None and hasattr(target, "interpolation"):
+                    target.interpolation = state["interpolation"]
+                for attribute in ("slider_min", "slider_max", "lock_shape"):
+                    value = state[attribute]
+                    if value is not None and hasattr(target, attribute):
+                        try:
+                            setattr(target, attribute, value)
+                        except (AttributeError, TypeError, ValueError):
+                            pass
             try:
                 new_shape_keys.use_relative = use_relative
             except (AttributeError, TypeError):
@@ -469,9 +506,13 @@ def bake_modifiers_keeping_shape_keys(
                 f"已应用修改器 {removed_names or '无'}）"
             )
         except Exception as exc:
-            restore_key_values()
-            if not replaced_mesh and base_mesh is not None and base_mesh.users == 0:
+            # 回滚：把原网格挂回去，形态键与几何都不会留下半成品
+            if base_mesh is not None and base_mesh.users == 0:
                 bpy.data.meshes.remove(base_mesh)
+            try:
+                obj.data = original_mesh
+            except (ReferenceError, TypeError):
+                pass
             failed.append((obj.name, exc))
 
     return baked, skipped, failed
