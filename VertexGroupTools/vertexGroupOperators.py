@@ -2629,6 +2629,11 @@ cls = [
 addon_keymaps = []
 
 
+def preference_keymaps():
+    """偏好设置里可编辑的默认快捷键项，与其它工具模块保持同一接口。"""
+    return addon_keymaps
+
+
 def register():
     for i in cls:
         bpy.utils.register_class(i)
@@ -2638,7 +2643,10 @@ def register():
         draw_in_MESH_MT_vertex_group_context_menu)
 
     # OP_Switch_VG_byCursor默认绑定 alt+ 右键
-    km = bpy.context.window_manager.keyconfigs.addon.keymaps.new(name="Window", space_type="EMPTY", region_type="WINDOW")
+    keyconfig = bpy.context.window_manager.keyconfigs.addon
+    if keyconfig is None:
+        return
+    km = keyconfig.keymaps.new(name="Window", space_type="EMPTY", region_type="WINDOW")
     kmi = km.keymap_items.new(
         OP_VertexGroupTools_Switch_VG_byCursor.bl_idname,
         type='RIGHTMOUSE',

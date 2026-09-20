@@ -12,6 +12,11 @@ def ureg_props():
    return 
 
 
+def preference_keymaps():
+    """偏好设置里可编辑的默认快捷键项，与其它工具模块保持同一接口。"""
+    return vertexGroupOperators.preference_keymaps()
+
+
 cls = []
 
 
@@ -27,3 +32,6 @@ def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
     ureg_props()
+
+
+__all__ = ["register", "unregister", "preference_keymaps"]

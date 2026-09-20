@@ -37,7 +37,7 @@ def _preference_keymaps():
         *ProjectTools.preference_keymaps(),
         *ObjectTools.preference_keymaps(),
         *CurveTools.preference_keymaps(),
-        *getattr(VertexGroupTools.vertexGroupOperators, 'addon_keymaps', []),
+        *VertexGroupTools.preference_keymaps(),
         *MeshTools.preference_keymaps(),
         *HoPie.preference_keymaps(),
         *HoTab.preference_keymaps(),

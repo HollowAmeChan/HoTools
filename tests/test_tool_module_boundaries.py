@@ -57,6 +57,18 @@ class ToolModuleBoundaryTests(unittest.TestCase):
         self.assertIn("CurveTools.register()", source)
         self.assertNotIn("FastOperators.register()", source)
 
+    def test_vertex_group_tools_keymaps_use_the_shared_interface(self):
+        root_source = (ROOT / "__init__.py").read_text(encoding="utf-8")
+        self.assertIn("VertexGroupTools.preference_keymaps()", root_source)
+        self.assertNotIn("getattr(VertexGroupTools.vertexGroupOperators", root_source)
+        group_init = (ROOT / "VertexGroupTools" / "__init__.py").read_text(encoding="utf-8")
+        self.assertIn("def preference_keymaps(", group_init)
+        self.assertIn("vertexGroupOperators.preference_keymaps()", group_init)
+        operators_source = (
+            ROOT / "VertexGroupTools" / "vertexGroupOperators.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("def preference_keymaps(", operators_source)
+
     def test_curve_tools_contain_implementations(self):
         for filename in ("bevel.py", "repair.py", "symmetrize.py"):
             source = (ROOT / "CurveTools" / filename).read_text(encoding="utf-8")
