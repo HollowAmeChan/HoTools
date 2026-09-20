@@ -561,7 +561,7 @@ class AddonPreference(bpy.types.AddonPreferences):
             """
             install_row = content.row(align=True)
             install_row.operator(
-                'ho.omninode_install_extension', text='安装扩展…', icon='IMPORT')
+                'ho.omninode_install_extension', text='', icon='IMPORT')
             install_row.operator(
                 'ho.omninode_purge_extension_trash', text='', icon='TRASH')
             if not self.hoTools_OmniNodeFeatures_enable:
@@ -602,12 +602,6 @@ class AddonPreference(bpy.types.AddonPreferences):
             ):
                 note = content.row()
                 note.label(text='红色扩展不可用：修复后可重新启用', icon='ERROR')
-            locations = OmniNode.OmniNodeExtensionManage.extension_search_dirs()
-            path_row = content.row()
-            path_row.enabled = False
-            path_row.label(
-                text="安装位置：" + ("；".join(str(p) for p in locations)
-                                 if locations else "尚未创建"))
 
 
         _draw_module_box(left, self, 'hoTools_ui_exicon_expanded', 'ExIcon', 'hoTools_enableExIcon', draw_exicon)
