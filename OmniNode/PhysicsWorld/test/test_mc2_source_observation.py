@@ -4,8 +4,7 @@ import sys
 
 
 PATH = (
-    Path(__file__).resolve().parents[1]
-    / "PhysicsWorld" / "mc2" / "source_observation.py"
+    Path(__file__).resolve().parents[1] / "mc2" / "source_observation.py"
 )
 SPEC = importlib.util.spec_from_file_location("mc2_source_observation_test_module", PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
