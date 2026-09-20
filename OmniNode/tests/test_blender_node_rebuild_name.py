@@ -15,7 +15,7 @@ OMNINODE = os.path.dirname(TESTS)
 HOTOOLS = os.path.dirname(OMNINODE)
 NODETREE = OMNINODE
 FUNCTION = os.path.join(NODETREE, "Function")
-PHYSICS_WORLD = os.path.join(OMNINODE, "PhysicsWorld")
+PHYSICS_WORLD = os.path.join(OMNINODE, "extensions", "Hotools-Omninode-Physics", "PhysicsWorld")
 
 for package_name, package_path in (
     ("HoTools", HOTOOLS),

@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import sys
 from types import ModuleType
+import types
 
 import bpy
 import nodeitems_utils
@@ -319,6 +320,61 @@ def _ensure_import_root(root: Path) -> bool:
     return True
 
 
+def _register_canonical_extension_package(
+    directory: Path,
+    package_name: str = ".",
+) -> str | None:
+    """把扩展包以**规范包名** ``HoTools.OmniNode.<包名>`` 注册进 sys.modules。
+
+    为什么需要这一步：扩展可以装在任意目录（插件内 `extensions/` 或 Blender
+    用户扩展目录），但它的包内相对导入（本仓库有 700+ 处，如
+    ``from ..PropertyCurve import ...``、``from ...native import ...``）是按
+    “位于 HoTools.OmniNode 之下”的层级写的。物理位置一变，相对导入的级数就对不上。
+
+    这里直接把该目录登记为规范包，让导入系统认为扩展仍在它原来的位置：
+
+        physics_dir  →  sys.modules["HoTools.OmniNode.PhysicsWorld"]
+                        __path__ = [physics_dir]
+
+    于是**无论扩展装在哪儿，包内代码一行都不用改**。`extensions/` 与仓库目录都
+    不需要 __init__.py，也不会成为包的一部分。
+
+    返回规范包名；无法确定包目录时返回 None（调用方回退到按物理名导入）。
+    """
+    if not package_name or package_name == ".":
+        return None
+    physics_dir = Path(directory) / package_name
+    if not physics_dir.is_dir():
+        return None
+    canonical = f"{__package__}.{_normalize_extension_directory(package_name)}"
+    if canonical not in sys.modules:
+        module = types.ModuleType(canonical)
+        module.__path__ = [str(physics_dir)]
+        module.__package__ = canonical
+        module.__spec__ = None
+        sys.modules[canonical] = module
+        parent = sys.modules.get(__package__)
+        if parent is not None:
+            setattr(parent, _normalize_extension_directory(package_name), module)
+        importlib.invalidate_caches()
+    return canonical
+
+
+def _load_module_from_path(module_name: str, path: Path):
+    """按文件路径加载模块，并挂到 ``module_name`` 下。
+
+    扩展注册模块可能位于规范包之外（例如仓库根的 `omninode_registration.py`
+    与包目录不同级），无法用普通 import 定位，因此这里用 spec_from_file_location。
+    """
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法为 {path} 建立模块 spec")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 @dataclass(frozen=True)
 class OmniNodeExtensionDescriptor:
     """一个扩展的完整描述：静态声明 + 清单元数据 + 加载诊断。
@@ -541,35 +597,47 @@ def _build_extension_descriptor(
                 f"需要 HoTools {hotools_requirement} 或更高，当前为 {hotools_version}"
             )
 
-    # 候选导入名按可能性排序：
-    #   1. 清单声明的包相对路径（"src/foo" → "src.foo.omninode_registration"）
-    #   2. 扩展目录名作为**顶层包**——包装根已在 sys.path 上，这是安装到
-    #      OmniNode/extensions/ 的扩展最常见的形态（该目录没有 __init__.py，
-    #      因此不能作为 HoTools.OmniNode.extensions.* 导入）
-    #   3. 目录名作为 OmniNode 子包（内置扩展 PhysicsWorld 走这条）
-    candidates = []
+    # 加载策略：
+    #   1. **规范包名**：把扩展包目录登记为 HoTools.OmniNode.<包名>，再按该名字
+    #      导入注册模块。扩展装在哪儿都不影响包内 700+ 处相对导入的层级。
+    #   2. 按文件路径加载：注册模块可能不在规范包内（例如仓库根与包目录不同级）。
+    #   3. 退回按物理名导入（无父级相对导入的简单扩展）。
+    module = None
+    load_error = ""
     if source == "manifest":
-        if package_name != ".":
-            candidates.append(
-                f"{package_name.replace('/', '.')}"
-                f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
+        canonical = _register_canonical_extension_package(directory, package_name)
+        if canonical:
+            candidate = (
+                f"{canonical}.{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
             )
-        else:
-            candidates.append(
-                f"{_normalize_extension_directory(directory_name)}"
-                f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
-            )
-    candidates.append(
-        f"{package or __package__}.{_normalize_extension_directory(directory_name)}"
-        f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
-    )
-
-    module, load_error = _load_extension_module(
-        candidates,
-        import_root=search_root if source == "manifest" else None,
-    )
+            try:
+                module = importlib.import_module(candidate)
+            except Exception as exc:  # noqa: BLE001 - 隔离扩展自身失败
+                load_error = f"{candidate}: {type(exc).__name__}: {exc}"
+        if module is None:
+            flat_registration = directory / _EXTENSION_REGISTRATION_FILENAME
+            if flat_registration.is_file():
+                try:
+                    module = _load_module_from_path(
+                        f"{__package__}.{_normalize_extension_directory(directory_name)}"
+                        f"_{Path(_EXTENSION_REGISTRATION_FILENAME).stem}",
+                        flat_registration,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    load_error = (
+                        f"{flat_registration}: {type(exc).__name__}: {exc}"
+                    )
     if module is None:
-        return failed(load_error)
+        candidates = [
+            f"{package or __package__}.{_normalize_extension_directory(directory_name)}"
+            f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
+        ]
+        module, fallback_error = _load_extension_module(
+            candidates,
+            import_root=search_root if source == "manifest" else None,
+        )
+        if module is None:
+            return failed(load_error or fallback_error)
 
     factory = getattr(module, _EXTENSION_REGISTRATION_FACTORY, None)
     if not callable(factory):
@@ -802,22 +870,36 @@ _EXTENSION_UNREGISTER_HOOK = "unregister_blender"
 
 
 def _extension_hook_module(descriptor):
-    """取回扩展注册模块（用于生命周期钩子），按与发现一致的候选名导入。"""
-    package_name = Path(descriptor.directory).name
-    candidates = []
+    """取回扩展注册模块（用于生命周期钩子），与发现阶段使用同一策略。"""
+    directory = Path(descriptor.directory)
     if descriptor.source == "manifest":
-        manifest_path = Path(descriptor.directory) / _EXTENSION_MANIFEST_FILENAME
-        manifest, _error = _read_extension_manifest(manifest_path)
-        relative = _manifest_relative_path(manifest, package_name)
-        candidates.append(
-            f"{relative.replace('/', '.') if relative != '.' else package_name}"
-            f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
+        manifest, _error = _read_extension_manifest(
+            directory / _EXTENSION_MANIFEST_FILENAME
         )
-    candidates.append(
-        f"{__package__}.{_normalize_extension_directory(package_name)}"
+        relative = _manifest_relative_path(manifest, directory.name)
+        canonical = _register_canonical_extension_package(directory, relative)
+        if canonical:
+            try:
+                return importlib.import_module(
+                    f"{canonical}.{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
+                )
+            except Exception:  # noqa: BLE001 - 回退到按路径加载
+                pass
+        flat_registration = directory / _EXTENSION_REGISTRATION_FILENAME
+        if flat_registration.is_file():
+            try:
+                return _load_module_from_path(
+                    f"{__package__}.{_normalize_extension_directory(directory.name)}"
+                    f"_{Path(_EXTENSION_REGISTRATION_FILENAME).stem}",
+                    flat_registration,
+                )
+            except Exception:  # noqa: BLE001
+                return None
+        return None
+    module, _error = _load_extension_module([
+        f"{__package__}.{_normalize_extension_directory(directory.name)}"
         f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
-    )
-    module, _error = _load_extension_module(candidates)
+    ])
     return module
 
 

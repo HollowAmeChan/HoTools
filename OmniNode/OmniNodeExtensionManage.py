@@ -405,8 +405,19 @@ def uninstall(identifier_or_path) -> dict:
         return {
             "ok": False,
             "error": (
-                f"{directory.name} 位于插件包内部（内置扩展），"
+                f"{directory.name} 位于插件包内部（内置模块），"
                 "请先把它移出到 extensions/ 再卸载"
+            ),
+        }
+
+    # 开发期保护：扩展安装位里可能是扩展仓库的开发检出（含 .git）。
+    # 卸载它会连同仓库历史和未提交改动一起删掉，风险远大于收益，直接拒绝。
+    if (directory / ".git").exists():
+        return {
+            "ok": False,
+            "error": (
+                f"{directory.name} 看起来是扩展仓库的开发检出（含 .git），"
+                "拒绝卸载；请在仓库里用 git 管理，或手动移除"
             ),
         }
 

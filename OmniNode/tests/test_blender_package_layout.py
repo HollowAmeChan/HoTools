@@ -20,15 +20,24 @@ sys.modules["HoTools"] = hotools_package
 OmniNode = importlib.import_module("HoTools.OmniNode")
 nodeColors = importlib.import_module("HoTools.OmniNode.config.nodeColors")
 assert nodeColors.colorCat["Math"] == nodeColors.hsv2rgb(0.58, 0.35, 0.3)
-assert (HOTOOLS / "OmniNode" / "PhysicsWorld").is_dir()
+# 物理世界是扩展仓库，本机装在扩展安装位里（与用户安装后的形态一致）
+PHYSICS_REPO = HOTOOLS / "OmniNode" / "extensions" / "Hotools-Omninode-Physics"
+assert PHYSICS_REPO.is_dir(), PHYSICS_REPO
+assert (PHYSICS_REPO / "extension.json").is_file()
 assert not (HOTOOLS / "OmniNode" / "Function" / "physicsWorld").exists()
 
 # 物理原生模块由扩展自持，必须落在 PhysicsWorld/native/runtime/<abi>/，
 # 而不是父仓的 _Lib（那是 PropertyCurve 采样内核的位置）。
+# 注意：合成包环境没有走插件注册，因此这里显式用注册器的"规范包名注册"
+# 建立 HoTools.OmniNode.PhysicsWorld 身份——这正是扩展被加载时的真实契约。
+register = importlib.import_module("HoTools.OmniNode.OmniNodeRegister")
+register._register_canonical_extension_package(
+    PHYSICS_REPO, "PhysicsWorld"
+)
 mc2_native = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.native")
 native_backend = mc2_native.native_module()
 native_path = Path(native_backend.__file__).resolve()
-runtime_root = (HOTOOLS / "OmniNode" / "PhysicsWorld" / "native" / "runtime").resolve()
+runtime_root = (PHYSICS_REPO / "PhysicsWorld" / "native" / "runtime").resolve()
 assert native_path.is_relative_to(runtime_root), native_path
 assert native_backend.__name__ == "hotools_physics", native_backend.__name__
 
