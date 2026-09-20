@@ -4,9 +4,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# 本脚本位于 <PhysicsWorld>/tools/，因此仓库根（PhysicsWorld）是上一级。
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 if (-not $ManifestPath) {
-    $ManifestPath = Join-Path $RepoRoot "OmniNode\PhysicsWorld\mc2\test\acceptance_assets_v1.json"
+    $ManifestPath = Join-Path $RepoRoot "mc2\test\acceptance_assets_v1.json"
 }
 $ManifestPath = [System.IO.Path]::GetFullPath($ManifestPath)
 

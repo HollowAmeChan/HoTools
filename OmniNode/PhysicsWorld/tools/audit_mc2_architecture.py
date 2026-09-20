@@ -15,20 +15,22 @@ from pathlib import Path
 import re
 
 
+# 本脚本随物理世界迁入 HoTools-Omninode-Physics 仓库（<PhysicsWorld>/tools/）。
+# REPO_ROOT 因此指向 PhysicsWorld 包目录，原生源码在其 native/ 子目录下。
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MC2_ROOT = REPO_ROOT / "OmniNode" / "PhysicsWorld" / "mc2"
-NATIVE_ROOT = REPO_ROOT / "_native" / "src"
+MC2_ROOT = REPO_ROOT / "mc2"
+NATIVE_ROOT = REPO_ROOT / "native" / "src"
 NATIVE_FILES = (
-    "hotools_native.cpp",
-    "mc2_bindings.cpp",
-    "mc2_fingerprint.cpp",
-    "mc2_frame_orientations.cpp",
-    "mc2_kernels.cpp",
-    "mc2_static_build.cpp",
-    "mc2_self_collision.cpp",
-    "mc2_whole_domain_self.cpp",
-    "mc2_domain_cpu.cpp",
-    "mc2_domain_cpu_bindings.cpp",
+    "hotools_physics.cpp",
+    "mc2/mc2_bindings.cpp",
+    "mc2/mc2_fingerprint.cpp",
+    "mc2/mc2_frame_orientations.cpp",
+    "mc2/mc2_kernels.cpp",
+    "mc2/mc2_static_build.cpp",
+    "mc2/mc2_self_collision.cpp",
+    "mc2/mc2_whole_domain_self.cpp",
+    "mc2/mc2_domain_cpu.cpp",
+    "mc2/mc2_domain_cpu_bindings.cpp",
 )
 LEGACY_TERMS = (
     "HOTOOLS_ENABLE_LEGACY_MC2",
@@ -60,13 +62,13 @@ LEGACY_TERMS = (
     "compile_mc2_mesh_static_fragments",
 )
 PURE_NATIVE_FILES = (
-    "mc2_kernels.cpp",
-    "mc2_kernels.hpp",
-    "mc2_self_collision.cpp",
-    "mc2_static_build.cpp",
-    "mc2_static_build.hpp",
-    "mc2_domain_cpu.hpp",
-    "mc2_domain_cpu.cpp",
+    "mc2/mc2_kernels.cpp",
+    "mc2/mc2_kernels.hpp",
+    "mc2/mc2_self_collision.cpp",
+    "mc2/mc2_static_build.cpp",
+    "mc2/mc2_static_build.hpp",
+    "mc2/mc2_domain_cpu.hpp",
+    "mc2/mc2_domain_cpu.cpp",
 )
 PYTHON_NATIVE_TERMS = ("Python.h", "PyObject", "nanobind")
 ALLOWED_FORWARDERS = {
@@ -364,9 +366,9 @@ FORBIDDEN_MESH_RNA_FIELDS = {
 }
 FORBIDDEN_WORLD_SCOPE_FIELD = "include_" "mesh_collision"
 WORLD_SCOPE_CONTRACT_FILES = (
-    REPO_ROOT / "OmniNode" / "PhysicsWorld" / "nodes.py",
-    REPO_ROOT / "OmniNode" / "PhysicsWorld" / "scope.py",
-    REPO_ROOT / "OmniNode" / "PhysicsWorld" / "types.py",
+    REPO_ROOT / "nodes.py",
+    REPO_ROOT / "scope.py",
+    REPO_ROOT / "types.py",
 )
 E0_DOMAIN_MODULE_IMPORTS = {
     "mc2.domain_ir": frozenset((
@@ -980,7 +982,7 @@ def _cpp_facts() -> dict:
             "python_bindings": binding_pattern.findall(source),
             "pyobject_entry_points": pyobject_pattern.findall(source),
         }
-    api_source = (NATIVE_ROOT / "mc2_api.hpp").read_text(encoding="utf-8")
+    api_source = (NATIVE_ROOT / "mc2" / "mc2_api.hpp").read_text(encoding="utf-8")
     api_symbols = pyobject_pattern.findall(api_source)
     binding_symbols = [
         symbol
@@ -1001,7 +1003,7 @@ def _cpp_facts() -> dict:
             required_symbols = list(ast.literal_eval(node.value))
             break
     definition_counts = defaultdict(list)
-    for path in sorted(NATIVE_ROOT.glob("*.cpp")):
+    for path in sorted(NATIVE_ROOT.rglob("*.cpp")):
         source = path.read_text(encoding="utf-8")
         for symbol in pyobject_pattern.findall(source):
             if symbol in api_symbols:
@@ -1068,7 +1070,8 @@ def _cpp_facts() -> dict:
 
 
 def _legacy_hits() -> list[dict]:
-    roots = (MC2_ROOT, NATIVE_ROOT, REPO_ROOT / "_native" / "CMakeLists.txt")
+    # CMakeLists 也已随原生工程迁入本仓库 native/。
+    roots = (MC2_ROOT, NATIVE_ROOT, REPO_ROOT / "native" / "CMakeLists.txt")
     hits = []
     for root in roots:
         paths = (root,) if root.is_file() else root.rglob("*")
