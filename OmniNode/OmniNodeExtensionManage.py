@@ -17,8 +17,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import sys
+import tempfile
 import time
+import urllib.error
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -28,6 +33,27 @@ MANIFEST_FILENAME = "extension.json"
 REGISTRATION_FILENAME = "omninode_registration.py"
 TRASH_DIRNAME = ".trash"
 ADDON_PACKAGE = "HoTools"
+
+# 开发检出保护标记。放在扩展目录根（与 extension.json 同级）即视为"本机开发版"：
+# 卸载 / 安装覆盖 / 改名都不会碰它，避免误删正在改的源码。
+# 内含 .git 的目录（扩展仓库的开发检出）同样自动受保护。
+DEVELOPMENT_MARKER_FILENAME = ".hotools-dev"
+DEVELOPMENT_MARKER_TEXT = (
+    "此目录是 HoTools 扩展的开发检出，请勿删除。\n"
+    "父仓的扩展安装/卸载/覆盖都不会改动它。\n"
+    "（改用 git 管理，或手动移除本文件以恢复可卸载状态。）\n"
+)
+
+# 扩展的发布仓库：Release 里放 -py311 / -py313 两个安装包（对应 Blender 4.5 / 5.x）。
+EXTENSION_REPOSITORY = "HollowAmeChan/Hotools-Omninode-Physics"
+EXTENSION_API_ROOT = f"https://api.github.com/repos/{EXTENSION_REPOSITORY}"
+# 只接受 https://github.com/ 下的下载地址，避免响应被篡改后拉到任意主机。
+EXTENSION_DOWNLOAD_PREFIX = "https://github.com/"
+
+
+def python_abi() -> str:
+    """当前解释器对应的扩展安装包后缀（Blender 4.5 → py311，5.x → py313）。"""
+    return f"py{sys.version_info.major}{sys.version_info.minor}"
 
 
 # ---------------------------------------------------------------------------
@@ -198,16 +224,28 @@ def install_from_zip(archive_path, *, target_root: Path | None = None) -> dict:
         # 目标名目录，避免 os.replace(dir, dir) 这种自改名失败。
         if payload == staging:
             destination = root / _payload_dir_name(payload)
-            if destination.exists():
-                _move_to_trash(destination)
+            guarded = _guard_destination(destination, "安装")
+            if guarded is not None:
+                return guarded
+            if destination.exists() and not _move_to_trash(destination):
+                return {
+                    "ok": False,
+                    "error": f"无法腾出安装位（现有目录搬不动）：{destination}",
+                }
             destination.mkdir(parents=True, exist_ok=True)
             for child in list(staging.iterdir()):
                 os.replace(child, destination / child.name)
             shutil.rmtree(staging, ignore_errors=True)
         else:
             destination = root / payload.name
-            if destination.exists():
-                _move_to_trash(destination)
+            guarded = _guard_destination(destination, "安装")
+            if guarded is not None:
+                return guarded
+            if destination.exists() and not _move_to_trash(destination):
+                return {
+                    "ok": False,
+                    "error": f"无法腾出安装位（现有目录搬不动）：{destination}",
+                }
             os.replace(payload, destination)
             shutil.rmtree(staging, ignore_errors=True)
         # 目录名统一为清单 identifier（见 _payload_dir_name 的说明）。
@@ -223,6 +261,20 @@ def install_from_zip(archive_path, *, target_root: Path | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001 - 安装失败必须把暂存目录清干净
         shutil.rmtree(staging, ignore_errors=True)
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _guard_destination(destination: Path, action: str) -> dict | None:
+    """安装落点若已是开发检出，返回拒绝结果；否则返回 None。"""
+    if not _is_development_checkout(destination):
+        return None
+    return {
+        "ok": False,
+        "error": (
+            f"{destination.name} 是本机开发检出（含 "
+            f"{DEVELOPMENT_MARKER_FILENAME} 或 .git），拒绝{action}覆盖。"
+            "请改用 git 更新，或先移除该目录/标记"
+        ),
+    }
 
 
 def install_from_directory(source_dir, *, target_root: Path | None = None) -> dict:
@@ -246,8 +298,14 @@ def install_from_directory(source_dir, *, target_root: Path | None = None) -> di
 
     destination = root / source.name
     try:
-        if destination.exists():
-            _move_to_trash(destination)
+        guarded = _guard_destination(destination, "安装")
+        if guarded is not None:
+            return guarded
+        if destination.exists() and not _move_to_trash(destination):
+            return {
+                "ok": False,
+                "error": f"无法腾出安装位（现有目录搬不动）：{destination}",
+            }
         shutil.copytree(
             source,
             destination,
@@ -304,6 +362,42 @@ def _select_install_root(
     return None
 
 
+def _is_development_checkout(directory: Path) -> bool:
+    """判断目录是否是"本机开发版"（不可被安装流程搬走/覆盖/删除）。
+
+    两个信号任一命中即视为开发检出：
+
+    * 目录根有 `.hotools-dev` 标记文件（显式声明，推荐给非 git 管理的开发目录）；
+    * 目录根有 `.git`（扩展仓库的开发检出）。
+
+    保护在 ``_move_to_trash`` 里统一生效，因此卸载、安装覆盖、改名三条破坏性路径
+    都拦得住——不会出现"更新一次把正在改的源码挪进回收站"。
+    """
+    try:
+        if not directory.is_dir():
+            return False
+        if (directory / DEVELOPMENT_MARKER_FILENAME).is_file():
+            return True
+        return (directory / ".git").exists()
+    except OSError:
+        return False
+
+
+def ensure_development_marker(directory: Path, *, write: bool = True) -> dict:
+    """给开发检出打上 ``.hotools-dev`` 标记；返回 {ok, path, created, error}。"""
+    directory = Path(directory)
+    if not directory.is_dir():
+        return {"ok": False, "error": f"目录不存在：{directory}"}
+    marker = directory / DEVELOPMENT_MARKER_FILENAME
+    existed = marker.is_file()
+    if write and not existed:
+        try:
+            marker.write_text(DEVELOPMENT_MARKER_TEXT, encoding="utf-8")
+        except OSError as exc:
+            return {"ok": False, "error": f"写入标记失败：{exc}"}
+    return {"ok": True, "path": str(marker), "created": not existed}
+
+
 def _identifier_present_elsewhere(identifier: str, install_root: Path) -> bool:
     """检查同一 identifier 是否已存在于插件内模块目录或仓库开发检出里。"""
     from .OmniNodeRegister import _read_extension_manifest
@@ -317,10 +411,10 @@ def _identifier_present_elsewhere(identifier: str, install_root: Path) -> bool:
             manifest, error = _read_extension_manifest(manifest_path)
             if not error and str(manifest.get("identifier") or "").strip() == identifier:
                 return True
-    # 扩展安装位里的**仓库开发检出**（含 .git）也算"已存在"
+    # 扩展安装位里的**开发检出**也算"已存在"
     if install_root.is_dir():
         for entry in install_root.iterdir():
-            if not entry.is_dir() or not (entry / ".git").exists():
+            if not entry.is_dir() or not _is_development_checkout(entry):
                 continue
             manifest_path = entry / MANIFEST_FILENAME
             if manifest_path.is_file():
@@ -482,14 +576,15 @@ def uninstall(identifier_or_path, *, target_root: Path | None = None) -> dict:
             ),
         }
 
-    # 开发期保护：扩展安装位里可能是扩展仓库的开发检出（含 .git）。
+    # 开发期保护：扩展安装位里可能是扩展仓库的开发检出（含 .git 或 .hotools-dev）。
     # 卸载它会连同仓库历史和未提交改动一起删掉，风险远大于收益，直接拒绝。
-    if (directory / ".git").exists():
+    if _is_development_checkout(directory):
+        marker = DEVELOPMENT_MARKER_FILENAME
         return {
             "ok": False,
             "error": (
-                f"{directory.name} 看起来是扩展仓库的开发检出（含 .git），"
-                "拒绝卸载；请在仓库里用 git 管理，或手动移除"
+                f"{directory.name} 是本机开发检出（含 {marker} 或 .git），拒绝卸载；"
+                "请在仓库里用 git 管理，或先移除该标记/手动移除目录"
             ),
         }
 
@@ -508,7 +603,14 @@ def uninstall(identifier_or_path, *, target_root: Path | None = None) -> dict:
 
 
 def _move_to_trash(directory: Path) -> Path | None:
-    """把目录改名进同级 .trash/。被占用的文件不影响目录改名。"""
+    """把目录改名进同级 .trash/。被占用的文件不影响目录改名。
+
+    **开发检出直接拒绝**：卸载、安装覆盖、改名都经这里，保护放在这一层才不会有
+    漏网路径（曾经出现过"验证脚本一跑，把正在用的扩展目录挪进了回收站"）。
+    调用方需要区分"拒绝"与"失败"时，先用 ``_is_development_checkout`` 判断。
+    """
+    if _is_development_checkout(directory):
+        return None
     trash = _trash_dir(directory.parent)
     try:
         trash.mkdir(parents=True, exist_ok=True)
@@ -587,8 +689,26 @@ def _reload_extensions(context) -> None:
     prefs = context.preferences.addons[ADDON_PACKAGE].preferences
     if not prefs.hoTools_OmniNodeFeatures_enable:
         return
+    # 走延迟重建入口：扩展开关不得反注册节点类（已有工程里可能有活实例）。
+    apply_switch = getattr(OmniNode.OmniNodeRegister, "apply_extension_switch", None)
+    if callable(apply_switch):
+        apply_switch()
+        return
     OmniNode.unregister()
     OmniNode.register()
+
+
+def _forget_disabled(context, identifier: str) -> None:
+    """把 identifier 从"已禁用扩展"列表里移除，让新装/更新的扩展立即可用。"""
+    try:
+        prefs = context.preferences.addons[ADDON_PACKAGE].preferences
+    except (AttributeError, KeyError):
+        return
+    raw = getattr(prefs, "hoTools_omninode_disabled_extensions", "")
+    kept = [item for item in str(raw or "").split("|") if item.strip() and item != identifier]
+    updated = "|".join(kept)
+    if updated != str(raw or ""):
+        prefs.hoTools_omninode_disabled_extensions = updated
 
 
 class HO_OT_omninode_install_extension(bpy.types.Operator):
@@ -623,6 +743,209 @@ class HO_OT_omninode_install_extension(bpy.types.Operator):
         self.report(
             {'INFO'},
             f"已安装扩展 {result.get('identifier')} → {result.get('location')}",
+        )
+        return {'FINISHED'}
+
+
+def _request_release(url: str) -> dict:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "HoTools-extension-manager",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("GitHub 返回的 release 数据格式不正确")
+    return payload
+
+
+def find_release_asset(release: dict, abi: str | None = None) -> dict | None:
+    """在 release 资产里挑出与当前 Python ABI 匹配的安装包。"""
+    abi = abi or python_abi()
+    suffix = f"-{abi}.zip"
+    for asset in release.get("assets", ()) or ():
+        if not isinstance(asset, dict):
+            continue
+        name = str(asset.get("name") or "")
+        url = str(asset.get("browser_download_url") or "")
+        if name.endswith(suffix) and url.startswith(EXTENSION_DOWNLOAD_PREFIX):
+            return asset
+    return None
+
+
+def latest_extension_release() -> dict:
+    """取扩展仓库的最新 release（含 tag、名称与匹配当前 ABI 的资产）。"""
+    release = _request_release(f"{EXTENSION_API_ROOT}/releases/latest")
+    tag = str(release.get("tag_name") or "").strip()
+    if not tag:
+        raise ValueError("最新 release 没有 tag")
+    asset = find_release_asset(release)
+    return {
+        "tag": tag,
+        "name": str(release.get("name") or tag),
+        "published_at": str(release.get("published_at") or ""),
+        "asset": asset,
+        "asset_name": str(asset.get("name")) if asset else "",
+        "download_url": str(asset.get("browser_download_url")) if asset else "",
+        "abi": python_abi(),
+        "available": asset is not None,
+    }
+
+
+def download_extension_release(url: str, target: Path) -> None:
+    """把 release 资产下载到 target。"""
+    if not url.startswith(EXTENSION_DOWNLOAD_PREFIX):
+        raise ValueError(f"拒绝从非 GitHub 地址下载：{url}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "HoTools-extension-manager"}
+    )
+    with urllib.request.urlopen(request, timeout=300) as response, target.open(
+        "wb"
+    ) as output:
+        shutil.copyfileobj(response, output)
+    if not target.is_file() or target.stat().st_size == 0:
+        raise ValueError("下载到的文件为空")
+
+
+def _latest_download_url(asset_name: str, tag: str | None = None) -> str:
+    """拼 release 资产下载直链。
+
+    注意：**不能用 `/releases/latest/download/`**。本仓库的发布全是 prerelease
+    （自动发版用时间戳 tag），`/releases/latest` 指向不到它们，直链会 404。
+    必须带上具体 tag。
+    """
+    if tag:
+        return f"https://github.com/{EXTENSION_REPOSITORY}/releases/download/{tag}/{asset_name}"
+    return f"https://github.com/{EXTENSION_REPOSITORY}/releases/latest/download/{asset_name}"
+
+
+def _latest_release_tag() -> str:
+    """抓最新 release 的 tag，不查 API。
+
+    `/releases/latest` 会 302 到 `/releases/tag/<tag>`（prerelease 会被落到
+    `/releases`），因此读最终 URL 即可。这条路不消耗 GitHub API 配额——未认证
+    请求每小时只有 60 次，实测很容易撞上限流导致按钮失效。
+    """
+    request = urllib.request.Request(
+        f"https://github.com/{EXTENSION_REPOSITORY}/releases/latest",
+        headers={"User-Agent": "HoTools-extension-manager"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        final_url = str(response.geturl() or "")
+    match = re.search(r"/releases/tag/([^/?#]+)", final_url)
+    if not match:
+        raise ValueError(f"未能从 {final_url} 解析出 release tag")
+    return match.group(1)
+
+
+def download_latest_extension(target: Path, abi: str | None = None) -> dict:
+    """下载最新 Release 里匹配本机 ABI 的安装包。
+
+    返回 {tag, asset_name, url, size}。候选顺序（前两条都不走 API，因此不受
+    未认证限流影响；API 只作为最后兜底）：
+      1. 重定向抓 tag → /releases/download/<tag>/<资产名>
+      2. /releases/latest/download/<资产名>（有正式 release 时成立）
+      3. GitHub API 查最新 release（受限流影响，仅在前面都失败时尝试）
+    """
+    abi = abi or python_abi()
+    asset_name = f"HoTools-Omninode-Physics-{abi}.zip"
+
+    attempts: list[tuple[str, str]] = []
+    tag = ""
+    redirect_error: Exception | None = None
+    try:
+        tag = _latest_release_tag()
+        attempts.append((tag, _latest_download_url(asset_name, tag)))
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        redirect_error = exc
+    attempts.append(("", _latest_download_url(asset_name)))
+
+    api_error: Exception | None = None
+    release: dict | None = None
+    last_error: Exception | None = None
+    for candidate_tag, url in attempts:
+        try:
+            download_extension_release(url, target)
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            last_error = exc
+            continue
+        return {
+            "tag": candidate_tag or tag or asset_name,
+            "asset_name": asset_name,
+            "url": url,
+            "size": target.stat().st_size,
+        }
+
+    # 前面的直链都失败，才动用 API（可能已被限流）。
+    try:
+        release = latest_extension_release()
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        api_error = exc
+    if release and release["available"]:
+        try:
+            download_extension_release(release["download_url"], target)
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            last_error = exc
+        else:
+            return {
+                "tag": release["tag"],
+                "asset_name": release["asset_name"],
+                "url": release["download_url"],
+                "size": target.stat().st_size,
+            }
+
+    details = [f"直链：{last_error or '无可用直链'}"]
+    if redirect_error is not None:
+        details.append(f"抓 tag：{redirect_error}")
+    if api_error is not None:
+        details.append(f"API：{api_error}")
+    raise ValueError("；".join(details))
+
+
+class HO_OT_omninode_fetch_extension(bpy.types.Operator):
+    bl_idname = "ho.omninode_fetch_extension"
+    bl_label = "从 GitHub 下载并安装扩展"
+    bl_description = (
+        "从扩展仓库的最新 Release 下载与本机 Blender 匹配的安装包"
+        "（Blender 4.5 → py311，5.x → py313）并安装"
+    )
+
+    def execute(self, context):
+        abi = python_abi()
+        archive = Path(tempfile.mkdtemp(prefix="hotools-ext-")) / (
+            f"HoTools-Omninode-Physics-{abi}.zip"
+        )
+        try:
+            self.report({'INFO'}, f"正在下载最新扩展包（{abi}）…")
+            info = download_latest_extension(archive, abi)
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            shutil.rmtree(archive.parent, ignore_errors=True)
+            self.report({'ERROR'}, f"下载失败：{exc}")
+            return {'CANCELLED'}
+
+        try:
+            result = install_from_zip(archive)
+            size_kib = archive.stat().st_size // 1024 if archive.is_file() else 0
+        finally:
+            shutil.rmtree(archive.parent, ignore_errors=True)
+
+        if not result.get("ok"):
+            self.report({'ERROR'}, f"安装失败：{result.get('error')}")
+            return {'CANCELLED'}
+
+        # 装好后清掉禁用记录，否则"下载安装"完仍然是被禁用状态，看着像没装上。
+        identifier = str(result.get("identifier") or "")
+        if identifier:
+            _forget_disabled(context, identifier)
+        _reload_extensions(context)
+        self.report(
+            {'INFO'},
+            f"已安装扩展 {identifier}（{info['tag']}，{abi}，{size_kib} KiB）"
+            f" → {result.get('location')}",
         )
         return {'FINISHED'}
 
@@ -672,6 +995,7 @@ class HO_OT_omninode_purge_extension_trash(bpy.types.Operator):
 
 CLASSES = (
     HO_OT_omninode_install_extension,
+    HO_OT_omninode_fetch_extension,
     HO_OT_omninode_uninstall_extension,
     HO_OT_omninode_purge_extension_trash,
 )
@@ -692,14 +1016,22 @@ def unregister() -> None:
 
 __all__ = [
     "CLASSES",
+    "DEVELOPMENT_MARKER_FILENAME",
+    "EXTENSION_REPOSITORY",
     "addon_root",
     "bundled_extensions_dir",
+    "download_extension_release",
+    "download_latest_extension",
+    "ensure_development_marker",
     "extension_search_dirs",
+    "find_release_asset",
     "install_from_directory",
     "install_from_zip",
     "install_targets",
     "installed_extensions",
+    "latest_extension_release",
     "purge_trash",
+    "python_abi",
     "register",
     "uninstall",
     "unregister",

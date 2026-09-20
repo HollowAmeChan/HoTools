@@ -560,6 +560,12 @@ class AddonPreference(bpy.types.AddonPreferences):
             卸载会把扩展目录移入回收目录（被占用的 pyd 重启后清理）。
             """
             install_row = content.row(align=True)
+            # 内置一键安装：从扩展仓库最新 Release 取与本机 Blender 匹配的包
+            # （Blender 4.5 → py311，5.x → py313），装完自动启用。
+            install_row.operator(
+                'ho.omninode_fetch_extension',
+                text='下载并安装扩展',
+                icon='URL')
             install_row.operator(
                 'ho.omninode_install_extension', text='', icon='IMPORT')
             install_row.operator(
