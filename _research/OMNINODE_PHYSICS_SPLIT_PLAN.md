@@ -526,5 +526,41 @@ HoTools-Omninode-Physics/
 
 > Phase 1 的设计约束（已确认）：**扩展身份是 identifier 而非目录名**；**禁用 ≠ 卸载**（磁盘文件不动、元数据可读）；**PropertyCurve 属父仓贮藏内容，物理侧只是调用方**，其注册归属仍随 OmniNode 开关（当前行为，未改变）。
 
+### Phase 2a/2b（完成）：嵌套仓库建立 + 文档迁移
+
+**关键约束（实测）**：物理包内有 **283 处父级相对导入**（`from ..names import ...`、`from ... import ...`），
+因此仓库**不能**搬到文件系统根部——那样 `HoTools.OmniNode.PhysicsWorld` 包路径与插件结构都会断裂。
+最终采用你设想的形态：**仓库嵌套在 `OmniNode/PhysicsWorld/` 内**，路径不变、导入不变。
+
+**父仓**
+- `.gitignore` 新增 `OmniNode/PhysicsWorld/`：父仓不再跟踪物理世界文件（文件留在本机同一路径）。
+- 父仓跟踪文件数 1682 → **1019**；物理世界 673 个文件整体移交。
+- `_native/README.md` 的物理文档引用改为新路径。
+
+**新仓 `OmniNode/PhysicsWorld/`（HoTools-Omninode-Physics）**
+- `git init -b main`，首次提交 **674 文件**（含 `native/`、`native/tests/`、各域 `test/`、fixtures、断裂测试 blend 夹具）。
+- 新增 `README.md`：内容清单、原生构建用法、与父仓的三条契约（扩展发现路径、原生解析顺序、PropertyCurve 归属）。
+- 新增 `.gitignore`：原生 runtime/build/fetch-cache 不入库；`*.blend*` 忽略但保留 `jolt_fracture_user_project.blend` 夹具；Unity oracle 的 Library/Logs/Temp 等忽略。
+- 新增 `.gitattributes`：C++/Python LF、`.bat`/`.ps1` CRLF、blend/pyd 二进制。
+- 13 篇物理文档从 `OmniNode/doc/` 迁入 `docs/`；父仓 `OmniNode/doc/` 随之清空。
+
+**两仓状态**：父仓 4 commit、物理仓 2 commit，工作树均干净。
+
+**历史说明（待你定）**：本机 `git filter-repo` 未安装，且物理包必须嵌套（见上），因此新仓采用**全新历史**
+（原父仓历史完整保留在 `D:\HoTools-backup-mirror.git` 与父仓提交 `fe659321` 之前的历史中）。
+若需要把物理子树的历史接续到新仓，可安装 `git filter-repo` 后用 `--path OmniNode/PhysicsWorld` 切分再
+merge；由于路径与包结构必须保持嵌套，这一步收益有限（历史里的路径前缀无法直接复用）。
+
+### Phase 2 剩余工作
+
+1. `tools/` 下的物理工具未迁：`mc2_unity_oracle/**`（Unity 工程）、`run_mc2_v1_acceptance.ps1`、`audit_mc2_architecture.py`。
+2. 父仓 `OmniNode/tests/` 里仍有物理相关测试（`test_mc2_hotspot_timing.py`、`test_mc2_source_observation.py`）与
+   引用物理扩展的测试（`test_blender_reference_guard.py` 等），需决定迁出还是保留并加"扩展缺失即跳过"。
+3. 发布流程适配：父仓 `release.yml` / `build_release_zip.py` 尚未感知"扩展存在于嵌套仓库"这一形态。
+
+### Phase 3/4（未开始）
+
+见 §9 的 Phase 3（安装/卸载闭环 + 发布线分离）与 Phase 4（4.5 + 5.2 实机验证）。
+
 
 
