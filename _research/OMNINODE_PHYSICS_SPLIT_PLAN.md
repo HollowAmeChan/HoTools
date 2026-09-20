@@ -585,13 +585,67 @@ merge；由于路径与包结构必须保持嵌套，这一步收益有限（历
 **未落地的小项**：`native/tests/run_all.py` 未重建（父仓版本原先也未跟踪；实际验证一直按逐文件执行）。
 如需统一入口，可在 Phase 3 一并补上。
 
-### Phase 3 剩余工作
+### Phase 3（完成）：安装/卸载闭环 + 布局对齐 + 主仓边界
 
-1. **扩展安装/卸载闭环**：本地 ZIP/目录/GitHub Release 资产安装；安装落点 `OmniNode/extensions/<name>/`
-   优先、失败退到用户可写目录；两段式卸载规避 Windows pyd 占用。
-2. **发布线分离**：父仓 `release.yml` / `build_release_zip.py` 需感知"扩展位于嵌套仓库"，
-   父仓包不含扩展；扩展仓自身出 ZIP（py311/py313）。
-3. 搜索根 `OmniNode/extensions/` 已就位（Phase 1），安装器只需把内容解压到那里。
+**扩展管理（父仓 `OmniNode/OmniNodeExtensionManage.py`）**
+| 能力 | 说明 |
+| --- | --- |
+| 安装 | ZIP / 本地目录 → 优先 `OmniNode/extensions/`，不可写时退到 Blender 用户扩展目录 `bpy.utils.user_resource("EXTENSIONS")/HoTools-Omninode` |
+| 安全 | ZIP 解压拒绝 `..` 与绝对路径成员（zip-slip）；安装目录名统一取清单 identifier（避免 `<Name>-<version>` 的点号让包名非法） |
+| 卸载 | 两段式：先改名进同级 `.trash/`（被加载的 pyd 不影响目录改名），再尽力删除；仍被占用则留待下次清理 |
+| 保护 | 内置模块（直接位于 `OmniNode/` 下）拒绝卸载；**含 `.git` 的扩展目录（仓库开发检出）拒绝卸载** |
+| 状态 | 区分「插件内模块」「插件内安装」「用户目录安装」，`removable` 标记是否可卸载 |
+| UI | 偏好面板：安装扩展…／每行 X 卸载／清理回收站 |
+
+**主仓与扩展的边界（按你的要求）**
+- `.gitignore` 与 `.releaseignore` 明确：内置模块位于 `OmniNode/<模块名>/` 并随主仓跟踪；
+  用户安装的扩展一律落在 `OmniNode/extensions/`，**永不进主仓、也不进父仓发布包**。
+- `build_release_zip.validate_archive` 增加断言：发布包中不得出现 `OmniNode/PhysicsWorld`
+  或 `OmniNode/extensions` 路径。
+- 新增 `OmniNode/EXTENSIONS.md`：两类内容的归属、生命周期与扩展契约。
+
+**布局对齐用户安装环境**
+物理世界仓库从 `OmniNode/PhysicsWorld/` 搬到
+`OmniNode/extensions/Hotools-Omninode-Physics/`，仓库根放清单，包在 `PhysicsWorld/`：
+
+```
+OmniNode/extensions/Hotools-Omninode-Physics/   ← 仓库（= 用户安装后的目录）
+├── extension.json   README.md   .gitignore   .gitattributes
+└── PhysicsWorld/    扩展包（= HoTools.OmniNode.PhysicsWorld）
+```
+
+**关键机制：规范包名注入**（本阶段最重要的技术决定）
+扩展搬家后其包目录比原来深了两级，而包内有 **700+ 处**按“位于 HoTools.OmniNode
+之下”书写的父级相对导入（`from ..PropertyCurve import ...`、`from ...native import ...`）。
+逐行改深度既危险又难维护，因此改为在加载时把扩展包目录登记为**规范包名**：
+
+```python
+sys.modules["HoTools.OmniNode.PhysicsWorld"].__path__ = [<真实目录>]
+```
+
+于是**扩展装在插件内 `extensions/`、还是 Blender 用户扩展目录，包内相对导入的层级
+都不变，扩展代码一行都不用改**；`extensions/` 与仓库目录都不需要 `__init__.py`，
+也不会成为包的一部分。配套 `_load_module_from_path()` 处理“清单在仓库根、注册模块
+不在包内”的形态。
+
+**验证（Blender 5.2，两个安装副本各自独立验证）**
+| 套件 | 结果 |
+| --- | --- |
+| 父仓 `OmniNode/tests` | **9/9 通过** |
+| 扩展原生测试 | **25/25 通过** |
+| 安装/卸载闭环 | ZIP 安装→发现→禁用→卸载→清理全通；zip-slip 与绝对路径成员被拒；内置模块与含 `.git` 仓库均拒绝卸载 |
+| 端到端（4.5 树 / 5.2 副本） | 扩展 active（275 节点类、56 物理节点）；物理 Blender 生命周期已注册；`hotools_physics` 从扩展自持 runtime 解析；PropertyCurve 仍绑定父仓 `hotools_native` |
+
+**过程中修掉的真实风险**
+1. 测试误把装有 `.git` 的物理仓库卸进回收站 → 加“含 `.git` 拒绝卸载”保护并已恢复仓库。
+2. 合成包环境缺 `mc2` 子模块属性导致相对导入失败 → 测试改为走注册器的规范包名注册。
+3. 安装 ZIP 无顶层包装目录时 `os.replace(dir, dir)` 自改名失败 → 改为搬运内容。
+
+### Phase 4（未开始）
+
+4.5 + 5.2 独立配置目录（`--env BLENDER_USER_CONFIG`）下的安装/禁用/卸载实机验证，
+以及发布线分离（父仓 ZIP 与扩展 ZIP 的构建与校验）。
+
 
 
 
