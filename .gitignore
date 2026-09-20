@@ -61,3 +61,7 @@ OmniNode/PhysicsWorld/native/runtime/
 OmniNode/PhysicsWorld/native/build/
 OmniNode/PhysicsWorld/native/.fetch-cache/
 OmniNode/PhysicsWorld/native/extern/
+
+# 物理世界整棵子树已迁入独立仓库（嵌套在本地同一目录，保持相对导入与插件结构）。
+# 父仓不再跟踪其文件；文件内容由 HoTools-Omninode-Physics 仓库管理。
+OmniNode/PhysicsWorld/
