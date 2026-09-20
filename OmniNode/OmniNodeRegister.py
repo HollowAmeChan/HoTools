@@ -1412,7 +1412,8 @@ def register():
 
 def unregister():
     global _extension_hooks_started
-    # 钩子先于节点类反注册：扩展的 UI/属性可能引用节点类。
+    # 幂等：扩展开关的延迟重建可能已经反注册过一次，重复反注册会让
+    # bpy.utils.unregister_class 抛异常并留下半截状态。
     if _extension_hooks_started:
         failures = stop_extension_blender_hooks()
         _extension_hooks_started = False

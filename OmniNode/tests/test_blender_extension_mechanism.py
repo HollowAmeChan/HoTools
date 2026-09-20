@@ -219,6 +219,56 @@ def test_identifier_duplicate_prefers_manifest_source():
         assert manifest_descriptor[0].available, manifest_descriptor[0].error
 
 
+def test_unregister_is_idempotent():
+    """重复反注册必须是安全的。
+
+    扩展开关改成"延迟重建"后，一次切换可能先后经过定时器与插件卸载两条路径，
+    因此 unregister() 会被调用第二次；重复反注册不得抛异常，也不得破坏状态。
+    """
+    register.set_disabled_extensions(())
+    OmniNode.register()
+    try:
+        assert register.iter_registered_node_classes(), "应先处于已注册状态"
+        OmniNode.unregister()
+        assert register.iter_registered_node_classes() == ()
+        OmniNode.unregister()  # 第二次：不应抛异常
+        assert register.iter_registered_node_classes() == ()
+        OmniNode.register()
+        assert register.iter_registered_node_classes(), "重复反注册后仍应能重新注册"
+    finally:
+        register.set_disabled_extensions(())
+        OmniNode.unregister()
+
+
+def test_disable_then_enable_restores_every_node():
+    """禁用 → 启用必须精确还原节点集合（顺序与数量都不变）。"""
+    register.set_disabled_extensions(())
+    OmniNode.register()
+    try:
+        before = [
+            node_class.bl_idname for node_class in register.iter_registered_node_classes()
+        ]
+        register.set_disabled_extensions(("PhysicsWorld",))
+        OmniNode.unregister()
+        OmniNode.register()
+        disabled = [
+            node_class.bl_idname for node_class in register.iter_registered_node_classes()
+        ]
+        assert len(disabled) < len(before)
+        assert "HO_OmniNode_physicsWorldBegin" not in disabled
+
+        register.set_disabled_extensions(())
+        OmniNode.unregister()
+        OmniNode.register()
+        after = [
+            node_class.bl_idname for node_class in register.iter_registered_node_classes()
+        ]
+        assert after == before, "重新启用后节点集合应与之前完全一致"
+    finally:
+        register.set_disabled_extensions(())
+        OmniNode.unregister()
+
+
 def main() -> None:
     tests = [
         value

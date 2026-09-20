@@ -161,20 +161,87 @@ def _sync_omninode_registration(context, omni_enabled):
         OmniNode.unregister()
 
 
+# ── 延迟重建 ────────────────────────────────────────────────────────────────
+# 扩展开关由偏好面板的复选框驱动，而 `StringProperty.update` 是在 UI 绘制/事件
+# 处理过程中同步回调的。在那里当场 `unregister_class` 扩展注册的 PropertyGroup /
+# Panel / handler，Blender 仍持有正在绘制的引用，会直接崩溃（无头模式因为没有 UI
+# 重绘，复现不出来）。因此开关只记录意图，真正的"反注册 → 再注册"推迟到本次事件
+# 结束后的定时器里执行。
+_omninode_sync_state = [False]
+_omninode_sync_handle = [None]
+_OMNINODE_SYNC_DELAY = 0.02
+
+
+def _omninode_sync_pending() -> bool:
+    return bool(_omninode_sync_state[0] or _omninode_sync_handle[0])
+
+
+def _run_scheduled_omninode_sync():
+    _omninode_sync_handle[0] = None
+    enabled = bool(_omninode_sync_state[0])
+    try:
+        context = bpy.context
+        prefs = context.preferences.addons[__name__].preferences
+        _apply_omninode_extension_prefs(prefs)
+        if bool(prefs.hoTools_OmniNodeFeatures_enable) != enabled:
+            # 本次事件里用户又改回去了，不再动注册状态。
+            return None
+        if enabled:
+            # 先全部撤销再重建：节点类与扩展 Blender 钩子必须整体切换，避免残留。
+            OmniNode.unregister()
+            OmniNode.register()
+        else:
+            OmniNode.unregister()
+    except Exception as exc:  # noqa: BLE001 - 定时器里抛异常会打断 Blender 事件循环
+        print(f"[HoTools] OmniNode 注册同步失败：{type(exc).__name__}: {exc}")
+    finally:
+        _omninode_sync_state[0] = False
+    return None
+
+
+def _flush_omninode_sync() -> None:
+    """退出/卸载前把挂起的重建立刻执行掉，保证注册状态与偏好一致。"""
+    if not _omninode_sync_pending():
+        return
+    handle = _omninode_sync_handle[0]
+    if handle is not None:
+        try:
+            bpy.app.timers.unregister(handle)
+        except Exception:  # noqa: BLE001 - 句柄可能已失效
+            pass
+    _run_scheduled_omninode_sync()
+
+
+def _schedule_omninode_sync(enabled: bool) -> None:
+    """请求在本次事件结束后重建 OmniNode 注册（重复请求按最后一次为准）。"""
+    _omninode_sync_state[0] = bool(enabled)
+    if _omninode_sync_handle[0] is not None:
+        return
+    try:
+        _omninode_sync_handle[0] = bpy.app.timers.register(
+            _run_scheduled_omninode_sync, first_interval=_OMNINODE_SYNC_DELAY)
+    except Exception as exc:  # noqa: BLE001 - 定时器不可用（例如退出阶段）时同步兜底
+        _omninode_sync_handle[0] = None
+        print(f"[HoTools] 无法注册 OmniNode 同步定时器，改为立即执行：{exc}")
+        _run_scheduled_omninode_sync()
+
+
 def updateOmniNodeFeaturesState(self, context):
     """OmniNode 总开关（含其下所有扩展）的更新函数"""
-    _sync_omninode_registration(context, bool(self.hoTools_OmniNodeFeatures_enable))
+    _schedule_omninode_sync(bool(self.hoTools_OmniNodeFeatures_enable))
 
 
 def updateOmniNodeExtensionState(self, context):
-    """扩展禁用列表变化：整体重建注册表，无需重启 Blender。"""
-    prefs = context.preferences.addons[__name__].preferences
-    _apply_omninode_extension_prefs(prefs)
-    if not prefs.hoTools_OmniNodeFeatures_enable:
-        return
-    # 反注册 → 再注册：节点类与扩展 Blender 钩子必须整体切换，避免残留。
-    OmniNode.unregister()
-    OmniNode.register()
+    """扩展禁用列表变化：重建注册表（延迟到本次事件结束），无需重启 Blender。"""
+    try:
+        prefs = context.preferences.addons[__name__].preferences
+    except (AttributeError, KeyError):
+        prefs = None
+    if prefs is not None:
+        _apply_omninode_extension_prefs(prefs)
+        if not prefs.hoTools_OmniNodeFeatures_enable:
+            return
+    _schedule_omninode_sync(True)
 
 
 def updateHoTabState(self, context):
@@ -606,6 +673,8 @@ def register():
 
 
 def unregister():
+    # 挂起的扩展开关先落地，避免退出时留下半套注册状态。
+    _flush_omninode_sync()
     updater.unregister()
     ProjectTools.unregister()
     for i in cls:
