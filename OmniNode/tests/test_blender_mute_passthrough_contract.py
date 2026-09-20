@@ -16,21 +16,26 @@ OMNINODE = os.path.dirname(TESTS)
 HOTOOLS = os.path.dirname(OMNINODE)
 NODETREE = OMNINODE
 FUNCTION = os.path.join(NODETREE, "Function")
-PHYSICS_WORLD = os.path.join(OMNINODE, "PhysicsWorld")
 
 for package_name, package_path in (
     ("HoTools", HOTOOLS),
     ("HoTools.OmniNode", OMNINODE),
     ("HoTools.OmniNode.Function", FUNCTION),
-    ("HoTools.OmniNode.PhysicsWorld", PHYSICS_WORLD),
-    ("HoTools.OmniNode.PhysicsWorld.mc2", os.path.join(PHYSICS_WORLD, "mc2")),
-    ("HoTools.OmniNode.PhysicsWorld.rigid", os.path.join(PHYSICS_WORLD, "rigid")),
-    ("HoTools.OmniNode.PhysicsWorld.spring_vrm", os.path.join(PHYSICS_WORLD, "spring_vrm")),
 ):
     module = types.ModuleType(package_name)
     module.__path__ = [package_path]
     module.__package__ = package_name
     sys.modules[package_name] = module
+
+
+# 物理世界已拆为独立扩展（位于 OmniNode/extensions/<仓库>/PhysicsWorld），
+# 不再直接躺在 OmniNode/PhysicsWorld 下。这里走扩展发现 + 规范包名注入，
+# 得到的 `HoTools.OmniNode.PhysicsWorld.*` 与运行时完全一致。
+sys.path.insert(0, TESTS)
+from _physics_extension import ensure_physics_world_package  # noqa: E402
+
+PHYSICS_PACKAGE = ensure_physics_world_package()
+register_module = importlib.import_module("HoTools.OmniNode.OmniNodeRegister")
 
 
 core = importlib.import_module("HoTools.OmniNode.FunctionNodeCore")

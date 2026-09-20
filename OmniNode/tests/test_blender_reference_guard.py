@@ -14,7 +14,8 @@ import bpy
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 OMNINODE = os.path.dirname(TEST_DIR)
 HOTOOLS = os.path.dirname(OMNINODE)
-PHYSICS_WORLD = os.path.join(OMNINODE, "PhysicsWorld")
+if TEST_DIR not in sys.path:
+    sys.path.insert(0, TEST_DIR)
 
 
 def _install_package(name, path):
@@ -28,18 +29,16 @@ def _install_package(name, path):
 
 _install_package("HoTools", HOTOOLS)
 _install_package("HoTools.OmniNode", OMNINODE)
-_install_package("HoTools.OmniNode.PhysicsWorld", PHYSICS_WORLD)
-_install_package(
-    "HoTools.OmniNode.PhysicsWorld.spring_vrm",
-    os.path.join(PHYSICS_WORLD, "spring_vrm"),
-)
+
+# 物理世界已是独立扩展：走发现 + 规范包名注入，不依赖旧的 OmniNode/PhysicsWorld 路径。
+from _physics_extension import ensure_physics_world_package  # noqa: E402
+
+PHYSICS_PACKAGE = ensure_physics_world_package()
 
 runtime_state = importlib.import_module("HoTools.OmniNode.OmniRuntimeState")
 reference_guard = importlib.import_module("HoTools.OmniNode.OmniReferenceGuard")
-world_types = importlib.import_module("HoTools.OmniNode.PhysicsWorld.types")
-spring_native = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.spring_vrm.native"
-)
+world_types = importlib.import_module(f"{PHYSICS_PACKAGE}.types")
+spring_native = importlib.import_module(f"{PHYSICS_PACKAGE}.spring_vrm.native")
 
 
 class _Tree:
