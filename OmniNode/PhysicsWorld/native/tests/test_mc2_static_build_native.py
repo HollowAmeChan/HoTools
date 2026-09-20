@@ -1,0 +1,592 @@
+"""Raw ABI tests for MC2 native static-build kernels."""
+
+from __future__ import annotations
+
+import gc
+import os
+from pathlib import Path
+import sys
+
+import numpy as np
+
+
+ROOT = Path(__file__).resolve().parents[1]
+PY_LIB = "py313" if sys.version_info >= (3, 13) else "py311"
+package_dir = Path(
+    os.environ.get("HOTOOLS_NATIVE_TEST_DIR", ROOT / "_Lib" / PY_LIB / "HotoolsPackage")
+)
+sys.path.insert(0, str(package_dir))
+
+import hotools_physics
+
+
+def test_triangle_direction_unifies_connected_surface() -> None:
+    positions = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+        ),
+        dtype=np.float64,
+    )
+    triangles = np.asarray(((0, 1, 2), (0, 3, 2)), dtype=np.int32)
+    normals = np.empty((2, 3), dtype=np.float64)
+
+    hotools_physics.mc2_optimize_triangle_direction(
+        positions,
+        triangles,
+        normals,
+    )
+
+    np.testing.assert_array_equal(triangles, ((0, 1, 2), (0, 2, 3)))
+    np.testing.assert_allclose(normals, ((0.0, 0.0, 1.0),) * 2, atol=1.0e-12)
+
+
+def test_triangle_direction_rejects_degenerate_input() -> None:
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
+        dtype=np.float64,
+    )
+    triangles = np.asarray(((0, 1, 2),), dtype=np.int32)
+    normals = np.empty((1, 3), dtype=np.float64)
+    try:
+        hotools_physics.mc2_optimize_triangle_direction(
+            positions,
+            triangles,
+            normals,
+        )
+    except ValueError as exc:
+        assert "triangle normal must be non-zero" in str(exc)
+    else:
+        raise AssertionError("degenerate triangle was accepted")
+
+
+def test_mesh_fallback_tangents() -> None:
+    normals = np.asarray(((0.0, 0.0, 2.0), (0.0, 3.0, 0.0)), dtype=np.float64)
+    tangents = np.empty((2, 3), dtype=np.float64)
+    hotools_physics.mc2_build_mesh_fallback_tangents(normals, tangents)
+    np.testing.assert_allclose(normals, ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)), atol=1.0e-12)
+    np.testing.assert_allclose(tangents, ((-1.0, 0.0, 0.0), (0.0, 0.0, -1.0)), atol=1.0e-12)
+
+    invalid = np.zeros((1, 3), dtype=np.float64)
+    try:
+        hotools_physics.mc2_build_mesh_fallback_tangents(
+            invalid,
+            np.empty_like(invalid),
+        )
+    except ValueError as exc:
+        assert "mesh vertex normal" in str(exc)
+    else:
+        raise AssertionError("zero mesh normal was accepted")
+
+
+def test_mesh_final_proxy_derived_arrays() -> None:
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float64)
+    tangents = np.asarray(((1.0, 0.0, 0.0),) * 4, dtype=np.float64)
+    uvs = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float64)
+    attributes = np.asarray((0x02,) * 4, dtype=np.uint8)
+    triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
+    triangle_normals = np.asarray(((0.0, 0.0, 1.0),) * 2, dtype=np.float64)
+    triangle_uvs = np.ascontiguousarray(uvs[triangles].reshape((-1, 6)))
+    lines = np.empty((0, 2), dtype=np.int32)
+    out_edges = np.empty((6, 2), dtype=np.int32)
+    neighbor_ranges = np.empty((4, 2), dtype=np.int32)
+    neighbor_data = np.empty(12, dtype=np.int32)
+    triangle_ranges = np.empty((4, 2), dtype=np.int32)
+    triangle_data = np.empty((6, 2), dtype=np.int32)
+    bind_positions = np.empty((4, 3), dtype=np.float64)
+    bind_rotations = np.empty((4, 4), dtype=np.float64)
+
+    counts = hotools_physics.mc2_build_mesh_final_proxy_derived(
+        positions,
+        normals,
+        tangents,
+        np.zeros_like(uvs),
+        attributes,
+        triangles,
+        triangle_normals,
+        triangle_uvs,
+        lines,
+        out_edges,
+        neighbor_ranges,
+        neighbor_data,
+        triangle_ranges,
+        triangle_data,
+        bind_positions,
+        bind_rotations,
+    )
+
+    assert counts == {"edge_count": 5, "neighbor_count": 10, "triangle_record_count": 6}
+    np.testing.assert_array_equal(
+        out_edges[:5],
+        ((0, 1), (0, 2), (0, 3), (1, 2), (2, 3)),
+    )
+    np.testing.assert_array_equal(neighbor_ranges, ((0, 3), (3, 2), (5, 3), (8, 2)))
+    np.testing.assert_array_equal(neighbor_data[:10], (3, 2, 1, 2, 0, 3, 1, 0, 2, 0))
+    np.testing.assert_array_equal(triangle_ranges, ((0, 2), (2, 1), (3, 2), (5, 1)))
+    assert np.all(attributes & np.uint8(0x80))
+    np.testing.assert_allclose(normals, ((0.0, 0.0, 1.0),) * 4, atol=1.0e-12)
+    np.testing.assert_allclose(tangents, ((0.0, -1.0, 0.0),) * 4, atol=1.0e-12)
+    np.testing.assert_allclose(bind_positions, -positions, atol=1.0e-12)
+    np.testing.assert_allclose(np.linalg.norm(bind_rotations, axis=1), 1.0, atol=1.0e-12)
+
+
+def test_bone_baseline_keeps_classic_parent_depth_with_fixed_tail() -> None:
+    count = 5
+    positions = np.asarray(
+        tuple((float(index), 0.0, 0.0) for index in range(count)),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * count, dtype=np.float64)
+    tangents = np.asarray(((1.0, 0.0, 0.0),) * count, dtype=np.float64)
+    attributes = np.asarray((0x01, 0x02, 0x02, 0x02, 0x01), dtype=np.uint8)
+    parents = np.asarray((-1, 0, 1, 2, 3), dtype=np.int32)
+    edges = np.asarray(((0, 1), (1, 2), (2, 3), (3, 4)), dtype=np.int32)
+    root_inputs = np.asarray((0,), dtype=np.int32)
+    child_ranges = np.empty((count, 2), dtype=np.int32)
+    child_data = np.empty(count, dtype=np.int32)
+    baseline_flags = np.empty(count, dtype=np.uint8)
+    baseline_ranges = np.empty((count, 2), dtype=np.int32)
+    baseline_data = np.empty(count, dtype=np.int32)
+    final_attributes = np.empty(count, dtype=np.uint8)
+    roots = np.empty(count, dtype=np.int32)
+    depths = np.empty(count, dtype=np.float64)
+    local_positions = np.empty((count, 3), dtype=np.float64)
+    local_rotations = np.empty((count, 4), dtype=np.float64)
+
+    counts = hotools_physics.mc2_build_bone_transform_baseline_derived(
+        positions,
+        normals,
+        tangents,
+        attributes,
+        parents,
+        edges,
+        root_inputs,
+        child_ranges,
+        child_data,
+        baseline_flags,
+        baseline_ranges,
+        baseline_data,
+        final_attributes,
+        roots,
+        depths,
+        local_positions,
+        local_rotations,
+        False,
+    )
+
+    assert counts == {
+        "child_count": 4,
+        "baseline_count": 1,
+        "baseline_data_count": 4,
+    }
+    np.testing.assert_array_equal(final_attributes, attributes)
+    np.testing.assert_array_equal(roots, (-1, 0, 0, 0, -1))
+    # 末端 Fixed 不得把经典单根 parent depth 改写成双端图距离场。
+    np.testing.assert_allclose(
+        depths,
+        (0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0, 0.0),
+        rtol=0.0,
+        atol=1.0e-12,
+    )
+    invalid_edges = edges.copy()
+    invalid_edges[-1] = (4, 4)
+    try:
+        hotools_physics.mc2_build_bone_transform_baseline_derived(
+            positions,
+            normals,
+            tangents,
+            attributes,
+            parents,
+            invalid_edges,
+            root_inputs,
+            child_ranges,
+            child_data,
+            baseline_flags,
+            baseline_ranges,
+            baseline_data,
+            final_attributes,
+            roots,
+            depths,
+            local_positions,
+            local_rotations,
+            False,
+        )
+    except ValueError as exc:
+        assert "bone baseline edges" in str(exc)
+    else:
+        raise AssertionError("Bone baseline accepted a self-loop edge")
+
+
+
+def test_mesh_baseline_derived_arrays() -> None:
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 3, dtype=np.float64)
+    tangents = np.asarray(((1.0, 0.0, 0.0),) * 3, dtype=np.float64)
+    attributes = np.asarray((0x01, 0x02, 0x02), dtype=np.uint8)
+    edges = np.asarray(((0, 1), (1, 2)), dtype=np.int32)
+    parents = np.empty(3, dtype=np.int32)
+    child_ranges = np.empty((3, 2), dtype=np.int32)
+    child_data = np.empty(3, dtype=np.int32)
+    baseline_flags = np.empty(3, dtype=np.uint8)
+    baseline_ranges = np.empty((3, 2), dtype=np.int32)
+    baseline_data = np.empty(3, dtype=np.int32)
+    roots = np.empty(3, dtype=np.int32)
+    depths = np.empty(3, dtype=np.float64)
+    local_positions = np.empty((3, 3), dtype=np.float64)
+    local_rotations = np.empty((3, 4), dtype=np.float64)
+
+    counts = hotools_physics.mc2_build_mesh_baseline_derived(
+        positions,
+        normals,
+        tangents,
+        attributes,
+        edges,
+        parents,
+        child_ranges,
+        child_data,
+        baseline_flags,
+        baseline_ranges,
+        baseline_data,
+        roots,
+        depths,
+        local_positions,
+        local_rotations,
+    )
+
+    assert counts == {"child_count": 2, "baseline_count": 1, "baseline_data_count": 3}
+    np.testing.assert_array_equal(parents, (-1, 0, 1))
+    np.testing.assert_array_equal(child_ranges, ((0, 1), (1, 1), (2, 0)))
+    np.testing.assert_array_equal(child_data[:2], (1, 2))
+    np.testing.assert_array_equal(baseline_flags[:1], (0x01,))
+    np.testing.assert_array_equal(baseline_ranges[:1], ((0, 3),))
+    np.testing.assert_array_equal(baseline_data, (0, 1, 2))
+    np.testing.assert_array_equal(roots, (-1, 0, 0))
+    np.testing.assert_allclose(depths, (0.0, 0.5, 1.0), atol=1.0e-12)
+    np.testing.assert_allclose(
+        local_positions,
+        ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 0.0, 1.0)),
+        atol=1.0e-12,
+    )
+    np.testing.assert_allclose(local_rotations, ((0.0, 0.0, 0.0, 1.0),) * 3, atol=1.0e-12)
+
+    shared_attributes = np.asarray((0x01, 0x02, 0x02), dtype=np.uint8)
+    shared_roots = np.empty(3, dtype=np.int32)
+    shared_depths = np.empty(3, dtype=np.float64)
+    shared_positions = np.empty((3, 3), dtype=np.float64)
+    shared_rotations = np.empty((3, 4), dtype=np.float64)
+    hotools_physics.mc2_build_baseline_pose_depth_derived(
+        positions,
+        normals,
+        tangents,
+        shared_attributes,
+        parents,
+        baseline_data,
+        shared_roots,
+        shared_depths,
+        shared_positions,
+        shared_rotations,
+    )
+    np.testing.assert_array_equal(shared_attributes, attributes)
+    np.testing.assert_array_equal(shared_roots, roots)
+    np.testing.assert_allclose(shared_depths, depths, atol=1.0e-12)
+    np.testing.assert_allclose(shared_positions, local_positions, atol=1.0e-12)
+    np.testing.assert_allclose(shared_rotations, local_rotations, atol=1.0e-12)
+
+
+def test_mesh_depth_blends_parent_path_with_fixed_surface_distance() -> None:
+    import heapq
+
+    positions = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (0.0, 10.0, 0.0),
+            (8.0, 0.0, 0.0),
+            (9.0, 0.0, 0.0),
+            (10.0, 0.0, 0.0),
+            (2.0, 0.0, 0.0),
+            (4.0, 0.0, 0.0),
+            (6.0, 0.0, 0.0),
+            (8.0, -0.1, 0.0),
+        ),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * len(positions), dtype=np.float64)
+    tangents = np.asarray(((1.0, 0.0, 0.0),) * len(positions), dtype=np.float64)
+    attributes = np.asarray((0x01,) + (0x02,) * (len(positions) - 1), dtype=np.uint8)
+    edges = np.asarray(
+        (
+            (0, 1), (1, 2), (2, 3), (3, 4),
+            (0, 5), (5, 6), (6, 7), (7, 8), (8, 4),
+        ),
+        dtype=np.int32,
+    )
+    vertex_count = len(positions)
+    parents = np.empty(vertex_count, dtype=np.int32)
+    child_ranges = np.empty((vertex_count, 2), dtype=np.int32)
+    child_data = np.empty(vertex_count, dtype=np.int32)
+    baseline_flags = np.empty(vertex_count, dtype=np.uint8)
+    baseline_ranges = np.empty((vertex_count, 2), dtype=np.int32)
+    baseline_data = np.empty(vertex_count, dtype=np.int32)
+    roots = np.empty(vertex_count, dtype=np.int32)
+    depths = np.empty(vertex_count, dtype=np.float64)
+    local_positions = np.empty((vertex_count, 3), dtype=np.float64)
+    local_rotations = np.empty((vertex_count, 4), dtype=np.float64)
+
+    counts = hotools_physics.mc2_build_mesh_baseline_derived(
+        positions, normals, tangents, attributes, edges,
+        parents, child_ranges, child_data, baseline_flags, baseline_ranges,
+        baseline_data, roots, depths, local_positions, local_rotations,
+    )
+
+    parent_lengths = np.zeros(vertex_count, dtype=np.float64)
+    for vertex in range(1, vertex_count):
+        current = vertex
+        while parents[current] >= 0:
+            parent = int(parents[current])
+            parent_lengths[vertex] += np.linalg.norm(
+                positions[current] - positions[parent]
+            )
+            current = parent
+    source_depths = parent_lengths / np.max(parent_lengths)
+
+    adjacency = [[] for _ in range(vertex_count)]
+    for left, right in edges:
+        distance = float(np.linalg.norm(positions[left] - positions[right]))
+        adjacency[int(left)].append((int(right), distance))
+        adjacency[int(right)].append((int(left), distance))
+    fixed_distances = np.full(vertex_count, np.inf, dtype=np.float64)
+    fixed_distances[0] = 0.0
+    pending = [(0.0, 0)]
+    while pending:
+        distance, vertex = heapq.heappop(pending)
+        if distance != fixed_distances[vertex]:
+            continue
+        for target, edge_length in adjacency[vertex]:
+            candidate = distance + edge_length
+            if candidate >= fixed_distances[target]:
+                continue
+            fixed_distances[target] = candidate
+            heapq.heappush(pending, (candidate, target))
+    fixed_depths = fixed_distances / np.max(fixed_distances)
+    expected = source_depths * 0.8 + fixed_depths * 0.2
+    for vertex in baseline_data[:counts["baseline_data_count"]]:
+        parent = int(parents[vertex])
+        if parent >= 0:
+            expected[vertex] = max(expected[vertex], expected[parent])
+
+    np.testing.assert_allclose(depths, expected, rtol=0.0, atol=1.0e-12)
+    assert np.max(np.abs(depths - source_depths)) > 0.01
+    for vertex in range(vertex_count):
+        parent = int(parents[vertex])
+        if parent >= 0:
+            assert depths[vertex] >= depths[parent]
+
+
+
+def test_distance_derived_arrays_and_owner() -> None:
+    positions = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+        ),
+        dtype=np.float64,
+    )
+    attributes = np.asarray((0x02,) * 4, dtype=np.uint8)
+    parents = np.asarray((-1,) * 4, dtype=np.int32)
+    edges = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (2, 3)), dtype=np.int32)
+    triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
+    adjacency_ranges = np.asarray(((0, 3), (3, 2), (5, 3), (8, 2)), dtype=np.int32)
+    adjacency_data = np.asarray((3, 2, 1, 2, 0, 3, 1, 0, 2, 0), dtype=np.int32)
+
+    derived = hotools_physics.mc2_build_distance_derived(
+        positions,
+        attributes,
+        parents,
+        edges,
+        triangles,
+        adjacency_ranges,
+        adjacency_data,
+    )
+    ranges = derived["distance_ranges"]
+    targets = derived["distance_targets"]
+    rests = derived["distance_rest_signed"]
+    del derived
+    gc.collect()
+
+    assert ranges.dtype == np.int32 and ranges.shape == (4, 2)
+    assert targets.dtype == np.int32 and targets.shape == (12,)
+    assert rests.dtype == np.float32 and rests.shape == (12,)
+    np.testing.assert_array_equal(ranges, ((0, 3), (3, 3), (6, 3), (9, 3)))
+    np.testing.assert_array_equal(targets, (3, 2, 1, 3, 2, 0, 3, 1, 0, 1, 2, 0))
+    np.testing.assert_allclose(
+        rests,
+        (
+            -1.0, -np.sqrt(2.0), -1.0,
+            -np.sqrt(2.0), -1.0, -1.0,
+            -1.0, -1.0, -np.sqrt(2.0),
+            -np.sqrt(2.0), -1.0, -1.0,
+        ),
+        atol=1.0e-6,
+    )
+
+
+def test_bending_derived_arrays() -> None:
+    positions = np.asarray(
+        ((0.0, 1.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        dtype=np.float32,
+    )
+    attributes = np.asarray((0x02,) * 4, dtype=np.uint8)
+    edges = np.asarray(((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int32)
+    triangles = np.asarray(((0, 2, 3), (1, 3, 2)), dtype=np.int32)
+    columns = np.eye(4, dtype=np.float32).T.copy()
+
+    derived = hotools_physics.mc2_build_bending_derived(
+        positions,
+        attributes,
+        edges,
+        triangles,
+        columns,
+    )
+
+    assert derived["bending_quads"].dtype == np.int32
+    assert derived["bending_rest_angle_or_volume"].dtype == np.float32
+    assert derived["bending_sign_or_volume"].dtype == np.int8
+    np.testing.assert_array_equal(derived["bending_quads"], ((1, 0, 2, 3),))
+    np.testing.assert_allclose(derived["bending_rest_angle_or_volume"], (0.0,), atol=1.0e-7)
+    np.testing.assert_array_equal(derived["bending_sign_or_volume"], (1,))
+
+
+def test_self_collision_derived_arrays() -> None:
+    attributes = np.asarray((0x01, 0x02, 0x00, 0x82), dtype=np.uint8)
+    depths = np.asarray((0.0, 0.25, 0.5, 1.0), dtype=np.float64)
+    edges = np.asarray(((0, 1), (1, 2)), dtype=np.int32)
+    triangles = np.asarray(((0, 1, 3),), dtype=np.int32)
+
+    derived = hotools_physics.mc2_build_self_collision_derived(
+        attributes,
+        depths,
+        edges,
+        triangles,
+    )
+
+    assert derived["point_count"] == 4
+    assert derived["edge_count"] == 2
+    assert derived["triangle_count"] == 1
+    np.testing.assert_array_equal(
+        derived["primitive_flags"],
+        (
+            0x24000000,
+            0,
+            0x64000000,
+            0,
+            0x05000000,
+            0x49000000,
+            0x06000000,
+        ),
+    )
+    np.testing.assert_array_equal(
+        derived["particle_indices"],
+        (
+            (0, -1, -1),
+            (1, -1, -1),
+            (2, -1, -1),
+            (3, -1, -1),
+            (0, 1, -1),
+            (1, 2, -1),
+            (0, 1, 3),
+        ),
+    )
+    np.testing.assert_allclose(
+        derived["primitive_depths"],
+        (0.0, 0.25, 0.5, 1.0, 0.125, 0.375, 1.25 / 3.0),
+        atol=1.0e-7,
+    )
+
+
+def test_center_static_derived_arrays_and_owner() -> None:
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 3.0)),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 1.0, 0.0),) * 4, dtype=np.float64)
+    tangents = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float64)
+    attributes = np.asarray((0x01, 0x02, 0x01, 0x01), dtype=np.uint8)
+    bind_rotations = np.asarray(((0.0, 0.0, 0.0, 1.0),) * 4, dtype=np.float64)
+    edges = np.asarray(((0, 1), (0, 2), (1, 2)), dtype=np.int32)
+    gravity = np.asarray((0.436435759, -0.8728715, 0.21821788), dtype=np.float64)
+
+    derived = hotools_physics.mc2_build_center_static_derived(
+        positions,
+        normals,
+        tangents,
+        attributes,
+        bind_rotations,
+        edges,
+        gravity,
+    )
+    fixed = derived["fixed_indices"]
+    center = derived["local_center_position"]
+    local_gravity = derived["initial_local_gravity_direction"]
+    del derived
+    gc.collect()
+
+    assert fixed.dtype == np.int32
+    assert center.dtype == np.float32
+    assert local_gravity.dtype == np.float32
+    np.testing.assert_array_equal(fixed, (0, 2, 3))
+    np.testing.assert_allclose(center, (0.0, 2.0 / 3.0, 1.0), atol=1.0e-7)
+    np.testing.assert_allclose(local_gravity, gravity, atol=1.0e-7)
+
+    invalid_bind_rotations = bind_rotations.copy()
+    invalid_bind_rotations[1] = 0.0
+    try:
+        hotools_physics.mc2_build_center_static_derived(
+            positions,
+            normals,
+            tangents,
+            attributes,
+            invalid_bind_rotations,
+            edges,
+            gravity,
+        )
+    except ValueError as exc:
+        assert "vertex bind pose rotation" in str(exc)
+    else:
+        raise AssertionError("invalid non-fixed bind rotation was accepted")
+
+
+if __name__ == "__main__":
+    test_triangle_direction_unifies_connected_surface()
+    print("PASS MC2 native triangle direction")
+    test_triangle_direction_rejects_degenerate_input()
+    print("PASS MC2 native triangle direction validation")
+    test_mesh_fallback_tangents()
+    print("PASS MC2 native fallback tangents")
+    test_mesh_final_proxy_derived_arrays()
+    print("PASS MC2 native final proxy derived arrays")
+
+    test_bone_baseline_keeps_classic_parent_depth_with_fixed_tail()
+    print("PASS MC2 native classic Bone depth")
+    test_mesh_baseline_derived_arrays()
+    test_mesh_depth_blends_parent_path_with_fixed_surface_distance()
+    print("PASS MC2 native baseline derived arrays")
+
+    test_distance_derived_arrays_and_owner()
+    print("PASS MC2 native Distance derived arrays")
+    test_bending_derived_arrays()
+    print("PASS MC2 native Bending derived arrays")
+    test_self_collision_derived_arrays()
+    print("PASS MC2 native self-collision derived arrays")
+    test_center_static_derived_arrays_and_owner()
+    print("PASS MC2 native Center static derived arrays")

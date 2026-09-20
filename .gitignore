@@ -54,3 +54,10 @@ _research/*
 _research/mmd/*
 !_research/mmd/pmx_inventory.py
 _research/**/__pycache__/
+
+# 物理世界（HoTools-Omninode-Physics）自持原生构建：产物与缓存不进父仓。
+# 构建工程本身（CMakeLists/build.bat/presets/src/include/tests/docs）照常跟踪。
+OmniNode/PhysicsWorld/native/runtime/
+OmniNode/PhysicsWorld/native/build/
+OmniNode/PhysicsWorld/native/.fetch-cache/
+OmniNode/PhysicsWorld/native/extern/

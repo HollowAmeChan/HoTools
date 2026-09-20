@@ -1,0 +1,101 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "vs2022-py311",
+      "displayName": "VS 2022 x64 / Blender Python 3.11",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/vs2022-py311",
+      "architecture": "x64",
+      "toolset": "v143",
+      "cacheVariables": {
+        "HOTOOLS_PYTHON_EXECUTABLE": "D:/Blender/blender-4.5.8-windows-x64/4.5/python/bin/python.exe",
+        "HOTOOLS_RUNTIME_DIR": "${sourceDir}/runtime/py311"
+      }
+    },
+    {
+      "name": "vs2022-py313",
+      "displayName": "VS 2022 x64 / Blender Python 3.13",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/vs2022-py313",
+      "architecture": "x64",
+      "toolset": "v143",
+      "cacheVariables": {
+        "HOTOOLS_PYTHON_EXECUTABLE": "D:/Blender/blender-5.2.0-windows-x64/5.2/python/bin/python.exe",
+        "HOTOOLS_RUNTIME_DIR": "${sourceDir}/runtime/py313"
+      }
+    },
+    {
+      "name": "vs2022-py311-physics",
+      "displayName": "VS 2022 x64 / Python 3.11 / hotools_physics only",
+      "inherits": "vs2022-py311",
+      "binaryDir": "${sourceDir}/build/vs2022-py311-physics",
+      "cacheVariables": {
+        "HOTOOLS_PHYSICS_BUILD_PHYSICS": "ON",
+        "HOTOOLS_PHYSICS_BUILD_JOLT": "OFF"
+      }
+    },
+    {
+      "name": "vs2022-py311-jolt",
+      "displayName": "VS 2022 x64 / Python 3.11 / hotools_jolt only",
+      "inherits": "vs2022-py311",
+      "binaryDir": "${sourceDir}/build/vs2022-py311-jolt",
+      "cacheVariables": {
+        "HOTOOLS_PHYSICS_BUILD_PHYSICS": "OFF",
+        "HOTOOLS_PHYSICS_BUILD_JOLT": "ON"
+      }
+    },
+    {
+      "name": "vs2022-py313-physics",
+      "displayName": "VS 2022 x64 / Python 3.13 / hotools_physics only",
+      "inherits": "vs2022-py313",
+      "binaryDir": "${sourceDir}/build/vs2022-py313-physics",
+      "cacheVariables": {
+        "HOTOOLS_PHYSICS_BUILD_PHYSICS": "ON",
+        "HOTOOLS_PHYSICS_BUILD_JOLT": "OFF"
+      }
+    },
+    {
+      "name": "vs2022-py313-jolt",
+      "displayName": "VS 2022 x64 / Python 3.13 / hotools_jolt only",
+      "inherits": "vs2022-py313",
+      "binaryDir": "${sourceDir}/build/vs2022-py313-jolt",
+      "cacheVariables": {
+        "HOTOOLS_PHYSICS_BUILD_PHYSICS": "OFF",
+        "HOTOOLS_PHYSICS_BUILD_JOLT": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2022-py311-release",
+      "configurePreset": "vs2022-py311",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py313-release",
+      "configurePreset": "vs2022-py313",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py311-physics-release",
+      "configurePreset": "vs2022-py311-physics",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py311-jolt-release",
+      "configurePreset": "vs2022-py311-jolt",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py313-physics-release",
+      "configurePreset": "vs2022-py313-physics",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py313-jolt-release",
+      "configurePreset": "vs2022-py313-jolt",
+      "configuration": "Release"
+    }
+  ]
+}

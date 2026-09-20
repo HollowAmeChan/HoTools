@@ -37,9 +37,22 @@ def verify(zip_path: Path, abi: str) -> None:
     from HoTools.ShapekeyTools import shapekey_catalog
     import cffi
     from PIL import Image
-    import hotools_jolt
     import hotools_native
     import pyoidn
+
+    # hotools_native 必须是“本体瘦身版”：只提供 PropertyCurve 采样内核，
+    # 不含物理世界符号（物理模块已拆分为 hotools_physics，由扩展自持）。
+    for symbol in (
+        "sample_property_float_curve",
+        "sample_property_color_curve",
+    ):
+        if not callable(getattr(hotools_native, symbol, None)):
+            raise RuntimeError(f"hotools_native missing core symbol: {symbol}")
+    for physics_only in ("mc2_domain_cpu_v1_create", "mesh_xpbd_create_context_v1"):
+        if hasattr(hotools_native, physics_only):
+            raise RuntimeError(
+                f"release hotools_native must not ship physics symbol: {physics_only}"
+            )
 
     addon_root = Path(HoTools.__file__).resolve().parent
     other_abi = "py313" if abi == "py311" else "py311"
@@ -64,7 +77,6 @@ def verify(zip_path: Path, abi: str) -> None:
         Image.__version__,
         cffi.__version__,
         type(device).__name__,
-        hotools_jolt.__name__,
         hotools_native.__name__,
         catalog_count,
     )

@@ -15,7 +15,6 @@ physicsWorld.rigid.backends.jolt — Jolt Physics Python 适配器
 
 from __future__ import annotations
 
-import importlib
 import math
 import time
 from typing import TYPE_CHECKING
@@ -25,6 +24,7 @@ from ..names import (
     RIGID_BODY_SLOT_KIND,
     RIGID_CONSTRAINT_SLOT_KIND,
 )
+from ...native_runtime import JOLT_MODULE_NAME, load_jolt_module
 
 if TYPE_CHECKING:
     from ..specs import RigidBodySpec, ConstraintSpec
@@ -35,10 +35,9 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 def _load_native():
-    try:
-        return importlib.import_module("hotools_jolt")
-    except ImportError:
-        return None
+    # 解析顺序与 hotools_physics 一致：环境覆盖 → 扩展自带 runtime/ → 父仓 _Lib（过渡期）。
+    # 详见 PhysicsWorld/native_runtime.py。
+    return load_jolt_module()
 
 
 def _get_native_const(attr: str, default):
@@ -212,8 +211,13 @@ class JoltAdapter:
     ):
         native = _load_native()
         if native is None:
+            from ...native_runtime import native_search_paths
+
+            searched = "、".join(native_search_paths()) or "（无存在的候选目录）"
             raise RuntimeError(
-                "hotools_jolt 模块未找到。请先编译 native binding（build.bat）。"
+                f"{JOLT_MODULE_NAME} 模块未找到，刚性物理不可用。"
+                f"已查找：{searched}。"
+                "请在 OmniNode/PhysicsWorld/native 下运行 build.bat 生成对应 Python ABI 的 pyd。"
             )
         max_bodies, max_body_pairs, max_contact_constraints = _capacity_tuple(
             max_bodies,

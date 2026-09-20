@@ -461,11 +461,24 @@ class PropertyCurveSamplerBackend:
         return cls.set_backend(PropertyCurveNativeSamplerAdapter(native_module))
 
     @classmethod
-    def try_use_native_backend(cls, module_name="hotools_native") -> bool:
-        try:
-            import importlib
-            native_module = importlib.import_module(module_name)
-        except Exception:
+    def try_use_native_backend(cls, native_module=None) -> bool:
+        """启用原生采样后端。
+
+        ``native_module`` 可以是模块对象（推荐：由 ``_native_backend.native_module()``
+        按自身路径解析得到，不依赖 ``sys.path`` 顺序），也可以是模块名字符串
+        （保留给既有调用方与外部实验脚本）。
+        """
+        if native_module is None:
+            from . import _native_backend
+
+            native_module = _native_backend.native_module()
+        elif isinstance(native_module, str):
+            try:
+                import importlib
+                native_module = importlib.import_module(native_module)
+            except Exception:
+                return False
+        if native_module is None:
             return False
         required = ("sample_property_float_curve", "sample_property_color_curve")
         if not all(callable(getattr(native_module, name, None)) for name in required):
@@ -733,8 +746,8 @@ def use_native_curve_sampler_backend(native_module):
     return PropertyCurveSamplerBackend.use_native_backend(native_module)
 
 
-def try_use_native_curve_sampler_backend(module_name="hotools_native") -> bool:
-    return PropertyCurveSamplerBackend.try_use_native_backend(module_name)
+def try_use_native_curve_sampler_backend(native_module=None) -> bool:
+    return PropertyCurveSamplerBackend.try_use_native_backend(native_module)
 
 
 def active_curve_sampler_backend_name() -> str:

@@ -89,9 +89,14 @@ def _get_rigid_delta_native():
     if _RIGID_DELTA_NATIVE is not None:
         return _RIGID_DELTA_NATIVE
     try:
-        import hotools_native
+        from .native_runtime import load_physics_module
 
-        function = getattr(hotools_native, "compute_rigid_delta_columns_v2", None)
+        module = load_physics_module()
+        function = (
+            getattr(module, "compute_rigid_delta_columns_v2", None)
+            if module is not None
+            else None
+        )
         _RIGID_DELTA_NATIVE = function if callable(function) else False
     except Exception:
         _RIGID_DELTA_NATIVE = False

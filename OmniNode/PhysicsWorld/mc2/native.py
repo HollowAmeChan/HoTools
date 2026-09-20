@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import importlib
-import os
-from pathlib import Path
-import sys
+from ..native_runtime import (
+    PHYSICS_MODULE_NAME,
+    load_physics_module,
+    physics_native_unavailable_reason,
+)
 
 
 MC2_REQUIRED_NATIVE_SYMBOLS = (
@@ -35,31 +36,32 @@ MC2_REQUIRED_NATIVE_SYMBOLS = (
 _NATIVE_MODULE = None
 
 
-def _ensure_bundled_native_path() -> None:
-    override = os.environ.get("HOTOOLS_NATIVE_TEST_DIR")
-    package_dir = Path(override) if override else None
-    if package_dir is None:
-        package_root = Path(__file__).resolve().parents[3]
-        py_lib = "py313" if sys.version_info >= (3, 13) else "py311"
-        package_dir = package_root / "_Lib" / py_lib / "HotoolsPackage"
-    if package_dir.exists():
-        path = str(package_dir)
-        if path not in sys.path:
-            sys.path.insert(0, path)
+def _require_symbols(module):
+    missing = tuple(
+        name for name in MC2_REQUIRED_NATIVE_SYMBOLS
+        if not callable(getattr(module, name, None))
+    )
+    if missing:
+        raise RuntimeError(
+            f"{PHYSICS_MODULE_NAME} 缺少 MC2 求解器 API：" + ", ".join(missing)
+        )
+    return module
 
 
 def native_module():
     global _NATIVE_MODULE
     if _NATIVE_MODULE is None:
-        _ensure_bundled_native_path()
-        _NATIVE_MODULE = importlib.import_module("hotools_native")
+        module = load_physics_module()
+        if module is None:
+            raise RuntimeError(physics_native_unavailable_reason())
+        _NATIVE_MODULE = _require_symbols(module)
     return _NATIVE_MODULE
 
 
 def require_mc2_native_module(module=None):
     module = native_module() if module is None else module
     if not all(hasattr(module, name) for name in MC2_REQUIRED_NATIVE_SYMBOLS):
-        raise RuntimeError("hotools_native is missing required MC2 symbols")
+        raise RuntimeError(f"{PHYSICS_MODULE_NAME} is missing required MC2 symbols")
     return module
 
 

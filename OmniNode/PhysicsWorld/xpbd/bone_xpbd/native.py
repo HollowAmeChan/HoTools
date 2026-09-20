@@ -6,6 +6,7 @@ import numpy as np
 
 from ..colliders import MeshXpbdColliderFrame
 from ..native import require_xpbd_native_module
+from ...native_runtime import PHYSICS_MODULE_NAME
 from .pose import BoneXpbdPoseFrame
 from .specs import BoneXpbdTaskSpec
 from .topology import BoneXpbdTopology
@@ -52,11 +53,13 @@ class BoneXpbdNativeContext:
         if not hasattr(context, "update_pin_targets"):
             context.dispose()
             raise RuntimeError(
-                "hotools_native 缺少 Bone XPBD 所需的 moving Pin target API"
+                f"{PHYSICS_MODULE_NAME} 缺少 Bone XPBD 所需的 moving Pin target API"
             )
         if not hasattr(context, "set_orientation_guard"):
             context.dispose()
-            raise RuntimeError("hotools_native 缺少 Bone XPBD 方向防倒转 API")
+            raise RuntimeError(
+                f"{PHYSICS_MODULE_NAME} 缺少 Bone XPBD 方向防倒转 API"
+            )
         context.set_orientation_guard(True)
         previous = self._context
         self._context = context

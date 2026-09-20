@@ -99,11 +99,10 @@ def validate_inputs(repo_root: Path, abi: str, files: list[Path]) -> None:
         PurePosixPath(f"_Lib/{abi}/pyoidn/__init__.py"),
         PurePosixPath(f"_Lib/{abi}/_cffi_backend.{native_tag}.pyd"),
         PurePosixPath(
-            f"_Lib/{abi}/HotoolsPackage/hotools_jolt.{native_tag}.pyd"
-        ),
-        PurePosixPath(
             f"_Lib/{abi}/HotoolsPackage/hotools_native.{native_tag}.pyd"
         ),
+        # hotools_jolt / hotools_physics 不再随父仓发布：物理世界的原生模块由
+        # HoTools-Omninode-Physics 扩展自持（OmniNode/PhysicsWorld/native/runtime/<abi>/）。
     }
     missing = sorted(required_files - relative_files)
     if missing:

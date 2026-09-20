@@ -2,20 +2,27 @@
 setlocal EnableExtensions
 
 rem ============================================================================
-rem HoTools native build helper
+rem HoTools native build helper  (父仓：只构建本体模块)
+rem
+rem 本工程只产出 HoTools 本体需要的原生模块：
+rem   hotools_native    PropertyCurve 采样内核
+rem   hotools_boolean   CGAL/libigl 精确外壳/布尔
+rem
+rem 物理世界（hotools_physics / hotools_jolt）的原生构建在：
+rem   OmniNode\PhysicsWorld\native\build.bat
 rem
 rem Usage:
 rem   build.bat          Build hotools_native for py311 and py313
-rem   build.bat all      Build both modules for py311 and py313
+rem   build.bat all      Build hotools_native + hotools_boolean for py311 and py313
 rem   build.bat 311      Build hotools_native for Blender 4.5 / Python 3.11
 rem   build.bat py311    Build Blender 4.5 / Python 3.11
 rem   build.bat 313      Build hotools_native for Blender 5.x / Python 3.13
 rem   build.bat py313    Build Blender 5.x / Python 3.13
-rem   build.bat native   Build hotools_native for py311 and py313
-rem   build.bat 313 native  Build only hotools_native for Python 3.13
-rem   build.bat 313 jolt    Build only hotools_jolt for Python 3.13
-rem   build.bat 311 boolean Build only hotools_boolean for Python 3.11
-rem   build.bat 313 all     Build both modules for Python 3.13
+rem   build.bat native   Build only hotools_native for py311 and py313
+rem   build.bat 313 native   Build only hotools_native for Python 3.13
+rem   build.bat 311 boolean  Build only hotools_boolean for Python 3.11
+rem   build.bat 313 boolean  Build only hotools_boolean for Python 3.13
+rem   build.bat 313 all      Build both modules for Python 3.13
 rem
 rem Optional override:
 rem   set CMAKE_EXE=C:\path\to\cmake.exe
@@ -40,15 +47,25 @@ if /I "%TARGET%"=="native" (
     set "TARGET=all"
     set "MODULE=native"
 )
-if /I "%TARGET%"=="jolt" (
+if /I "%TARGET%"=="property" (
     set "TARGET=all"
-    set "MODULE=jolt"
+    set "MODULE=native"
+)
+if /I "%TARGET%"=="boolean" (
+    set "TARGET=all"
+    set "MODULE=boolean"
 )
 if /I "%TARGET%"=="py311" set "TARGET=311"
 if /I "%TARGET%"=="py313" set "TARGET=313"
 if /I "%MODULE%"=="hotools_native" set "MODULE=native"
-if /I "%MODULE%"=="hotools_jolt" set "MODULE=jolt"
+if /I "%MODULE%"=="property_curve" set "MODULE=native"
 if /I "%MODULE%"=="hotools_boolean" set "MODULE=boolean"
+if /I "%MODULE%"=="jolt" (
+    echo [ERROR] hotools_jolt 已迁至 OmniNode\PhysicsWorld\native。
+    echo         请改用: OmniNode\PhysicsWorld\native\build.bat %TARGET% jolt
+    set "USAGE_EXIT=2"
+    goto usage
+)
 
 if not "%~3"=="" goto usage
 if /I "%TARGET%"=="help" (
@@ -71,7 +88,6 @@ goto usage
 :main
 if /I "%MODULE%"=="all" set "CMAKE_TARGET="
 if /I "%MODULE%"=="native" set "CMAKE_TARGET=hotools_native"
-if /I "%MODULE%"=="jolt" set "CMAKE_TARGET=hotools_jolt"
 if /I "%MODULE%"=="boolean" set "CMAKE_TARGET=hotools_boolean"
 if not defined CMAKE_TARGET if /I not "%MODULE%"=="all" goto usage
 
@@ -88,14 +104,6 @@ if /I "%MODULE%"=="native" (
     set "CONFIG_PRESET_313=vs2022-py313-native"
     set "BUILD_PRESET_313=vs2022-py313-native-release"
     set "BUILD_DIR_313=%SOURCE_DIR%\build\vs2022-py313-native"
-)
-if /I "%MODULE%"=="jolt" (
-    set "CONFIG_PRESET_311=vs2022-py311-jolt"
-    set "BUILD_PRESET_311=vs2022-py311-jolt-release"
-    set "BUILD_DIR_311=%SOURCE_DIR%\build\vs2022-py311-jolt"
-    set "CONFIG_PRESET_313=vs2022-py313-jolt"
-    set "BUILD_PRESET_313=vs2022-py313-jolt-release"
-    set "BUILD_DIR_313=%SOURCE_DIR%\build\vs2022-py313-jolt"
 )
 if /I "%MODULE%"=="boolean" (
     set "CONFIG_PRESET_311=vs2022-py311-boolean"
@@ -174,10 +182,8 @@ set "BUILD_PRESET=%~2"
 set "LABEL=%~3"
 set "BUILD_DIR=%~4"
 set "BUILD_TARGET=%~5"
-set "FRAME_LAYOUT_HEADER=%SOURCE_DIR%\src\mc2_frame_orientations.hpp"
-set "DOMAIN_LAYOUT_HEADER=%SOURCE_DIR%\src\mc2_domain_cpu.hpp"
-set "FIELD_LAYOUT_HEADER=%SOURCE_DIR%\src\field_runtime.hpp"
-set "NATIVE_LAYOUT_STAMP=%BUILD_DIR%\.mc2_native_layout.stamp"
+set "PROPERTY_CURVE_HEADER=%SOURCE_DIR%\include\hotools_property_curve.hpp"
+set "NATIVE_LAYOUT_STAMP=%BUILD_DIR%\.property_curve_layout.stamp"
 set "REBUILD_NATIVE_LAYOUT=0"
 set "CHECK_NATIVE_LAYOUT=0"
 
@@ -192,22 +198,25 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem PropertyCurve 的 native 布局（capsule/结构体布局）变更后必须整体重建，
+rem 避免出现“陈旧对象文件 + 新解释器入口”的错配。物理世界的等价保护在
+rem OmniNode\PhysicsWorld\native\build.bat，那里还覆盖 MC2/Field 的共享布局头。
 if /I "%BUILD_TARGET%"=="hotools_native" set "CHECK_NATIVE_LAYOUT=1"
 if /I "%MODULE%"=="all" set "CHECK_NATIVE_LAYOUT=1"
 if "%CHECK_NATIVE_LAYOUT%"=="1" (
-    for /f %%I in ('powershell.exe -NoProfile -Command "$h1=Get-Item -LiteralPath '%FRAME_LAYOUT_HEADER%'; $h2=Get-Item -LiteralPath '%DOMAIN_LAYOUT_HEADER%'; $h3=Get-Item -LiteralPath '%FIELD_LAYOUT_HEADER%'; $s=Get-Item -LiteralPath '%NATIVE_LAYOUT_STAMP%' -ErrorAction SilentlyContinue; if ($null -eq $s -or $h1.LastWriteTimeUtc -gt $s.LastWriteTimeUtc -or $h2.LastWriteTimeUtc -gt $s.LastWriteTimeUtc -or $h3.LastWriteTimeUtc -gt $s.LastWriteTimeUtc) { '1' } else { '0' }"') do set "REBUILD_NATIVE_LAYOUT=%%I"
+    for /f %%I in ('powershell.exe -NoProfile -Command "$h=Get-Item -LiteralPath '%PROPERTY_CURVE_HEADER%'; $s=Get-Item -LiteralPath '%NATIVE_LAYOUT_STAMP%' -ErrorAction SilentlyContinue; if ($null -eq $s -or $h.LastWriteTimeUtc -gt $s.LastWriteTimeUtc) { '1' } else { '0' }"') do set "REBUILD_NATIVE_LAYOUT=%%I"
 )
 
 if defined BUILD_TARGET (
     if "%REBUILD_NATIVE_LAYOUT%"=="1" (
-        echo [%LABEL%] Shared Field/MC2 native layout changed; rebuilding hotools_native only.
+        echo [%LABEL%] PropertyCurve native layout changed; rebuilding hotools_native only.
         "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --target "%BUILD_TARGET%" --clean-first --parallel
     ) else (
         "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --target "%BUILD_TARGET%" --parallel
     )
 ) else (
     if "%REBUILD_NATIVE_LAYOUT%"=="1" (
-        echo [%LABEL%] Shared Field/MC2 native layout changed; clean rebuilding all modules.
+        echo [%LABEL%] PropertyCurve native layout changed; clean rebuilding all modules.
         "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --clean-first --parallel
     ) else (
         "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --parallel
@@ -242,8 +251,7 @@ exit /b 0
 :print_outputs
 if /I "%MODULE%"=="all" echo   _Lib\%~1\HotoolsPackage\hotools_native.%~2-win_amd64.pyd
 if /I "%MODULE%"=="native" echo   _Lib\%~1\HotoolsPackage\hotools_native.%~2-win_amd64.pyd
-if /I "%MODULE%"=="all" echo   _Lib\%~1\HotoolsPackage\hotools_jolt.%~2-win_amd64.pyd
-if /I "%MODULE%"=="jolt" echo   _Lib\%~1\HotoolsPackage\hotools_jolt.%~2-win_amd64.pyd
+if /I "%MODULE%"=="all" echo   _Lib\%~1\HotoolsPackage\hotools_boolean.%~2-win_amd64.pyd
 if /I "%MODULE%"=="boolean" echo   _Lib\%~1\HotoolsPackage\hotools_boolean.%~2-win_amd64.pyd
 exit /b 0
 
@@ -255,15 +263,13 @@ exit /b 1
 :usage
 echo Usage:
 echo   build.bat          Build hotools_native for py311 and py313
-echo   build.bat all      Build both modules for py311 and py313
+echo   build.bat all      Build hotools_native + hotools_boolean for py311 and py313
 echo   build.bat 311      Build hotools_native for Blender 4.5 / Python 3.11
 echo   build.bat py311    Build Blender 4.5 / Python 3.11
 echo   build.bat 313      Build hotools_native for Blender 5.x / Python 3.13
 echo   build.bat py313    Build Blender 5.x / Python 3.13
 echo   build.bat native       Build only hotools_native for py311 and py313
-echo   build.bat jolt         Build only hotools_jolt for py311 and py313
 echo   build.bat 313 native   Build only hotools_native for Python 3.13
-echo   build.bat 313 jolt     Build only hotools_jolt for Python 3.13
 echo   build.bat 311 boolean  Build only hotools_boolean for Python 3.11
 echo   build.bat 313 boolean  Build only hotools_boolean for Python 3.13
 echo   build.bat 313 all      Build both modules for Python 3.13

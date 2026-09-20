@@ -28,7 +28,6 @@ SpringBone 只接受 context symbols；35 参数数组 ABI、Python solver 和�
 
 from __future__ import annotations
 
-import importlib
 import time
 
 import mathutils
@@ -53,6 +52,7 @@ from ..utils.writeback_pose import matrix_basis_from_pose_matrix
 from .bone_collision import resolve_bone_collision_fields, resolve_bone_pin
 from .names import BONE_COLLISION_OVERRIDE_OBJECT_TAG
 from .results import publish_spring_vrm_pose_batch_result
+from ..native_runtime import PHYSICS_MODULE_NAME, load_physics_module
 
 
 _NATIVE_MODULE = None
@@ -61,7 +61,12 @@ _NATIVE_MODULE = None
 def native_module():
     global _NATIVE_MODULE
     if _NATIVE_MODULE is None:
-        _NATIVE_MODULE = importlib.import_module("hotools_native")
+        module = load_physics_module()
+        if module is None:
+            from ..native_runtime import physics_native_unavailable_reason
+
+            raise RuntimeError(physics_native_unavailable_reason())
+        _NATIVE_MODULE = module
     return _NATIVE_MODULE
 
 
@@ -179,7 +184,9 @@ class SpringVRMNativeContext:
         }
 
         if not is_available():
-            raise RuntimeError("hotools_native is missing required SpringBone context API symbols")
+            raise RuntimeError(
+                f"{PHYSICS_MODULE_NAME} is missing required SpringBone context API symbols"
+            )
         s = self._static
         self._handle = native_module().spring_vrm_create_context(
             1,  # schema
@@ -1340,9 +1347,9 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
     try:
         module = native_module()
     except Exception as exc:
-        return 0, 0.0, [f"hotools_native 不可用: {exc}"]
+        return 0, 0.0, [f"{PHYSICS_MODULE_NAME} 不可用: {exc}"]
     if not is_available():
-        return 0, 0.0, ["hotools_native 缺少 SpringBone context API"]
+        return 0, 0.0, [f"{PHYSICS_MODULE_NAME} 缺少 SpringBone context API"]
 
     # restart 时清空 frame_state（tails）
     frame_state = slot.data.setdefault("frame_state", {})
