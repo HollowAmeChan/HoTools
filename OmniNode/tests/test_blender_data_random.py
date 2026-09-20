@@ -20,6 +20,12 @@ hotools_package.__path__ = [str(HOTOOLS)]
 hotools_package.__package__ = "HoTools"
 sys.modules["HoTools"] = hotools_package
 
+# 该测试用合成包直接 import `HoTools.*`，不做插件注册，因此没有把插件目录挂到
+# sys.path 上。物理世界扩展里有少量沿用 `from Utils...` 的历史写法，注册其
+# Blender 生命周期时会按顶层模块名解析。这里补上插件目录，与真实注册环境一致。
+if str(HOTOOLS) not in sys.path:
+    sys.path.insert(0, str(HOTOOLS))
+
 OmniNode = importlib.import_module("HoTools.OmniNode")
 data = importlib.import_module("HoTools.OmniNode.Function.Data")
 node_register = importlib.import_module("HoTools.OmniNode.OmniNodeRegister")

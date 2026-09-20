@@ -487,4 +487,44 @@ HoTools-Omninode-Physics/
 2. 父仓 `_Lib/py311|py313/HotoolsPackage/hotools_jolt.*.pyd` 属迁移前遗留，最终态应由扩展自持。py313 已从 5.2 副本移除并验证扩展路径；4.5 副本待关闭 Blender 后清理。
 3. 5.2 安装副本已按“本机保持目录结构”覆盖同步（robocopy 排除 `_native`，物理工程内容单独拷贝）。这是本机实验；Phase 2 会换成正式的嵌套仓库。
 
+### Phase 1（完成）：父仓扩展机制与启用/禁用开关
+
+**注册器（`OmniNode/OmniNodeRegister.py`）**
+- 扩展发现改为**描述符驱动**：新增 `OmniNodeExtensionDescriptor`（identifier / order / source / version / omninode_api / requires_hotools / error / disabled_by_user），`_registry.extensions` 由“纯 spec”变为“描述符”，UI 因此能展示状态与错误原因。
+- 两种扩展形态：
+  - `builtin`：`<root>/<目录名>/omninode_registration.py` 就地注册（如 `PhysicsWorld`）；
+  - `manifest`：`<root>/<目录名>/extension.json` + 包目录（外置仓库），清单声明稳定身份、包路径、版本契约。
+  - 搜索根 = `OmniNode/`（内置）+ `OmniNode/extensions/`（外置安装位，Phase 3 使用）。
+- **失败隔离**：清单 JSON 非法 / 缺注册模块 / 导入抛异常 / identifier 不一致 / `omninode_api` 不兼容 / `requires_hotools` 不满足 / order 非法 —— 全部收敛为 `descriptor.error`，**不再中断整个 OmniNode 注册**。版本契约在导入代码之前校验。
+- **目录名不再要求是合法 Python 标识符**（`Some-Ext.Dir` 可被定位）；身份以 identifier 为准，禁用列表不受目录改名影响。
+- **同名 identifier**：清单来源优先于内置来源，被压制的那个标记为重复错误供 UI 展示。
+- **扩展 Blender 生命周期钩子**：扩展可实现 `register_blender()` / `unregister_blender()`；父仓不再硬编码任何扩展的注册入口。钩子失败只打印警告，不影响节点树。
+- 新增查询 API：`iter_extension_descriptors()`、`find_extension_descriptor()`、`find_extension_spec()`、`active_extension_specs()`、`set_disabled_extensions()`、`extension_failures()`、`extension_status_text()`。
+- 契约常量 `OMNINODE_EXTENSION_API_VERSION = "1.0"`。
+
+**父仓 `__init__.py`**
+- **删除两处硬编码物理注册**（原 L442-443 `register_physics_world()`、L484-485 `unregister_physics_world()`）——顺带修掉“OmniNode 关着但物理世界照样注册”的既存不一致。
+- 新增 `_sync_omninode_registration()`：总开关 + 禁用列表统一驱动注册/反注册。
+- 新增偏好 `hoTools_omninode_disabled_extensions`（`|` 分隔的 identifier 字符串；`bpy.props` 没有字符串数组属性）与其 update 回调：切换后整体反注册→再注册，无需重启 Blender。
+- 新增算子 `ho.omninode_toggle_extension`；偏好面板 OmniNode 区块现在列出每个扩展的状态、版本、来源与错误，并可勾选启用/禁用。
+
+**物理扩展侧**
+- `PhysicsWorld/extension.json`：`identifier=PhysicsWorld`、`version=0.1.0`、`omninode_api=">=1.0,<2"`、`native_modules=[hotools_physics, hotools_jolt]`。
+- `PhysicsWorld/omninode_registration.py`：新增 `register_blender()` / `unregister_blender()` 钩子；入口自举把插件根挂到 `sys.path`。
+- `PhysicsWorld/ui/utils.py`：`Utils` 解析改为双路（显式绝对包名 → 顶层名），不再让整棵 UI 子树依赖宿主恰好挂了插件根。
+
+**实测**
+
+| 验证项 | 结果 |
+| --- | --- |
+| 新回归测试 `OmniNode/tests/test_blender_extension_mechanism.py` | **10/10 通过**（发现/清单/失败隔离/版本契约/identifier 冲突/开关可逆/禁用保留元数据） |
+| 端到端偏好开关（合成探针） | 启用：275 节点类 / 56 物理节点 / 物理生命周期已注册；禁用：219 / 0 / 未注册且 `status=disabled, error=""`；再启用：完整恢复 |
+| OmniNode 测试全集 | **10/10 文件通过**（新增文件计入；`test_mc2_hotspot_timing.py` 为**既有失败**，在基线 `df49d71e` 的纯净副本上同样复现，且该文件不在任何 Phase A/1 commit 中） |
+| 坏扩展鲁棒性 | API 不兼容 / 导入异常 / JSON 非法 / identifier 不一致 四类全部隔离，核心快照节点数不变 |
+
+**Phase 1 顺带修掉的真实脆弱点**：`PhysicsWorld` 里 `from Utils...` 的绝对导入在“插件根不在 sys.path”时必须失败——这直接关系到“扩展可独立安装/加载”的目标；已改为双路解析。
+
+> Phase 1 的设计约束（已确认）：**扩展身份是 identifier 而非目录名**；**禁用 ≠ 卸载**（磁盘文件不动、元数据可读）；**PropertyCurve 属父仓贮藏内容，物理侧只是调用方**，其注册归属仍随 OmniNode 开关（当前行为，未改变）。
+
+
 

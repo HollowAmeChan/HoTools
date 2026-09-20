@@ -121,13 +121,59 @@ def updateExIconState(self, context):
         bpy.ops.ho.remove_exicon()
 
 
-def updateOmniNodeFeaturesState(self, context):
-    """OmniNode功能使用到的更新函数"""
+def _apply_omninode_extension_prefs(prefs):
+    """把扩展禁用列表推给 OmniNode 注册器（注册器不反向依赖偏好模块）。"""
+    # 显式导入子模块：`OmniNode.OmniNodeRegister` 只有在 OmniNode.register() 之后
+    # 才是包属性，偏好在注册前就可能被触发。
+    from .OmniNode import OmniNodeRegister
+
+    OmniNodeRegister.set_disabled_extensions(
+        parse_disabled_extensions(
+            getattr(prefs, "hoTools_omninode_disabled_extensions", "")
+        )
+    )
+
+
+def parse_disabled_extensions(raw):
+    """把偏好里的分隔符字符串解析成 identifier 列表。
+
+    Blender 的 bpy.props 没有字符串数组属性，因此用 `|` 分隔的单字符串存储。
+    """
+    return [token for token in str(raw or "").split("|") if token.strip()]
+
+
+def format_disabled_extensions(identifiers):
+    return "|".join(str(item) for item in identifiers if str(item).strip())
+
+
+def _sync_omninode_registration(context, omni_enabled):
+    """按 OmniNode 总开关启用/停用节点树与扩展生命周期。
+
+    物理世界等扩展的注册完全由 OmniNode 注册器驱动：扩展是否加载、是否调用
+    自己的 register_blender()，都取决于总开关 + 扩展禁用列表 + 版本契约。
+    """
     prefs = context.preferences.addons[__name__].preferences
-    if prefs.hoTools_OmniNodeFeatures_enable:
+    _apply_omninode_extension_prefs(prefs)
+    if omni_enabled:
         OmniNode.register()
     else:
         OmniNode.unregister()
+
+
+def updateOmniNodeFeaturesState(self, context):
+    """OmniNode 总开关（含其下所有扩展）的更新函数"""
+    _sync_omninode_registration(context, bool(self.hoTools_OmniNodeFeatures_enable))
+
+
+def updateOmniNodeExtensionState(self, context):
+    """扩展禁用列表变化：整体重建注册表，无需重启 Blender。"""
+    prefs = context.preferences.addons[__name__].preferences
+    _apply_omninode_extension_prefs(prefs)
+    if not prefs.hoTools_OmniNodeFeatures_enable:
+        return
+    # 反注册 → 再注册：节点类与扩展 Blender 钩子必须整体切换，避免残留。
+    OmniNode.unregister()
+    OmniNode.register()
 
 
 def updateHoTabState(self, context):
@@ -267,6 +313,34 @@ def _draw_module_box(layout, prefs, expanded_prop, title, switch_prop=None, draw
     return box
 
 
+class OP_omninode_toggle_extension(Operator):
+    bl_idname = "ho.omninode_toggle_extension"
+    bl_label = "启用/禁用 OmniNode 扩展"
+    bl_description = "切换 OmniNode 扩展的启用状态（不删除磁盘文件，可随时恢复）"
+
+    identifier: bpy.props.StringProperty(name="扩展标识", default="")  # type: ignore
+    enable: bpy.props.BoolProperty(name="启用", default=True)  # type: ignore
+
+    def execute(self, context):
+        if not self.identifier:
+            self.report({'ERROR'}, "缺少扩展标识")
+            return {'CANCELLED'}
+        prefs = context.preferences.addons[__name__].preferences
+        current = [
+            item
+            for item in parse_disabled_extensions(
+                prefs.hoTools_omninode_disabled_extensions)
+            if item != self.identifier
+        ]
+        if not self.enable:
+            current.append(self.identifier)
+        # 触发 StringProperty 的 update → 重建注册表（无需重启 Blender）
+        prefs.hoTools_omninode_disabled_extensions = format_disabled_extensions(current)
+        state = "启用" if self.enable else "禁用"
+        self.report({'INFO'}, f"扩展 {self.identifier} 已{state}")
+        return {'FINISHED'}
+
+
 class AddonPreference(bpy.types.AddonPreferences):
     """插件的参数，不随着文件改变而改变"""
     bl_idname = __name__
@@ -287,6 +361,11 @@ class AddonPreference(bpy.types.AddonPreferences):
     hoTools_ui_hotab_expanded: BoolProperty(name='展开 HoTab', default=False)  # type: ignore
     hoTools_ui_hopie_expanded: BoolProperty(name='展开 HoPie', default=False)  # type: ignore
     hoTools_ui_keymaps_expanded: BoolProperty(name='展开快捷键', default=True)  # type: ignore
+    # OmniNode 扩展禁用列表（存 identifier，`|` 分隔）：被禁用的扩展不出现在添加节点
+    # 菜单、也不会调用自己的 Blender 生命周期钩子，但磁盘文件保持不变（禁用 ≠ 卸载）。
+    hoTools_omninode_disabled_extensions: bpy.props.StringProperty(
+        name="已禁用扩展", default="", update=updateOmniNodeExtensionState,
+        options={'HIDDEN'})  # type: ignore
 
     hoTools_update_status: bpy.props.StringProperty(name="更新状态", default="尚未检查")  # type: ignore
     hoTools_update_current: bpy.props.StringProperty(name="当前版本", default="")  # type: ignore
@@ -406,8 +485,48 @@ class AddonPreference(bpy.types.AddonPreferences):
                         expand=True,
                     )
 
+        def draw_omninode(content):
+            """OmniNode 扩展开关：启用/禁用 + 状态/版本/错误原因。
+
+            禁用只影响注册（节点不进菜单、钩子不执行），不删除磁盘文件；
+            卸载/安装入口在后续版本加入。
+            """
+            if not self.hoTools_OmniNodeFeatures_enable:
+                content.label(text='总开关关闭时扩展不加载', icon='INFO')
+                return
+            descriptors = OmniNode.OmniNodeRegister.iter_extension_descriptors()
+            if not descriptors:
+                row = content.row()
+                row.enabled = False
+                row.label(text='未发现任何扩展')
+                return
+            disabled = set(parse_disabled_extensions(
+                self.hoTools_omninode_disabled_extensions))
+            for descriptor in descriptors:
+                row = content.row(align=True)
+                if descriptor.error and not descriptor.disabled_by_user:
+                    row.alert = True
+                toggle = row.row(align=True)
+                toggle.enabled = bool(descriptor.error) is False
+                is_enabled = descriptor.identifier not in disabled and not descriptor.error
+                op = toggle.operator(
+                    'ho.omninode_toggle_extension',
+                    text='',
+                    icon='CHECKBOX_HLT' if is_enabled else 'CHECKBOX_DEHLT',
+                    emboss=False,
+                )
+                op.identifier = descriptor.identifier
+                op.enable = not is_enabled
+                row.label(text=OmniNode.OmniNodeRegister.extension_status_text(descriptor))
+            if any(
+                descriptor.error and not descriptor.disabled_by_user
+                for descriptor in descriptors
+            ):
+                note = content.row()
+                note.label(text='红色扩展不可用：修复后可重新启用', icon='ERROR')
+
         _draw_module_box(left, self, 'hoTools_ui_exicon_expanded', 'ExIcon', 'hoTools_enableExIcon', draw_exicon)
-        _draw_module_box(left, self, 'hoTools_ui_omninode_expanded', 'OmniNode', 'hoTools_OmniNodeFeatures_enable')
+        _draw_module_box(left, self, 'hoTools_ui_omninode_expanded', 'OmniNode', 'hoTools_OmniNodeFeatures_enable', draw_omninode)
         _draw_module_box(left, self, 'hoTools_ui_hotab_expanded', 'HoTab', 'hoTools_enableHoTab')
         _draw_module_box(left, self, 'hoTools_ui_hopie_expanded', 'HoPie', draw_content=draw_hopie)
 
@@ -422,7 +541,7 @@ class AddonPreference(bpy.types.AddonPreferences):
             _draw_module_box(right, self, 'hoTools_ui_keymaps_expanded', '快捷键', draw_content=draw_keymaps)
 
 
-cls = [OP_register_asset_library, OP_unregister_asset_library, AddonPreference,]
+cls = [OP_register_asset_library, OP_unregister_asset_library, OP_omninode_toggle_extension, AddonPreference,]
 
 
 def register():
@@ -439,8 +558,6 @@ def register():
     VertexGroupTools.register()
     ShapekeyTools.register()
     ModifierTools.register()
-    from .OmniNode.PhysicsWorld.blender import register as register_physics_world
-    register_physics_world()
     BoneTools.register()
     AnimationTools.register()
     Exporter.register()
@@ -460,8 +577,8 @@ def register():
     HoPie.set_pie_enabled('delete_merge', prefs.hoTools_enableDeleteMergePie)
     HoPie.set_pie_enabled('main', prefs.hoTools_enableHoMainPie)
     HoPie.set_pie_enabled('armature_mode', prefs.hoTools_enableArmatureModePie)
-    if prefs.hoTools_OmniNodeFeatures_enable:
-        OmniNode.register()
+    # OmniNode（含其扩展，例如物理世界）的注册走统一入口：总开关 + 扩展禁用列表。
+    _sync_omninode_registration(bpy.context, prefs.hoTools_OmniNodeFeatures_enable)
     if prefs.hoTools_enableHoTab:
         HoTab.enable()
 
@@ -481,8 +598,6 @@ def unregister():
     VertexGroupTools.unregister()
     ShapekeyTools.unregister()
     BoneTools.unregister()
-    from .OmniNode.PhysicsWorld.blender import unregister as unregister_physics_world
-    unregister_physics_world()
     AnimationTools.unregister()
     Exporter.unregister()
     NameMapping.unregister()

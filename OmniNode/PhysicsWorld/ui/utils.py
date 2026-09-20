@@ -1,10 +1,40 @@
 import bpy
 
 from importlib import import_module
-from Utils.bone_selection import selected_bone_names as _compat_selected_bone_names
 
 
 _PACKAGE_ROOT = __package__.split(".", 1)[0] if "." in __package__ else "HoTools"
+
+
+def _import_utils_symbol(submodule, name):
+    """解析父仓 `Utils.<submodule>.<name>`。
+
+    物理世界里有沿用绝对导入 `from Utils...` 的历史写法。它在正常插件注册期成立
+    （插件根目录被挂到 sys.path），但在扩展被单独加载时（合成包测试、外置安装）
+    不一定成立。因此按“显式绝对包名 → 顶层名”依次尝试，避免整棵 UI 子树依赖
+    宿主是否恰好挂了插件根。
+    """
+    errors = []
+    for package_name in (f"{_PACKAGE_ROOT}.Utils", "Utils"):
+        module_name = f"{package_name}.{submodule}"
+        try:
+            module = import_module(module_name)
+        except ImportError as exc:
+            errors.append(f"{module_name}: {exc}")
+            continue
+        value = getattr(module, name, None)
+        if value is not None:
+            return value
+        errors.append(f"{module_name}: 缺少 {name}")
+    raise ModuleNotFoundError(
+        f"无法解析 Utils.{submodule}.{name}（尝试：{'；'.join(errors)}）"
+    )
+
+
+_compat_selected_bone_names = _import_utils_symbol(
+    "bone_selection", "selected_bone_names"
+)
+
 _collision_groups = import_module(
     f"{_PACKAGE_ROOT}.OmniNode.PhysicsWorld.collision.groups"
 )

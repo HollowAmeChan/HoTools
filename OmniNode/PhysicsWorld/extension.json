@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "identifier": "PhysicsWorld",
+  "display_name": "物理世界 (Physics World)",
+  "version": "0.1.0",
+  "description": "OmniNode 的物理世界扩展：MC2 布料/弹簧骨骼、XPBD、Jolt 刚体、Field 场与物理烘焙。",
+  "package": "PhysicsWorld",
+  "omninode_api": ">=1.0,<2",
+  "requires_hotools": "",
+  "native_modules": [
+    "hotools_physics",
+    "hotools_jolt"
+  ]
+}

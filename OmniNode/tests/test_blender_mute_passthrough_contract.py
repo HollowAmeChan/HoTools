@@ -160,11 +160,8 @@ try:
         module.register()
         registered.append(module)
 
-    physics_extension = next(
-        extension
-        for extension in OmniNodeRegister._registry.extensions
-        if extension.identifier == "PhysicsWorld"
-    )
+    physics_extension = OmniNodeRegister.find_extension_spec("PhysicsWorld")
+    assert physics_extension is not None, "PhysicsWorld 扩展未启用"
     physics_world_ids = {
         node_class.bl_idname
         for node_class in physics_extension.node_classes

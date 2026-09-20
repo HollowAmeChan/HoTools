@@ -19,6 +19,10 @@ MODULE_DIRECTORIES = {
     for name in ("Function", "Custom")
 }
 sys.path.insert(0, str(HOTOOLS.parent))
+# 合成包不经过插件注册，因此插件目录没被挂到 sys.path 上。物理世界扩展里有
+# `from Utils...` 的历史写法，注册其 Blender 生命周期时需要顶层可解析。
+if str(HOTOOLS) not in sys.path:
+    sys.path.insert(0, str(HOTOOLS))
 
 hotools_package = types.ModuleType("HoTools")
 hotools_package.__path__ = [str(HOTOOLS)]
@@ -355,8 +359,13 @@ def build_omninode_registration():
         assert [extension.identifier for extension in extensions] == [
             "LargeFeature"
         ]
+        assert all(extension.available for extension in extensions), [
+            extension.error for extension in extensions
+        ]
         extension_nodes, extension_categories, extension_menus = (
-            node_register._build_extension_categories(extensions)
+            node_register._build_extension_categories(
+                tuple(extension.spec for extension in extensions)
+            )
         )
         assert [node.bl_idname for node in extension_nodes] == [
             "HO_Test_LargeFeatureRoot",

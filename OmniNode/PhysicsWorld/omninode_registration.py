@@ -1,8 +1,10 @@
-"""物理世界对 OmniNode 注册器公开的节点与菜单声明。"""
+"""物理世界对 OmniNode 注册器公开的节点、菜单声明与 Blender 生命周期钩子。"""
 
 from __future__ import annotations
 
 import re
+import sys
+from pathlib import Path
 
 from .. import FunctionNodeCore
 from ..OmniNodeRegister import (
@@ -12,6 +14,40 @@ from ..OmniNodeRegister import (
 )
 from . import nodes
 from . import registry
+
+
+def _ensure_addon_root_on_path() -> None:
+    """确保父仓插件目录在 sys.path 上。
+
+    物理世界里有沿用 `from Utils...` / `from HoTools...` 的历史写法（例如
+    `PhysicsWorld/ui/utils.py`）。这类绝对导入只有在插件根被挂到 sys.path 时
+    才成立——正常插件注册会做，但扩展被单独加载时（测试、外置安装）不一定。
+    由扩展入口自举，避免整棵子树依赖宿主环境。
+    """
+    addon_root = Path(__file__).resolve().parents[3]
+    path_text = str(addon_root)
+    if path_text not in sys.path:
+        sys.path.insert(0, path_text)
+
+
+_ensure_addon_root_on_path()
+
+
+def register_blender() -> None:
+    """扩展的 Blender 生命周期钩子：属性组、UI 面板、draw handler 等。
+
+    由 OmniNodeRegister 在扩展通过（启用 + 版本校验 + 加载成功）后调用。
+    父仓不再硬编码物理世界的注册入口。
+    """
+    from . import blender
+
+    blender.register()
+
+
+def unregister_blender() -> None:
+    from . import blender
+
+    blender.unregister()
 
 
 _LIFECYCLE_FUNCTIONS = (
