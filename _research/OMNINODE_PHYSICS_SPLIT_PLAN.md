@@ -641,10 +641,54 @@ sys.modules["HoTools.OmniNode.PhysicsWorld"].__path__ = [<真实目录>]
 2. 合成包环境缺 `mc2` 子模块属性导致相对导入失败 → 测试改为走注册器的规范包名注册。
 3. 安装 ZIP 无顶层包装目录时 `os.replace(dir, dir)` 自改名失败 → 改为搬运内容。
 
-### Phase 4（未开始）
+### Phase 4（完成）：4.5 + 5.2 实机验证
 
-4.5 + 5.2 独立配置目录（`--env BLENDER_USER_CONFIG`）下的安装/禁用/卸载实机验证，
-以及发布线分离（父仓 ZIP 与扩展 ZIP 的构建与校验）。
+**补齐 py311 原生模块**（此前只有 py313，4.5 上物理功能缺最后一环）
+- `hotools_physics.cp311` 与 `hotools_jolt.cp311` 由扩展自持工程编译产出到
+  `PhysicsWorld/native/runtime/py311/`
+- 踩到 `FTK1011`（FileTracker 无法创建跟踪日志）——仓库嵌套后 build 路径超过
+  Windows 260 字符上限；改用短路径构建目录 `D:\HoTools-build\ext-py311` 解决。
+  这条值得写进扩展仓 README：**构建目录要在插件树之外**。
+
+**双版本验证矩阵**（工厂启动 + 真实插件目录）
+
+| 检查项 | Blender 4.5.8 / py311 | Blender 5.2.0 / py313 |
+| --- | --- | --- |
+| 插件注册 | ✅ | ✅ |
+| 默认总开关关闭时扩展不加载 | ✅（0 描述符 / 0 物理节点） | ✅ |
+| 打开总开关 | ✅ 275 节点 / 56 物理节点 / active | ✅ 同左 |
+| 扩展 Blender 生命周期 | ✅ 已注册 | ✅ |
+| 原生解析来源 | ✅ 扩展自持 `runtime/py311/` | ✅ 扩展自持 `runtime/py313/` |
+| `hotools_physics` 必需符号 | ✅ 22/22 无缺失 | ✅ |
+| `hotools_jolt` 可加载 | ✅（本轮新编译） | ✅ |
+| 禁用扩展 | ✅ 节点归 0、生命周期反注册、**文件仍在** | ✅ |
+| 重新启用 | ✅ 完全恢复 275/56 | ✅ |
+| 父仓 `hotools_native` | ✅ 位于 `_Lib`、8 个 PropertyCurve 符号、0 个物理符号 | ✅ |
+| PropertyCurve 原生后端 | ✅ `PropertyCurveNativeSamplerAdapter` | ✅ |
+| 插件反注册后 | ✅ 节点类 0、扩展钩子已撤 | ✅ |
+| 原生测试套件 | ✅ **25/25** | ✅ **25/25** |
+
+**Phase 4 结论**：物理世界在 4.5 与 5.2 上都能以扩展身份加载，原生模块完全自持，
+开关与生命周期可逆，父仓只保留 PropertyCurve 采样内核。
+
+### 收尾状态
+
+| 项 | 状态 |
+| --- | --- |
+| 父仓跟踪文件 | 993（物理相关 **0**） |
+| 物理仓跟踪文件 | 702 |
+| 物理仓 .git 体积 | 2.5 MB（曾因误提交 3.3 GB 打包产物膨胀，已 prune） |
+| 扩展包构建工具 | `PhysicsWorld/tools/build_extension_zip.py`（`--abi` / `--source-only`） |
+| 两仓工作树 | 均干净 |
+
+### 仍需人工/后续处理
+
+1. **发布线 CI 分离**：父仓 `release.yml` 目前只出父仓 ZIP（`build_release_zip` 已断言
+   不含扩展路径）；扩展仓尚无自己的 workflow。ZIP 构建脚本已就位，接 CI 即可。
+2. **py311 原生测试套件**已跑通，但 `native/tests/run_all.py` 仍未重建（逐文件跑通）。
+3. 扩展若以**扁平包**发布（ZIP 装到 `extensions/PhysicsWorld/`），
+   `_register_canonical_extension_package` 需要同时处理“包目录就在扩展根”的形态。
+
 
 
 
