@@ -36,6 +36,10 @@ junit*.xml
 /_native/
 /tools/
 
+# 扩展安装位：只放用户安装的扩展与物理世界仓库，绝不进发布包。
+# 发布包只含插件自带的内置模块（直接位于 OmniNode/<模块名>/）。
+/OmniNode/extensions/
+
 # Local packaging, build, and backup outputs.
 _bin/
 _build/

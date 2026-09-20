@@ -277,14 +277,32 @@ _SOURCE_PRIORITY = {"builtin": 0, "manifest": 1}
 
 
 
+def _user_extension_roots() -> tuple[Path, ...]:
+    """Blender 用户目录下的扩展安装位（只读插件库安装时的回退落点）。
+
+    通过 ``bpy.utils.user_resource("EXTENSIONS")`` 解析，因此天然跟随当前
+    Blender 版本与 ``--env BLENDER_USER_EXTENSIONS`` 之类的覆盖。
+    """
+    try:
+        base = Path(bpy.utils.user_resource("EXTENSIONS"))
+    except Exception:  # noqa: BLE001 - 版本/环境差异时退回默认布局
+        base = Path.home() / ".config" / "blender" / "extensions"
+    return (base / "HoTools-Omninode",)
+
+
 def _default_extension_search_roots() -> tuple[Path, ...]:
     """返回扩展搜索根（按优先级）。
 
-    第一项是 OmniNode 包目录本身：内置扩展（如 PhysicsWorld）直接位于其下。
-    第二项是 `extensions/`：外置仓库的解压位置（Phase 3 的安装入口）。
+    1. OmniNode 包目录本身：内置扩展（如 PhysicsWorld）直接位于其下。
+    2. 插件内的 `extensions/`：随包分发或本地安装的扩展。
+    3. Blender 用户目录的扩展安装位：插件目录只读时的回退落点。
     """
     omni_node_directory = Path(__file__).resolve().parent
-    return (omni_node_directory, omni_node_directory / "extensions")
+    return (
+        omni_node_directory,
+        omni_node_directory / "extensions",
+        *_user_extension_roots(),
+    )
 
 
 def _ensure_import_root(root: Path) -> bool:
@@ -523,12 +541,24 @@ def _build_extension_descriptor(
                 f"需要 HoTools {hotools_requirement} 或更高，当前为 {hotools_version}"
             )
 
+    # 候选导入名按可能性排序：
+    #   1. 清单声明的包相对路径（"src/foo" → "src.foo.omninode_registration"）
+    #   2. 扩展目录名作为**顶层包**——包装根已在 sys.path 上，这是安装到
+    #      OmniNode/extensions/ 的扩展最常见的形态（该目录没有 __init__.py，
+    #      因此不能作为 HoTools.OmniNode.extensions.* 导入）
+    #   3. 目录名作为 OmniNode 子包（内置扩展 PhysicsWorld 走这条）
     candidates = []
-    if source == "manifest" and package_name != ".":
-        package_module = package_name.replace("/", ".")
-        candidates.append(
-            f"{package_module}.{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
-        )
+    if source == "manifest":
+        if package_name != ".":
+            candidates.append(
+                f"{package_name.replace('/', '.')}"
+                f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
+            )
+        else:
+            candidates.append(
+                f"{_normalize_extension_directory(directory_name)}"
+                f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
+            )
     candidates.append(
         f"{package or __package__}.{_normalize_extension_directory(directory_name)}"
         f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
@@ -779,11 +809,10 @@ def _extension_hook_module(descriptor):
         manifest_path = Path(descriptor.directory) / _EXTENSION_MANIFEST_FILENAME
         manifest, _error = _read_extension_manifest(manifest_path)
         relative = _manifest_relative_path(manifest, package_name)
-        if relative != ".":
-            candidates.append(
-                f"{relative.replace('/', '.')}."
-                f"{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
-            )
+        candidates.append(
+            f"{relative.replace('/', '.') if relative != '.' else package_name}"
+            f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
+        )
     candidates.append(
         f"{__package__}.{_normalize_extension_directory(package_name)}"
         f".{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"

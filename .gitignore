@@ -55,13 +55,14 @@ _research/mmd/*
 !_research/mmd/pmx_inventory.py
 _research/**/__pycache__/
 
-# 物理世界（HoTools-Omninode-Physics）自持原生构建：产物与缓存不进父仓。
-# 构建工程本身（CMakeLists/build.bat/presets/src/include/tests/docs）照常跟踪。
-OmniNode/PhysicsWorld/native/runtime/
-OmniNode/PhysicsWorld/native/build/
-OmniNode/PhysicsWorld/native/.fetch-cache/
-OmniNode/PhysicsWorld/native/extern/
-
-# 物理世界整棵子树已迁入独立仓库（嵌套在本地同一目录，保持相对导入与插件结构）。
-# 父仓不再跟踪其文件；文件内容由 HoTools-Omninode-Physics 仓库管理。
-OmniNode/PhysicsWorld/
+# 扩展安装位：这里只放**用户安装的扩展**，绝不允许进主仓。
+#
+# 两类内容的区别（详见 OmniNode/EXTENSIONS.md）：
+#   * 插件自带的内置模块直接位于 OmniNode/<模块名>/（随主仓跟踪，不可卸载）；
+#   * 通过偏好面板“安装扩展”装进来的东西一律落在 OmniNode/extensions/ 下。
+#
+# 物理世界（HoTools-Omninode-Physics）是**独立仓库**，本机就装在扩展安装位里：
+#   OmniNode/extensions/Hotools-Omninode-Physics/
+# 因此这一条同时覆盖“用户装的扩展”和“物理世界仓库”，两者都不会进主仓。
+# 目录由安装器或仓库放置按需创建，不必保留占位文件。
+OmniNode/extensions/

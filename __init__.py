@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
 from . import VertexColorTools, ShapekeyTools, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools,ModifierTools,HoPie, AttributeTools
 from . import ProjectTools, ObjectTools, CurveTools
 from . import OmniNode, HoTab
+from .OmniNode import OmniNodeExtensionManage
 from . import updater
 from .Utils.keymap_utils import find_user_keymap_item
 from bpy.props import BoolProperty, FloatProperty
@@ -486,11 +487,16 @@ class AddonPreference(bpy.types.AddonPreferences):
                     )
 
         def draw_omninode(content):
-            """OmniNode 扩展开关：启用/禁用 + 状态/版本/错误原因。
+            """OmniNode 扩展管理：启用/禁用 + 状态/版本/错误 + 安装/卸载。
 
-            禁用只影响注册（节点不进菜单、钩子不执行），不删除磁盘文件；
-            卸载/安装入口在后续版本加入。
+            禁用只影响注册（节点不进菜单、钩子不执行），磁盘文件不动；
+            卸载会把扩展目录移入回收目录（被占用的 pyd 重启后清理）。
             """
+            install_row = content.row(align=True)
+            install_row.operator(
+                'ho.omninode_install_extension', text='安装扩展…', icon='IMPORT')
+            install_row.operator(
+                'ho.omninode_purge_extension_trash', text='', icon='TRASH')
             if not self.hoTools_OmniNodeFeatures_enable:
                 content.label(text='总开关关闭时扩展不加载', icon='INFO')
                 return
@@ -518,12 +524,24 @@ class AddonPreference(bpy.types.AddonPreferences):
                 op.identifier = descriptor.identifier
                 op.enable = not is_enabled
                 row.label(text=OmniNode.OmniNodeRegister.extension_status_text(descriptor))
+                # 内置扩展（直接位于 OmniNode/ 下）不提供卸载入口：它属于插件本体。
+                if descriptor.source != "builtin":
+                    uninstall = row.operator(
+                        'ho.omninode_uninstall_extension', text='', icon='X')
+                    uninstall.identifier = descriptor.identifier
             if any(
                 descriptor.error and not descriptor.disabled_by_user
                 for descriptor in descriptors
             ):
                 note = content.row()
                 note.label(text='红色扩展不可用：修复后可重新启用', icon='ERROR')
+            locations = OmniNode.OmniNodeExtensionManage.extension_search_dirs()
+            path_row = content.row()
+            path_row.enabled = False
+            path_row.label(
+                text="安装位置：" + ("；".join(str(p) for p in locations)
+                                 if locations else "尚未创建"))
+
 
         _draw_module_box(left, self, 'hoTools_ui_exicon_expanded', 'ExIcon', 'hoTools_enableExIcon', draw_exicon)
         _draw_module_box(left, self, 'hoTools_ui_omninode_expanded', 'OmniNode', 'hoTools_OmniNodeFeatures_enable', draw_omninode)
@@ -547,7 +565,11 @@ cls = [OP_register_asset_library, OP_unregister_asset_library, OP_omninode_toggl
 def register():
     for i in cls:
         bpy.utils.register_class(i)
-    
+
+    # 扩展管理算子（安装/卸载/清理回收站）必须先于扩展注册就位：
+    # 偏好面板在 OmniNode 关闭时也要能安装扩展。
+    OmniNodeExtensionManage.register()
+
     ProjectTools.register()
     updater.register()
     ObjectTools.register()
@@ -609,4 +631,4 @@ def unregister():
     OmniNode.unregister()
     ModTools.unregister()
     HoTab.unregister()
-    
+    OmniNodeExtensionManage.unregister()

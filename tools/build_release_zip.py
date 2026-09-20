@@ -118,11 +118,25 @@ def validate_archive(output: Path, abi: str) -> tuple[int, list[str]]:
 
     other_abis = set(SUPPORTED_ABIS) - {abi}
     forbidden_roots = {".git", ".github", ".agents", ".claude", "_native", "tools"}
+    # 发布包只含插件自带的内置模块：物理世界与任何用户安装的扩展都不得出现在包里。
+    # 扩展由 HoTools-Omninode-Physics 仓库自己的发布物提供。
+    forbidden_paths = (
+        "OmniNode/PhysicsWorld",
+        "OmniNode/extensions",
+    )
     for member in members:
         path = PurePosixPath(member)
         relative_parts = path.parts[1:]
+        relative_text = PurePosixPath(*relative_parts).as_posix() if relative_parts else ""
         if relative_parts and relative_parts[0] in forbidden_roots:
             raise ValueError(f"ZIP contains a development path: {member}")
+        if any(
+            relative_text == prefix or relative_text.startswith(prefix + "/")
+            for prefix in forbidden_paths
+        ):
+            raise ValueError(
+                f"ZIP contains an extension path (extensions ship separately): {member}"
+            )
         if any(part in {"test", "tests", "__pycache__"} for part in relative_parts):
             raise ValueError(f"ZIP contains a test/cache path: {member}")
         if relative_parts:
