@@ -459,12 +459,17 @@ def _read_extension_manifest(path: Path) -> tuple[dict, str]:
 
 
 def _manifest_relative_path(manifest: dict, default: str) -> str:
-    """取清单里的包相对路径。
+    """取清单里的包相对路径（注册模块相对扩展目录的位置）。
 
     兼容三种写法：
       * 省略（默认）：注册模块与 extension.json 同目录  → "."
-      * package: "PhysicsWorld"  且目录名也叫 PhysicsWorld → "."（避免叠加同名目录）
+      * package: "PhysicsWorld"                       → "PhysicsWorld"
       * package: "src/physics"  明确的子路径           → 原样使用
+
+    注意：**不能**因为 `package` 与目录名相同就折叠成 "."。曾经的折叠假设
+    "目录名 == 包名 ⟹ 注册模块与清单同级"，但扩展仓库的真实布局是嵌套的
+    （`extension.json` 与 `PhysicsWorld/` 同级，注册模块在包目录里），
+    折叠后会去找 `<目录>/omninode_registration.py`，直接判成"未找到注册模块"。
     """
     value = (
         manifest.get("package")
@@ -474,9 +479,56 @@ def _manifest_relative_path(manifest: dict, default: str) -> str:
     if not value:
         return "."
     text = str(value).strip().replace("\\", "/").strip("/")
-    if not text or text in (".", default):
+    if not text or text == ".":
         return "."
     return text
+
+
+def _resolve_extension_package(
+    directory: Path, manifest: dict | None
+) -> tuple[str, Path, Path]:
+    """按磁盘实际布局定出（包相对路径、包目录、注册模块路径）。
+
+    两种形态都要支持：
+
+    * 嵌套（扩展仓库的默认形态）：
+        <dir>/extension.json
+        <dir>/PhysicsWorld/omninode_registration.py
+    * 扁平（把扩展包内容直接铺在扩展目录下，或清单省略 package）：
+        <dir>/extension.json
+        <dir>/omninode_registration.py
+
+    判定依据是"注册模块实际在哪"，而不是清单字面值——两者不一致时以磁盘为准，
+    否则会出现"文件明明在、却报未找到注册模块"。
+    """
+    declared = _manifest_relative_path(manifest or {}, directory.name)
+    candidates: list[Path] = []
+    if declared != ".":
+        candidates.append(Path(declared))
+    if Path(directory.name) not in candidates:
+        candidates.append(Path(directory.name))
+    candidates.append(Path("."))
+
+    fallback: tuple[str, Path, Path] | None = None
+    for relative in candidates:
+        package_directory = directory / relative
+        if not package_directory.is_dir():
+            continue
+        registration = package_directory / _EXTENSION_REGISTRATION_FILENAME
+        result = (
+            "." if relative == Path(".") else relative.as_posix(),
+            package_directory,
+            registration,
+        )
+        if registration.is_file():
+            return result
+        if fallback is None:
+            fallback = result
+    if fallback is not None:
+        return fallback
+    # 一个候选目录都不存在：保留声明值，让调用方报出可读的"未找到注册模块"。
+    package_directory = directory / declared if declared != "." else directory
+    return declared, package_directory, package_directory / _EXTENSION_REGISTRATION_FILENAME
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
@@ -559,9 +611,10 @@ def _build_extension_descriptor(
         manifest.get("identifier") or manifest.get("id") or directory_name
     ).strip()
     default_package = directory_name
-    package_name = _manifest_relative_path(manifest, default_package)
-    package_directory = directory / package_name
-    registration = package_directory / _EXTENSION_REGISTRATION_FILENAME
+    # 以磁盘实际布局为准定出包目录与注册模块（嵌套 / 扁平两种形态都支持）。
+    package_name, package_directory, registration = _resolve_extension_package(
+        directory, manifest
+    )
 
     display_name = str(
         manifest.get("display_name") or manifest.get("name") or identifier
@@ -897,7 +950,9 @@ def _extension_hook_module(descriptor):
         manifest, _error = _read_extension_manifest(
             directory / _EXTENSION_MANIFEST_FILENAME
         )
-        relative = _manifest_relative_path(manifest, directory.name)
+        relative, _package_directory, _registration = _resolve_extension_package(
+            directory, manifest
+        )
         canonical = _register_canonical_extension_package(directory, relative)
         if canonical:
             try:

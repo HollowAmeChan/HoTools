@@ -310,6 +310,71 @@ def test_extension_switch_keeps_live_node_instances():
         OmniNode.unregister()
 
 
+def test_package_layout_nested_and_flat_both_resolve():
+    """包目录定位必须按磁盘事实，而不是清单字面值。
+
+    真实踩过：扩展仓库的 `extension.json` 里写着 `package: "PhysicsWorld"`，
+    而扩展目录名也叫 `PhysicsWorld`，早先的实现把这种情况折叠成 "."，于是去找
+    `<目录>/omninode_registration.py`——文件明明在
+    `<目录>/PhysicsWorld/omninode_registration.py`，却被判"未找到注册模块"，
+    实机表现为"红色不可用：未找到注册模块：PhysicsWorld/omninode_registration.py"。
+
+    嵌套（仓库默认）与扁平（包内容直接铺开）两种形态都必须解析正确。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+
+        # 嵌套布局：extension.json 与 PhysicsWorld/ 同级，注册模块在包目录里
+        nested = _write_extension(
+            root, "PhysicsWorld",
+            manifest={"identifier": "PhysicsWorld", "package": "PhysicsWorld"},
+        )
+        (nested / "PhysicsWorld").mkdir()
+        (nested / "PhysicsWorld" / "omninode_registration.py").write_text(
+            _SPEC_SOURCE.format(identifier="PhysicsWorld", order=1), encoding="utf-8"
+        )
+        package_name, package_dir, registration = register._resolve_extension_package(
+            nested, {"identifier": "PhysicsWorld", "package": "PhysicsWorld"}
+        )
+        assert package_name == "PhysicsWorld", package_name
+        assert package_dir == nested / "PhysicsWorld", package_dir
+        assert registration.is_file(), registration
+
+        # 扁平布局：注册模块与 extension.json 同目录
+        flat = _write_extension(
+            root, "FlatExt",
+            manifest={"identifier": "FlatExt", "package": "FlatExt"},
+            source=_SPEC_SOURCE.format(identifier="FlatExt", order=2),
+        )
+        package_name, package_dir, registration = register._resolve_extension_package(
+            flat, {"identifier": "FlatExt", "package": "FlatExt"}
+        )
+        assert package_name == ".", package_name
+        assert package_dir == flat, package_dir
+        assert registration.is_file(), registration
+
+        # 清单省略 package，但存在同名包目录（注册模块在包目录里）
+        inferred = _write_extension(
+            root, "Inferred", manifest={"identifier": "Inferred"}
+        )
+        (inferred / "Inferred").mkdir()
+        (inferred / "Inferred" / "omninode_registration.py").write_text(
+            _SPEC_SOURCE.format(identifier="Inferred", order=3), encoding="utf-8"
+        )
+        package_name, _package_dir, registration = register._resolve_extension_package(
+            inferred, {"identifier": "Inferred"}
+        )
+        assert package_name == "Inferred", package_name
+        assert registration.is_file(), registration
+
+        # 三种布局都要能被完整发现（不是只解析路径）
+        descriptors = register._discover_omninode_extensions(search_roots=(root,))
+        by_id = {d.identifier: d for d in descriptors}
+        for identifier in ("PhysicsWorld", "FlatExt", "Inferred"):
+            assert identifier in by_id, sorted(by_id)
+            assert by_id[identifier].available, (identifier, by_id[identifier].error)
+
+
 def main() -> None:
     tests = [
         value
