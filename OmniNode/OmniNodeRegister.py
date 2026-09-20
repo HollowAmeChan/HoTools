@@ -347,16 +347,29 @@ def _register_canonical_extension_package(
     if not physics_dir.is_dir():
         return None
     canonical = f"{__package__}.{_normalize_extension_directory(package_name)}"
-    if canonical not in sys.modules:
-        module = types.ModuleType(canonical)
-        module.__path__ = [str(physics_dir)]
-        module.__package__ = canonical
-        module.__spec__ = None
-        sys.modules[canonical] = module
-        parent = sys.modules.get(__package__)
-        if parent is not None:
-            setattr(parent, _normalize_extension_directory(package_name), module)
-        importlib.invalidate_caches()
+    if canonical in sys.modules:
+        return canonical
+
+    # 父包必须在 sys.modules 里，且要把规范子包挂成它的属性：否则
+    # `import HoTools.OmniNode.PhysicsWorld.xxx` 会重新走导入系统找子模块，
+    # 而扩展并不在 HoTools.OmniNode/ 目录下，必然 ModuleNotFoundError。
+    # 父包缺失的情形是真实存在的——发现流程可能早于父包被导入（例如安装/探测期），
+    # 此时静默跳过 setattr 会让"规范包名"形同虚设。
+    parent_name = __package__
+    parent = sys.modules.get(parent_name)
+    if parent is None:
+        parent = types.ModuleType(parent_name)
+        parent.__path__ = [str(Path(__file__).resolve().parent)]
+        parent.__package__ = parent_name
+        sys.modules[parent_name] = parent
+
+    module = types.ModuleType(canonical)
+    module.__path__ = [str(physics_dir)]
+    module.__package__ = canonical
+    module.__spec__ = None
+    sys.modules[canonical] = module
+    setattr(parent, _normalize_extension_directory(package_name), module)
+    importlib.invalidate_caches()
     return canonical
 
 
@@ -602,31 +615,39 @@ def _build_extension_descriptor(
     #      导入注册模块。扩展装在哪儿都不影响包内 700+ 处相对导入的层级。
     #   2. 按文件路径加载：注册模块可能不在规范包内（例如仓库根与包目录不同级）。
     #   3. 退回按物理名导入（无父级相对导入的简单扩展）。
+    #
+    # 注意：`source == "builtin"`（就地发现，即 `*/omninode_registration.py` 直接
+    # 命中了包目录）同样要走第 1 步。否则包内的父级相对导入会失败，扩展被误判为
+    # 不可用——这类目录常见于"解压到任意位置的扩展仓库"。
     module = None
     load_error = ""
-    if source == "manifest":
-        canonical = _register_canonical_extension_package(directory, package_name)
-        if canonical:
-            candidate = (
-                f"{canonical}.{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
-            )
+    # 包目录与注册模块同级（即注册模块就在 <包目录>/omninode_registration.py）时，
+    # 这个目录本身就是规范包，必须按规范包名导入，否则包内父级相对导入会失败。
+    canonical_source = registration.parent == package_directory
+    canonical = (
+        _register_canonical_extension_package(directory, package_name)
+        if canonical_source
+        else None
+    )
+    if canonical:
+        candidate = f"{canonical}.{Path(_EXTENSION_REGISTRATION_FILENAME).stem}"
+        try:
+            module = importlib.import_module(candidate)
+        except Exception as exc:  # noqa: BLE001 - 隔离扩展自身失败
+            load_error = f"{candidate}: {type(exc).__name__}: {exc}"
+    if module is None:
+        flat_registration = directory / _EXTENSION_REGISTRATION_FILENAME
+        if flat_registration.is_file():
             try:
-                module = importlib.import_module(candidate)
-            except Exception as exc:  # noqa: BLE001 - 隔离扩展自身失败
-                load_error = f"{candidate}: {type(exc).__name__}: {exc}"
-        if module is None:
-            flat_registration = directory / _EXTENSION_REGISTRATION_FILENAME
-            if flat_registration.is_file():
-                try:
-                    module = _load_module_from_path(
-                        f"{__package__}.{_normalize_extension_directory(directory_name)}"
-                        f"_{Path(_EXTENSION_REGISTRATION_FILENAME).stem}",
-                        flat_registration,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    load_error = (
-                        f"{flat_registration}: {type(exc).__name__}: {exc}"
-                    )
+                module = _load_module_from_path(
+                    f"{__package__}.{_normalize_extension_directory(directory_name)}"
+                    f"_{Path(_EXTENSION_REGISTRATION_FILENAME).stem}",
+                    flat_registration,
+                )
+            except Exception as exc:  # noqa: BLE001
+                load_error = (
+                    f"{flat_registration}: {type(exc).__name__}: {exc}"
+                )
     if module is None:
         candidates = [
             f"{package or __package__}.{_normalize_extension_directory(directory_name)}"

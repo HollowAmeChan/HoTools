@@ -443,24 +443,32 @@ def _locate_extension_payload(staging: Path) -> Path | None:
 # 卸载
 # ---------------------------------------------------------------------------
 
-def uninstall(identifier_or_path) -> dict:
+def uninstall(identifier_or_path, *, target_root: Path | None = None) -> dict:
     """卸载扩展：先移入 .trash，再尽力删除。
 
     返回 {ok, trashed, removed, pending, error}。``pending=True`` 表示文件仍被
     占用（通常是刚加载的 pyd），已移入回收目录，下次清理即可。
+
+    ``target_root`` 与 install_from_zip 对称：指定时只在安装位里查找该
+    identifier，不做全局描述符查找（测试 / 非默认安装位必需）。
     """
     from .OmniNodeRegister import find_extension_descriptor
 
     directory: Path | None = None
     identifier = str(identifier_or_path)
 
-    descriptor = find_extension_descriptor(identifier)
-    if descriptor is not None:
-        directory = Path(descriptor.directory)
-    else:
-        candidate = Path(identifier)
+    if target_root is not None:
+        candidate = Path(target_root) / identifier
         if candidate.is_dir():
             directory = candidate
+    if directory is None:
+        descriptor = find_extension_descriptor(identifier)
+        if descriptor is not None:
+            directory = Path(descriptor.directory)
+        else:
+            candidate = Path(identifier)
+            if candidate.is_dir():
+                directory = candidate
 
     if directory is None or not directory.is_dir():
         return {"ok": False, "error": f"找不到扩展：{identifier}"}
@@ -528,11 +536,15 @@ def _force_delete(path: Path) -> bool:
         return False
 
 
-def purge_trash() -> dict:
-    """清理回收目录里残留的扩展（重启后调用即可真正删除）。"""
+def purge_trash(*, target_root: Path | None = None) -> dict:
+    """清理回收目录里残留的扩展（重启后调用即可真正删除）。
+
+    ``target_root`` 指定时只清理该安装位（测试 / 非默认安装位）。
+    """
     removed = 0
     pending = 0
-    for root in install_targets():
+    roots = (Path(target_root),) if target_root is not None else install_targets()
+    for root in roots:
         trash = _trash_dir(root)
         if not trash.is_dir():
             continue
