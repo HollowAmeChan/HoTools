@@ -156,7 +156,8 @@ _native/
 **Native 侧**：PropertyCurve 采样内核；可选 GPU provider 必须与 CPU owner 独立。保持 ABI 稳定，字段/数组形状改动必须通知 Python 侧同步
 
 物理世界的原生分工（MC2 CPU 约束迭代、Jolt 刚体步进与高频碰撞内核）见
-`OmniNode/PhysicsWorld/native/` 与 `OmniNode/doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`。
+`OmniNode/PhysicsWorld/native/` 与 `OmniNode/PhysicsWorld/docs/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`
+（物理文档已随扩展迁入其独立仓库）。
 
 ---
 

@@ -294,7 +294,7 @@ Jolt 仍保持刚体/关节领域，不作为该软体链问题的直接替代�
 - 项目 BoneCloth 输出映射：`OmniNode/PhysicsWorld/mc2/setups/bone_cloth/static_fragment.py`
 - 项目 MC2 native depth/约束：`_native/src/mc2_static_build.cpp`、`_native/src/mc2_domain_cpu.cpp`
 - 项目 CPU 调度：`OmniNode/PhysicsWorld/mc2/cpu_native_kernel.py`
-- 项目 Mesh XPBD 契约：`OmniNode/doc/MESH_XPBD_BLUEPRINT.md`
+- 项目 Mesh XPBD 契约：`docs/MESH_XPBD_BLUEPRINT.md`
 - 本地 MC2 baseline：`D:\Unity_Fork\MagicaCloth2\Runtime\VirtualMesh\Function\VirtualMeshProxy.cs`
 - 本地 MC2 tether：`D:\Unity_Fork\MagicaCloth2\Runtime\Cloth\Constraints\TetherConstraint.cs`
 - 本地 MC2 距离/角度约束：`D:\Unity_Fork\MagicaCloth2\Runtime\Cloth\Constraints\DistanceConstraint.cs`、`AngleConstraint.cs`
