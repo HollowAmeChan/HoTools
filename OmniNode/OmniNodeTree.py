@@ -273,12 +273,17 @@ class OmniNodeTree(NodeTree):
         return True
 
     def update(self):
-        if self.doing_initNode:
+        # 节点类重新注册（扩展开关）期间，Blender 会对已存在的树实例回调 update()，
+        # 而此时实例的 RNA 属性尚未挂回，直接取属性会 AttributeError。这里只读不写，
+        # 半初始化状态直接跳过——注册完成后会重新触发一次正常的 update()。
+        if getattr(self, "doing_initNode", True):
             return
-        if self.is_execution_enabled and self.is_auto_update:
+        if getattr(self, "is_execution_enabled", False) and getattr(
+            self, "is_auto_update", False
+        ):
             print("树自动运行:", self.name, "\t", time.ctime())
             self.run()
-        if not self.use_fake_user:
+        if not getattr(self, "use_fake_user", True):
             self.use_fake_user = True
 
     def interface_update(self, context):

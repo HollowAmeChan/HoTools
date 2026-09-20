@@ -155,33 +155,40 @@ def test_physics_extension_is_discovered_and_active():
     assert {c.identifier for c in physics[0].categories()} >= {"PHYSICS_WORLD"}
 
 
-def test_switch_toggles_nodes_and_lifecycle():
-    """启用 → 禁用 → 再启用：节点与扩展钩子同步切换且可逆。"""
+def test_switch_toggles_categories_and_lifecycle():
+    """启用 → 禁用 → 再启用：分类与扩展生命周期同步切换。"""
     from HoTools.OmniNode.PhysicsWorld import blender as physics_blender
 
     register.set_disabled_extensions(())
     OmniNode.register()
     try:
-        enabled_nodes = len(register.iter_registered_node_classes())
         assert physics_blender.is_registered(), "启用态应注册物理 Blender 生命周期"
         assert register.find_extension_spec("PhysicsWorld") is not None
+        assert any(
+            category.identifier == "PHYSICS_WORLD"
+            for category in register._registry.node_categories
+        )
 
         register.set_disabled_extensions(("PhysicsWorld",))
-        OmniNode.unregister()
-        OmniNode.register()
-        disabled_nodes = len(register.iter_registered_node_classes())
-        assert disabled_nodes < enabled_nodes, (disabled_nodes, enabled_nodes)
+        register.apply_extension_switch()
         assert not physics_blender.is_registered(), "禁用态不应注册物理生命周期"
         assert register.find_extension_spec("PhysicsWorld") is None
+        assert not any(
+            category.identifier == "PHYSICS_WORLD"
+            for category in register._registry.node_categories
+        ), "禁用后扩展分类应离开 Add 菜单"
         descriptor = register.find_extension_descriptor("PhysicsWorld")
         assert descriptor.status == "disabled" and descriptor.disabled_by_user
         assert descriptor.error == "", "禁用不是错误"
 
         register.set_disabled_extensions(())
-        OmniNode.unregister()
-        OmniNode.register()
-        assert len(register.iter_registered_node_classes()) == enabled_nodes
+        register.apply_extension_switch()
         assert physics_blender.is_registered(), "重新启用后生命周期应恢复"
+        assert register.find_extension_spec("PhysicsWorld") is not None
+        assert any(
+            category.identifier == "PHYSICS_WORLD"
+            for category in register._registry.node_categories
+        ), "重新启用后扩展分类应回到 Add 菜单"
     finally:
         register.set_disabled_extensions(())
         OmniNode.unregister()
@@ -240,32 +247,66 @@ def test_unregister_is_idempotent():
         OmniNode.unregister()
 
 
-def test_disable_then_enable_restores_every_node():
-    """禁用 → 启用必须精确还原节点集合（顺序与数量都不变）。"""
+def test_extension_switch_keeps_live_node_instances():
+    """切换扩展不得反注册节点类：已有工程里的节点实例必须完好。
+
+    这是踩过的崩溃点——撤掉 Node 类型注册后，工程里该类型的活实例悬空，之后
+    任何访问（哪怕只是读 tree.nodes）都是 EXCEPTION_ACCESS_VIOLATION。
+    因此开关只重建 Add 菜单分类，类型注册保持不动。
+    """
+    import bpy
+
+    tree_module = importlib.import_module("HoTools.OmniNode.OmniNodeTree")
+    assert hasattr(register, "apply_extension_switch"), "缺少扩展开关入口"
+
     register.set_disabled_extensions(())
     OmniNode.register()
+    tree = None
     try:
-        before = [
-            node_class.bl_idname for node_class in register.iter_registered_node_classes()
-        ]
+        tree = bpy.data.node_groups.new("SwitchProbeTree", tree_module.OmniNodeTree.__name__)
+        for idname in (
+            "HO_OmniNode_physicsWorldBegin",
+            "HO_OmniNode_physicsMC2Step",
+        ):
+            tree.nodes.new(idname)
+        tree.doing_initNode = False
+        before_classes = len(register.iter_registered_node_classes())
+        before_nodes = [node.bl_idname for node in tree.nodes]
+        assert before_nodes, "树里应有物理节点"
+
         register.set_disabled_extensions(("PhysicsWorld",))
-        OmniNode.unregister()
-        OmniNode.register()
-        disabled = [
-            node_class.bl_idname for node_class in register.iter_registered_node_classes()
-        ]
-        assert len(disabled) < len(before)
-        assert "HO_OmniNode_physicsWorldBegin" not in disabled
+        register.apply_extension_switch()
+        assert (
+            len(register.iter_registered_node_classes()) == before_classes
+        ), "禁用扩展不得反注册节点类"
+        assert [node.bl_idname for node in tree.nodes] == before_nodes, (
+            "已有节点实例必须完好"
+        )
+        assert register.find_extension_spec("PhysicsWorld") is None, "扩展应处于禁用态"
+        assert not any(
+            category.identifier == "PHYSICS_WORLD"
+            for category in register._registry.node_categories
+        ), "扩展分类应从 Add 菜单移除"
+        tree.update()  # 切完之后树仍要能正常回调
 
         register.set_disabled_extensions(())
-        OmniNode.unregister()
-        OmniNode.register()
-        after = [
-            node_class.bl_idname for node_class in register.iter_registered_node_classes()
-        ]
-        assert after == before, "重新启用后节点集合应与之前完全一致"
+        register.apply_extension_switch()
+        assert [node.bl_idname for node in tree.nodes] == before_nodes
+        assert register.find_extension_spec("PhysicsWorld") is not None, "重新启用应生效"
+        assert any(
+            category.identifier == "PHYSICS_WORLD"
+            for category in register._registry.node_categories
+        ), "扩展分类应回到 Add 菜单"
+        assert (
+            len(register.iter_registered_node_classes()) == before_classes
+        ), "反复切换不得累积重复注册"
     finally:
         register.set_disabled_extensions(())
+        if tree is not None:
+            try:
+                bpy.data.node_groups.remove(tree)
+            except Exception:
+                pass
         OmniNode.unregister()
 
 

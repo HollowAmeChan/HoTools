@@ -187,9 +187,9 @@ def _run_scheduled_omninode_sync():
             # 本次事件里用户又改回去了，不再动注册状态。
             return None
         if enabled:
-            # 先全部撤销再重建：节点类与扩展 Blender 钩子必须整体切换，避免残留。
-            OmniNode.unregister()
-            OmniNode.register()
+            # 只重建菜单分类与钩子，**不反注册节点类**：撤掉类型注册会让已有
+            # 工程里该类型的活实例悬空，后续访问直接 EXCEPTION_ACCESS_VIOLATION。
+            OmniNode.OmniNodeRegister.apply_extension_switch()
         else:
             OmniNode.unregister()
     except Exception as exc:  # noqa: BLE001 - 定时器里抛异常会打断 Blender 事件循环

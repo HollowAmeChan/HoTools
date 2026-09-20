@@ -1369,6 +1369,92 @@ def iter_registered_node_classes():
     return tuple(_registered_node_classes)
 
 
+def _registered_idnames() -> set[str]:
+    return {
+        node_class.bl_idname
+        for node_class in _registered_node_classes
+        if getattr(node_class, "bl_idname", "")
+    }
+
+
+def _register_node_classes(classes) -> int:
+    """注册尚未注册的节点类（按 bl_idname 去重），返回新增数量。
+
+    扩展开关闭时**不反注册节点类**：Blender 的类型注册表里一旦撤掉某个 Node 类型，
+    已有工程里该类型的活实例就会悬空，任何后续访问（绘制、求值、甚至只是读
+    `tree.nodes`）都是 EXCEPTION_ACCESS_VIOLATION 硬崩溃。因此运行期切换扩展只
+    重建菜单分类，节点类型注册保持不动；只有插件整体卸载才真的撤销类型。
+
+    去重按 bl_idname 而不是类对象：同一个函数在重新加载模块后会生成新的类对象，
+    但 idname 相同，Blender 会视作重复注册并**自动反注册旧类**（控制台可见
+    "has been registered before, unregistering previous"），旧对象随之失效。
+    """
+    existing = _registered_idnames()
+    added = 0
+    for node_class in classes:
+        idname = getattr(node_class, "bl_idname", "")
+        if idname and idname in existing:
+            continue
+        bpy.utils.register_class(node_class)
+        _registered_node_classes.append(node_class)
+        if idname:
+            existing.add(idname)
+        added += 1
+    return added
+
+
+def _swap_node_categories(node_categories) -> None:
+    """在不触碰节点类注册的前提下，整体替换 Add 菜单的分类。"""
+    global _node_categories_registered
+    if _node_categories_registered:
+        nodeitems_utils.unregister_node_categories(TREE_ID)
+        _node_categories_registered = False
+    nodeitems_utils.register_node_categories(TREE_ID, node_categories)
+    _node_categories_registered = True
+
+
+def apply_extension_switch() -> tuple[int, int]:
+    """应用扩展启用/禁用列表的变化，返回（新注册的节点类数，分类数）。
+
+    与 `register()` 的区别：**永不反注册已经注册过的节点类**，因此已有工程里的
+    节点实例不会悬空。禁用只体现为"扩展分类从 Add 菜单消失 + 扩展钩子不加载"；
+    已存在于工程里的旧节点仍能正常求值，避免打开旧文件直接崩溃。
+    """
+    global _extension_hooks_started
+    if not _node_categories_registered:
+        register()
+        return len(_registered_node_classes), len(_registry.node_categories)
+
+    if _extension_hooks_started:
+        failures = stop_extension_blender_hooks()
+        _extension_hooks_started = False
+        if failures:
+            print(
+                "[HoTools] 扩展 Blender 钩子反注册部分失败：\n  "
+                + "\n  ".join(failures)
+            )
+
+    registry = _rebuild_registry()
+    for menu_class in reversed(_registered_menu_classes):
+        bpy.utils.unregister_class(menu_class)
+    _registered_menu_classes.clear()
+
+    added = _register_node_classes(registry.node_classes)
+    for menu_class in registry.menu_classes:
+        bpy.utils.register_class(menu_class)
+        _registered_menu_classes.append(menu_class)
+    _swap_node_categories(registry.node_categories)
+
+    hook_failures = start_extension_blender_hooks()
+    _extension_hooks_started = True
+    if hook_failures:
+        print(
+            "[HoTools] 扩展 Blender 钩子部分失败：\n  "
+            + "\n  ".join(hook_failures)
+        )
+    return added, len(registry.node_categories)
+
+
 def _rollback_registration():
     global _node_categories_registered
     if _node_categories_registered:
@@ -1378,7 +1464,15 @@ def _rollback_registration():
         bpy.utils.unregister_class(menu_class)
     _registered_menu_classes.clear()
     for node_class in reversed(_registered_node_classes):
-        bpy.utils.unregister_class(node_class)
+        # 容错：Blender 会为重复 bl_idname 自动反注册旧类，旧类对象随之失效
+        # （missing bl_rna）。这里跳过它，不能因此中断整轮卸载。
+        try:
+            bpy.utils.unregister_class(node_class)
+        except (RuntimeError, TypeError, AttributeError) as exc:
+            print(
+                f"[HoTools] 跳过失效节点类 "
+                f"{getattr(node_class, 'bl_idname', node_class)!r}：{exc}"
+            )
     _registered_node_classes.clear()
 
 
@@ -1388,9 +1482,7 @@ def register():
         return
     registry = _rebuild_registry()
     try:
-        for node_class in registry.node_classes:
-            bpy.utils.register_class(node_class)
-            _registered_node_classes.append(node_class)
+        _register_node_classes(registry.node_classes)
         for menu_class in registry.menu_classes:
             bpy.utils.register_class(menu_class)
             _registered_menu_classes.append(menu_class)
