@@ -175,7 +175,8 @@ def install_from_zip(archive_path, *, target_root: Path | None = None) -> dict:
     if not zipfile.is_zipfile(archive):
         return {"ok": False, "error": f"不是合法的 ZIP：{archive}"}
 
-    root = _select_install_root(target_root)
+    identifier = _peek_identifier(archive)
+    root = _select_install_root(target_root, identifier=identifier)
     if root is None:
         return {"ok": False, "error": "没有可写的安装目录（插件目录只读且用户目录不可用）"}
 
@@ -269,7 +270,17 @@ def install_from_directory(source_dir, *, target_root: Path | None = None) -> di
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def _select_install_root(explicit: Path | None) -> Path | None:
+def _select_install_root(
+    explicit: Path | None,
+    *,
+    identifier: str = "",
+) -> Path | None:
+    """选安装目录。
+
+    未显式指定时优先插件内 `extensions/`；但若同一 identifier 已经存在于
+    **插件内模块目录**（`OmniNode/<名字>/`，即随包自带的那份），则改装到用户目录，
+    避免落一个同名扩展与内置模块打架。
+    """
     if explicit is not None:
         target = Path(explicit)
         try:
@@ -277,7 +288,13 @@ def _select_install_root(explicit: Path | None) -> Path | None:
         except OSError:
             return None
         return target if _is_writable(target) else None
-    for candidate in install_targets():
+
+    bundled = bundled_extensions_dir()
+    user_dir = user_extensions_dir()
+    order = [bundled, user_dir]
+    if identifier and _identifier_present_elsewhere(identifier, bundled):
+        order = [user_dir, bundled]
+    for candidate in order:
         try:
             candidate.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -285,6 +302,53 @@ def _select_install_root(explicit: Path | None) -> Path | None:
         if _is_writable(candidate):
             return candidate
     return None
+
+
+def _identifier_present_elsewhere(identifier: str, install_root: Path) -> bool:
+    """检查同一 identifier 是否已存在于插件内模块目录或仓库开发检出里。"""
+    from .OmniNodeRegister import _read_extension_manifest
+
+    omni_node = Path(__file__).resolve().parent
+    for entry in omni_node.iterdir():
+        if not entry.is_dir() or entry.name in {"extensions", "__pycache__"}:
+            continue
+        manifest_path = entry / MANIFEST_FILENAME
+        if manifest_path.is_file():
+            manifest, error = _read_extension_manifest(manifest_path)
+            if not error and str(manifest.get("identifier") or "").strip() == identifier:
+                return True
+    # 扩展安装位里的**仓库开发检出**（含 .git）也算"已存在"
+    if install_root.is_dir():
+        for entry in install_root.iterdir():
+            if not entry.is_dir() or not (entry / ".git").exists():
+                continue
+            manifest_path = entry / MANIFEST_FILENAME
+            if manifest_path.is_file():
+                manifest, error = _read_extension_manifest(manifest_path)
+                if not error and str(manifest.get("identifier") or "").strip() == identifier:
+                    return True
+    return False
+
+
+def _peek_identifier(archive: Path) -> str:
+    """不解压整个包，读出 ZIP 内的清单 identifier（用于选安装目录）。"""
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            for name in zf.namelist():
+                if name.replace("\\", "/").endswith(MANIFEST_FILENAME):
+                    try:
+                        data = json.loads(zf.read(name).decode("utf-8"))
+                    except (ValueError, UnicodeDecodeError):
+                        continue
+                    if isinstance(data, dict):
+                        value = str(
+                            data.get("identifier") or data.get("id") or ""
+                        ).strip()
+                        if value:
+                            return value
+    except (OSError, zipfile.BadZipFile):
+        return ""
+    return ""
 
 
 def _payload_dir_name(staging: Path) -> str:
