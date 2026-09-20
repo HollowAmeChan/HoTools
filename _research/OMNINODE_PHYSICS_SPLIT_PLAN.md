@@ -551,16 +551,48 @@ HoTools-Omninode-Physics/
 若需要把物理子树的历史接续到新仓，可安装 `git filter-repo` 后用 `--path OmniNode/PhysicsWorld` 切分再
 merge；由于路径与包结构必须保持嵌套，这一步收益有限（历史里的路径前缀无法直接复用）。
 
-### Phase 2 剩余工作
+### Phase 2 完成情况（2a/2b/2c 全部完成）
 
-1. `tools/` 下的物理工具未迁：`mc2_unity_oracle/**`（Unity 工程）、`run_mc2_v1_acceptance.ps1`、`audit_mc2_architecture.py`。
-2. 父仓 `OmniNode/tests/` 里仍有物理相关测试（`test_mc2_hotspot_timing.py`、`test_mc2_source_observation.py`）与
-   引用物理扩展的测试（`test_blender_reference_guard.py` 等），需决定迁出还是保留并加"扩展缺失即跳过"。
-3. 发布流程适配：父仓 `release.yml` / `build_release_zip.py` 尚未感知"扩展存在于嵌套仓库"这一形态。
+**2a 嵌套仓库**：`git init -b main` 于 `OmniNode/PhysicsWorld/`，路径与包结构不变（283 处父级相对导入不动）。
+父仓 `.gitignore` 忽略该树并从索引移除；父仓跟踪 1682 → 1019。
 
-### Phase 3/4（未开始）
+**2b 文档**：父仓 `OmniNode/doc/` 的 13 篇文档全部为物理主题，迁入 `docs/`；父仓该目录清空。
 
-见 §9 的 Phase 3（安装/卸载闭环 + 发布线分离）与 Phase 4（4.5 + 5.2 实机验证）。
+**2c 工具与测试**：
+- `tools/audit_mc2_architecture.py`、`tools/run_mc2_v1_acceptance.ps1`、`tools/mc2_unity_oracle/**`（Unity oracle 工程源码 + 960 MB 本地缓存）迁入新仓 `tools/`；
+- `OmniNode/tests/` 的 `test_mc2_hotspot_timing.py`、`test_mc2_source_observation.py` 迁入新仓 `test/`；
+- 父仓 `tools/` 只剩通用发布工具（`build_release_zip.py`、`verify_release_install.py`）。
+
+**迁移中修掉的问题**
+| 问题 | 处理 |
+| --- | --- |
+| 审计脚本路径根仍指父仓、hub 文件仍是 `hotools_native.cpp` | REPO_ROOT 改为扩展仓库根；原生源码指向 `native/src` 与 `native/src/mc2`；hub 改为 `hotools_physics.cpp` |
+| Unity oracle 的 tier_a 输出路径、V1-R 清单路径按老布局 | 各减一层目录；缓存目录不入库 |
+| 原生测试混用 `ROOT`（native/）与仓库根 | 分别引入 `PHYSICS_ROOT`、`PHYSICS_WORLD_ROOT`；跨目录导入补 `sys.path` |
+| `test_center_frame_shift_tier_a` 从父仓 `_Lib` 取原生模块且用旧模块名 | 改指扩展自持 `runtime/<abi>/` 与 `hotools_physics` |
+| 父仓与嵌套仓行尾归一化互相冲突 | 父仓 `.gitattributes` 增加 `/OmniNode/PhysicsWorld/** -text` |
+| 父仓忽略该树后 `git add -A` 不纳入其内容改动 | 迁移提交用 `git add -f` 修正（见 commit `a8a11a57`） |
+
+**验证（Blender 5.2 + py313，无环境覆盖）**
+| 套件 | 结果 |
+| --- | --- |
+| 父仓 `OmniNode/tests` | **9/9 文件通过**（4.5 树与 5.2 副本各跑一遍） |
+| 扩展原生测试 | **24/24 通过** |
+| 扩展物理域测试 | 61 项：**51 通过、7 需 bpy、3 失败** |
+| 3 项失败 | `test_capability_matrix`、`test_frame_compile`、`test_mc2_hotspot_timing` —— 在拆分前基线 `df49d71e` 上同样失败，与迁移无关 |
+| MC2 架构审计 | 可运行，0 violations；E7-S 漂移与 `--check` 退出码 1 均与基线逐项一致 |
+
+**未落地的小项**：`native/tests/run_all.py` 未重建（父仓版本原先也未跟踪；实际验证一直按逐文件执行）。
+如需统一入口，可在 Phase 3 一并补上。
+
+### Phase 3 剩余工作
+
+1. **扩展安装/卸载闭环**：本地 ZIP/目录/GitHub Release 资产安装；安装落点 `OmniNode/extensions/<name>/`
+   优先、失败退到用户可写目录；两段式卸载规避 Windows pyd 占用。
+2. **发布线分离**：父仓 `release.yml` / `build_release_zip.py` 需感知"扩展位于嵌套仓库"，
+   父仓包不含扩展；扩展仓自身出 ZIP（py311/py313）。
+3. 搜索根 `OmniNode/extensions/` 已就位（Phase 1），安装器只需把内容解压到那里。
+
 
 
 
