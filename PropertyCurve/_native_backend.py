@@ -4,6 +4,10 @@
 ``_native`` 工程构建并放在 ``_Lib/<abi>/HotoolsPackage/``。物理世界（OmniNode
 PhysicsWorld）只是 PropertyCurve 的调用方，不参与本模块的归属。
 
+这里按自身位置解析该目录并把**模块对象**交给采样后端，避免依赖
+``sys.path`` 顺序或模块名解析。
+"""
+
 from __future__ import annotations
 
 import importlib
@@ -21,7 +25,7 @@ _HAS_LOADED = False
 
 
 def python_abi() -> str:
-    """返回当前解释器对应的 HoTools ABI 目录名（py311 / py313）。"""
+    """返回当前解释器对应的 HoTools ABI 目录名 (py311 / py313)。"""
     return "py313" if sys.version_info >= (3, 13) else "py311"
 
 
@@ -36,7 +40,7 @@ def is_available() -> bool:
 
 
 def native_module():
-    """返回可用的 hotools_native 模块；不可用时返回 None（由调用方回退 Python 后端）。"""
+    """返回可用的 hotools_native 模块；不可用时返回 None，由调用方回退 Python 后端。"""
     global _NATIVE_MODULE, _HAS_LOADED
     if _NATIVE_MODULE is not None:
         return _NATIVE_MODULE
