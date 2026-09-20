@@ -1,8 +1,9 @@
 # OmniNode / PhysicsWorld 拆分与新仓库规划（评估 + 方案，未动工）
 
-> 状态：**仅评估与规划（已按 5 项决策修订）**，本文件不改动任何生产代码。
+> 状态：**Phase A（原生分家）已完成并实测通过**，详细进度见 §14；本文件不描述未落地的改动。
 > 所有数字来自本机仓库实测（`git ls-files`、文件扫描），非估算的部分均已标注。
 > 决策摘要：D1 各仓自持 pyd（`hotools_physics` 新名）· D2 嵌套目录 + `.gitignore`（非 submodule）· D3 父仓包不含扩展、扩展独立安装 · D4 只拆物理世界 · D5 **原生分家优先（Phase A）**。
+> 边界补充（D4 细化）：**PropertyCurve 是父仓贮藏内容，物理世界只是调用方**——`hotools_native`（PropertyCurve 采样内核）永远留在父仓，物理侧只通过 Python 公开 API 使用它，不复制、不扩展。
 
 ---
 
@@ -439,4 +440,51 @@ HoTools-Omninode-Physics/
 4. 是否保留 git 历史（建议保留；新仓首次 push 体积较大，含测试资产与 blend 夹具）。
 5. `tools/mc2_unity_oracle/Library/**`（Unity 缓存，约 3GB 本机、git 已忽略）在新仓是否彻底 `.gitignore`（建议是）。
 6. 开发期是否用 junction 把扩展 `native/runtime/<abi>/` 链到父仓 `_Lib/<abi>/HotoolsPackage/`（便于 Blender 内直接调试）；建议**不用**，避免又把两套 pyd 混在一个目录里，改为让加载器优先读扩展自带目录。
+
+---
+
+## 14. 进度日志
+
+### Phase 0（完成）
+
+- 基线冻结：父仓 HEAD `df49d71e`；`git clone --mirror` 备份到 `D:\HoTools-backup-mirror.git`（pack 219 MiB）。
+- 基线冒烟（Blender 4.5.8/py311 与 5.2.0/py313 结果一致）：旧 `hotools_native` 为**合并模块**——property_curve 8 符号 + MC2 81 + field_runtime 6 + xpbd 1 + spring_vrm 6 + rigid_writeback 1；`hotools_jolt` 可用；PropertyCurve 原生后端可用；MC2 必需符号 22/22 齐全。
+- 工具链确认：cmake 在 VS2022 内置路径、MSBuild 可用；`git filter-repo` **未安装**（Phase 2 需要先装或改用 `git subtree`）。
+
+### Phase A（完成，commit `934cd3b4`）
+
+**父仓侧**
+- `hotools_native` 瘦身为只含 PropertyCurve：入口 `hotools_native.cpp` → `hotools_property_curve.cpp`；TU 只留入口 + `property_curve.cpp`。
+- 移除全部 Jolt 相关：`HOTOOLS_BUILD_JOLT` / 线程池探针 / 隔离 pyd 三个 option 与 target、JoltPhysics FetchContent、Blender 兼容 `Mutex.h` 补丁。
+- 物理 TU 与测试迁出（31 个源文件 + 28 个测试 + `python_buffer_utils.hpp` + `JOLT_BLENDER_COMPAT.md`）。
+- `build.bat` / `CMakePresets.json` 去掉 jolt 分支；布局戳改为守护 `include/hotools_property_curve.hpp`；传 `jolt` 会提示改用物理工程。
+
+**物理世界侧（`OmniNode/PhysicsWorld/native/`）**
+- 自持独立 CMake 工程 + `build.bat`（含 MC2/Field 三头文件的整体重建保护）+ `CMakePresets.json`（py311/py313 × all/physics/jolt）。
+- 新模块入口 `src/hotools_physics.cpp`（nanobind），源文件按 `src/mc2|field|xpbd|spring_vrm` 分组，共享头放 `include/`。
+- 产物落 `native/runtime/<abi>/`：`hotools_physics.cp313-win_amd64.pyd`（0.88 MB）、`hotools_jolt.cp313-win_amd64.pyd`（1.27 MB）。
+
+**加载边界**
+- 新增 `PhysicsWorld/native_runtime.py`：解析顺序 = 环境覆盖（`HOTOOLS_PHYSICS_NATIVE_DIR` / `HOTOOLS_NATIVE_TEST_DIR`）→ 扩展自持 runtime → 父仓 `_Lib`（过渡回退，命中打 warning）→ 显式 `HOTOOLS_LEGACY_NATIVE_FALLBACK=1` 逃生门；以**探针符号齐全**为接受标准；插入路径时 `invalidate_caches()`（否则刚构建出的 pyd 永远发现不了）。
+- 加载点改造：`mc2/native.py`、`field/native.py`、`xpbd/native.py`、`xpbd/bone_xpbd/native.py`、`spring_vrm/native.py`、`writeback.py`、`rigid/backends/jolt.py`。
+- `PropertyCurve/_native_backend.py`：按自身路径解析父仓 `hotools_native` 并传**模块对象**，不再依赖 `sys.path` 顺序；`sampling.try_use_native_backend()` 同时接受模块对象与旧模块名（向后兼容）。
+- 打包/校验：`build_release_zip` 不再要求 `hotools_jolt`；`verify_release_install` 断言 `hotools_native` 只有 PropertyCurve 符号且**不含**物理符号。
+
+**实测结论**
+
+| 验证项 | 结果 |
+| --- | --- |
+| py313 父仓 `hotools_native` | 8 符号（PropertyCurve）；MC2/Field/XPBD/Spring/Rigid **均为 0** |
+| py313 扩展 `hotools_physics` | 111 符号：MC2 81 + Field 6 + XPBD 1 + Spring 6 + Rigid 1；PropertyCurve 0 |
+| py311 父仓瘦身版 | 8 符号 / 0 物理符号（122 KB，旧版 965 KB）；已在临时目录验证，**待替换**（见遗留 1） |
+| 同进程共存 | 两者各取所需：PropertyCurve 走父仓模块、物理走扩展模块，无符号串味 |
+| 物理原生测试 | 17/17 通过（py313，Blender 5.2 Python） |
+| Blender 5.2 端到端注册 | 通过：275 节点类、扩展 `PhysicsWorld`、56 个物理节点、`HO_OmniNode_physicsWorldBegin`/`physicsMC2Step` 可建实例、Jolt 可实例化 `JoltWorld` |
+
+**遗留待办（Phase A 收尾）**
+
+1. **py311 的 `_Lib/py311/HotoolsPackage/hotools_native.cp311-win_amd64.pyd` 仍是旧合并版**（DLL 被运行中的 Blender 4.5 占用）。关闭 4.5 后执行 `_native\build.bat 311 native`，或用已构建好的 `D:\HoTools-build\py311-native-probe\runtime\hotools_native.cp311-win_amd64.pyd` 直接替换。
+2. 父仓 `_Lib/py311|py313/HotoolsPackage/hotools_jolt.*.pyd` 属迁移前遗留，最终态应由扩展自持。py313 已从 5.2 副本移除并验证扩展路径；4.5 副本待关闭 Blender 后清理。
+3. 5.2 安装副本已按“本机保持目录结构”覆盖同步（robocopy 排除 `_native`，物理工程内容单独拷贝）。这是本机实验；Phase 2 会换成正式的嵌套仓库。
+
 
