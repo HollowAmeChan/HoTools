@@ -93,8 +93,7 @@ try:
     assert [
         (item.identifier, item.name) for item in algorithm_prop.enum_items
     ] == [
-        (identifier, label)
-        for identifier, label, _ in module.SHAPEKEY_REPLACE_ALGORITHMS
+        ('REPLACE', "替换"), ('ADD', "加"), ('SUBTRACT', "减"),
     ]
     blend_prop = (
         bpy.ops.ho.remove_selected_vertices_in_activeshapekey

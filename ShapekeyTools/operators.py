@@ -379,22 +379,6 @@ class OP_ShapekeyTools_DuplicateInPlace(Operator):
                 bpy.ops.object.mode_set(mode=prev_mode)
 
 
-# 应用来源形态键到活动键选中顶点的方式，默认保持原有的“替换”行为。
-SHAPEKEY_REPLACE_ALGORITHMS = (
-    ('REPLACE', "替换", "用来源形态键的位置覆盖活动键中的选中顶点"),
-    ('ADD', "加", "在选中顶点现有位置上，叠加来源形态键相对其相对键的位移"),
-    ('SUBTRACT', "减", "在选中顶点现有位置上，减去来源形态键相对其相对键的位移"),
-)
-
-
-def shapekey_replace_algorithm_label(identifier: str) -> str:
-    """返回替换算法的界面标签；未知标识按默认的“替换”处理。"""
-    for item_identifier, label, _ in SHAPEKEY_REPLACE_ALGORITHMS:
-        if item_identifier == identifier:
-            return label
-    return SHAPEKEY_REPLACE_ALGORITHMS[0][1]
-
-
 class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
     """按所选算法把指定形态键应用到活动形态键的选中顶点"""
     bl_idname = "ho.remove_selected_vertices_in_activeshapekey"
@@ -406,7 +390,11 @@ class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
     algorithm: EnumProperty(
         name="替换算法",
         description="选择把来源形态键应用到选中顶点的方式",
-        items=SHAPEKEY_REPLACE_ALGORITHMS,
+        items=[
+            ('REPLACE', "替换", "用来源形态键的位置覆盖活动键中的选中顶点"),
+            ('ADD', "加", "在选中顶点现有位置上，叠加来源形态键相对其相对键的位移"),
+            ('SUBTRACT', "减", "在选中顶点现有位置上，减去来源形态键相对其相对键的位移"),
+        ],
         default='REPLACE',
     )  # type: ignore
     blend: FloatProperty(
@@ -470,16 +458,16 @@ class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
         # 替换 = 按强度向来源键插值；加 = 叠加来源键相对其相对键的位移；减 = 叠加该位移的相反数。
         blend = self.blend
         if self.algorithm == 'ADD':
-            add = True
+            label, add = "加", True
         elif self.algorithm == 'SUBTRACT':
-            blend, add = -blend, True
+            label, add = "减", True
+            blend = -blend
         else:
-            add = False
+            label, add = "替换", False
         bpy.ops.mesh.blend_from_shape(shape=self.shape_key, blend=blend, add=add)
         self.report(
             {'INFO'},
-            f"已用[{shapekey_replace_algorithm_label(self.algorithm)}]算法"
-            f"(强度 {self.blend:g})把 '{self.shape_key}' 应用到 "
+            f"已用[{label}]算法(强度 {self.blend:g})把 '{self.shape_key}' 应用到 "
             f"'{obj.active_shape_key.name}' 的选中顶点")
 
         return {'FINISHED'}
