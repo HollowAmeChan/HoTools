@@ -379,14 +379,46 @@ class OP_ShapekeyTools_DuplicateInPlace(Operator):
                 bpy.ops.object.mode_set(mode=prev_mode)
 
 
+# 应用来源形态键到活动键选中顶点的方式，默认保持原有的“替换”行为。
+SHAPEKEY_REPLACE_ALGORITHMS = (
+    ('REPLACE', "替换", "用来源形态键的位置覆盖活动键中的选中顶点"),
+    ('ADD', "加", "在选中顶点现有位置上，叠加来源形态键相对其相对键的位移"),
+    ('SUBTRACT', "减", "在选中顶点现有位置上，减去来源形态键相对其相对键的位移"),
+)
+
+
+def shapekey_replace_algorithm_label(identifier: str) -> str:
+    """返回替换算法的界面标签；未知标识按默认的“替换”处理。"""
+    for item_identifier, label, _ in SHAPEKEY_REPLACE_ALGORITHMS:
+        if item_identifier == identifier:
+            return label
+    return SHAPEKEY_REPLACE_ALGORITHMS[0][1]
+
+
 class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
-    """将活动形态键中选择的顶点替换为指定形态键的位置"""
+    """按所选算法把指定形态键应用到活动形态键的选中顶点"""
     bl_idname = "ho.remove_selected_vertices_in_activeshapekey"
     bl_label = "替换活动形态键中，选择的顶点的偏移"
-    bl_description = "选择一个来源形态键，用其位置替换活动键中的选中顶点"
+    bl_description = "选择一个来源形态键与替换算法（替换/加/减），应用到活动键中的选中顶点"
     bl_options = {'REGISTER', 'UNDO'}
 
     shape_key: bpy.props.StringProperty(name="来源形态键")  # type: ignore
+    algorithm: EnumProperty(
+        name="替换算法",
+        description="选择把来源形态键应用到选中顶点的方式",
+        items=SHAPEKEY_REPLACE_ALGORITHMS,
+        default='REPLACE',
+    )  # type: ignore
+    blend: FloatProperty(
+        name="混合强度",
+        description=(
+            "0 为不改变，1 为完整应用：替换按此比例向来源键插值，"
+            "加/减按此倍数叠加来源键的位移"
+        ),
+        default=1.0,
+        soft_min=0.0,
+        soft_max=1.0,
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -411,14 +443,18 @@ class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
 
     def draw(self, context):
         obj = context.object
+        layout = self.layout
         if obj is not None and obj.data.shape_keys is not None:
-            self.layout.prop_search(
+            layout.prop_search(
                 self,
                 "shape_key",
                 obj.data.shape_keys,
                 "key_blocks",
                 text="来源形态键",
             )
+        layout.label(text="替换算法")
+        layout.prop(self, "algorithm", text="",)
+        layout.prop(self, "blend")
 
     def execute(self, context):
         obj = context.object
@@ -430,7 +466,21 @@ class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
         if source_key == obj.active_shape_key:
             self.report({'WARNING'}, "来源形态键不能是当前活动形态键")
             return {'CANCELLED'}
-        bpy.ops.mesh.blend_from_shape(shape=self.shape_key, add=False)
+        # blend_from_shape 的 blend 因子配合 add 开关即可表达三种算法：
+        # 替换 = 按强度向来源键插值；加 = 叠加来源键相对其相对键的位移；减 = 叠加该位移的相反数。
+        blend = self.blend
+        if self.algorithm == 'ADD':
+            add = True
+        elif self.algorithm == 'SUBTRACT':
+            blend, add = -blend, True
+        else:
+            add = False
+        bpy.ops.mesh.blend_from_shape(shape=self.shape_key, blend=blend, add=add)
+        self.report(
+            {'INFO'},
+            f"已用[{shapekey_replace_algorithm_label(self.algorithm)}]算法"
+            f"(强度 {self.blend:g})把 '{self.shape_key}' 应用到 "
+            f"'{obj.active_shape_key.name}' 的选中顶点")
 
         return {'FINISHED'}
 

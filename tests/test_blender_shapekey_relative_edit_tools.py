@@ -84,6 +84,22 @@ try:
         bpy.types.Scene, "hoShapekeyTools_selectedBaseShapekey")
     assert "shape_key" in (
         module.OP_RemoveSelectedVerticesInActiveShapekey.__annotations__)
+    assert "algorithm" in (
+        module.OP_RemoveSelectedVerticesInActiveShapekey.__annotations__)
+    algorithm_prop = (
+        bpy.ops.ho.remove_selected_vertices_in_activeshapekey
+        .get_rna_type().properties["algorithm"])
+    assert str(algorithm_prop.default) == 'REPLACE'
+    assert [
+        (item.identifier, item.name) for item in algorithm_prop.enum_items
+    ] == [
+        (identifier, label)
+        for identifier, label, _ in module.SHAPEKEY_REPLACE_ALGORITHMS
+    ]
+    blend_prop = (
+        bpy.ops.ho.remove_selected_vertices_in_activeshapekey
+        .get_rna_type().properties["blend"])
+    assert abs(blend_prop.default - 1.0) < 1e-6
 
     # 嵌套键只选择相对 Parent 发生位移的点；Parent 自身相对 Basis 的位移不能混入。
     activate_key(obj, child)
@@ -114,6 +130,56 @@ try:
         "EXEC_DEFAULT", shape_key="Source") == {'FINISHED'}
     bpy.ops.object.mode_set(mode='OBJECT')
     assert np.allclose(child.data[2].co[:], source.data[2].co[:], atol=1e-6)
+
+    # 加/减模式：以来源键相对其自身相对键的位移为基准，且只影响选中点。
+    # NestedSource 相对 Parent 的位移是 (0, 2, 5)，相对 Basis 则是 (0, 2, 6)，
+    # 因此结果可以区分“来源键的相对键”与“基型”两种基准。
+    nested_source = obj.shape_key_add(name="NestedSource", from_mix=False)
+    nested_source.relative_key = parent
+    nested_source.data[1].co = (0.1, 2.0, 6.0)
+
+    child.data[1].co = basis.data[1].co.copy()
+    select_vertices(obj, (1,))
+    assert bpy.ops.ho.remove_selected_vertices_in_activeshapekey(
+        "EXEC_DEFAULT", shape_key="NestedSource",
+        algorithm='ADD') == {'FINISHED'}
+    bpy.ops.object.mode_set(mode='OBJECT')
+    assert np.allclose(child.data[1].co[:], (0.1, 2.0, 5.0), atol=1e-6)
+    # 未选中的点不受影响。
+    assert np.allclose(child.data[2].co[:], source.data[2].co[:], atol=1e-6)
+
+    select_vertices(obj, (1,))
+    assert bpy.ops.ho.remove_selected_vertices_in_activeshapekey(
+        "EXEC_DEFAULT", shape_key="NestedSource",
+        algorithm='SUBTRACT') == {'FINISHED'}
+    bpy.ops.object.mode_set(mode='OBJECT')
+    assert np.allclose(child.data[1].co[:], basis.data[1].co[:], atol=1e-6)
+
+    # 混合强度：替换按比例向来源键插值，加/减按倍数叠加位移，强度 0 保持不动。
+    child.data[1].co = basis.data[1].co.copy()
+    select_vertices(obj, (1,))
+    assert bpy.ops.ho.remove_selected_vertices_in_activeshapekey(
+        "EXEC_DEFAULT", shape_key="NestedSource", algorithm='ADD',
+        blend=0.5) == {'FINISHED'}
+    bpy.ops.object.mode_set(mode='OBJECT')
+    # (0.1, 0, 0) + 0.5 * (0, 2, 5)
+    assert np.allclose(child.data[1].co[:], (0.1, 1.0, 2.5), atol=1e-6)
+
+    select_vertices(obj, (1,))
+    assert bpy.ops.ho.remove_selected_vertices_in_activeshapekey(
+        "EXEC_DEFAULT", shape_key="NestedSource", algorithm='ADD',
+        blend=0.0) == {'FINISHED'}
+    bpy.ops.object.mode_set(mode='OBJECT')
+    assert np.allclose(child.data[1].co[:], (0.1, 1.0, 2.5), atol=1e-6)
+
+    child.data[2].co = (0.2, -0.25, 0.0)
+    select_vertices(obj, (2,))
+    assert bpy.ops.ho.remove_selected_vertices_in_activeshapekey(
+        "EXEC_DEFAULT", shape_key="Source", algorithm='REPLACE',
+        blend=0.25) == {'FINISHED'}
+    bpy.ops.object.mode_set(mode='OBJECT')
+    # (0.2, -0.25, 0) + 0.25 * ((0.2, 2, 3) - (0.2, -0.25, 0))
+    assert np.allclose(child.data[2].co[:], (0.2, 0.3125, 0.75), atol=1e-6)
 
     # 零相对位移经过平滑后仍应严格等于 Parent；若错误使用 Basis，此处会改坏 Parent 形状。
     smooth = obj.shape_key_add(name="Smooth", from_mix=False)
