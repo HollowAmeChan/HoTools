@@ -910,7 +910,7 @@ class HO_OT_omninode_fetch_extension(bpy.types.Operator):
     bl_idname = "ho.omninode_fetch_extension"
     bl_label = "从 GitHub 下载并安装扩展"
     bl_description = (
-        "从扩展仓库的最新 Release 下载与本机 Blender 匹配的安装包"
+        "从物理世界扩展仓库的最新 Release 下载与本机 Blender 匹配的安装包"
         "（Blender 4.5 → py311，5.x → py313）并安装"
     )
 

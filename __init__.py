@@ -564,7 +564,7 @@ class AddonPreference(bpy.types.AddonPreferences):
             # （Blender 4.5 → py311，5.x → py313），装完自动启用。
             install_row.operator(
                 'ho.omninode_fetch_extension',
-                text='下载并安装扩展',
+                text='',
                 icon='URL')
             install_row.operator(
                 'ho.omninode_install_extension', text='', icon='IMPORT')
