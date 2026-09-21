@@ -210,6 +210,9 @@ def reset_export_undo():
 class FBXExporter:
     UNITY_METADATA_DIRECTORY = "HoFBX"
     CURVE_OBJECT_TYPES = {"CURVE"}
+    # 内置导出只带走这两类物体（getParams 的 object_types）。导出范围告警也按它过滤，
+    # 否则选中的空物体/未网格化的曲线会被误报成“脱离导出范围”。
+    EXPORT_OBJECT_TYPES = {"MESH", "ARMATURE"}
 
     @staticmethod
     def unity_metadata_directory(fbx_filepath):
@@ -2002,7 +2005,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             "use_selection": True,
             "use_visible": False,
             "use_active_collection": False,
-            "object_types": {'MESH', 'ARMATURE'},
+            "object_types": set(FBXExporter.EXPORT_OBJECT_TYPES),
             # 单位/变换：单位全部应用
             "global_scale": 1.0,
             "apply_unit_scale": True,
@@ -2451,10 +2454,14 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             # 网格会走 ho.apply_armature_modifiers_keepshapekeys）。这类步骤一旦让副本拿不到原名，
             # 后面按名字跟踪的步骤就会把它从导出范围里丢掉——FBX 里整个物体消失且毫无提示。
             # 这里显式对比一次，把静默丢物体变成可见告警。
+            # 注意：selected_objects 是 Object 的列表，不能拿字符串去 in（永远 False，会全员误报）；
+            # 而且内置导出按 object_types 过滤，非 MESH/ARMATURE 的物体本来就不导出，不该报警。
+            exported_names = {item.name for item in bpy.context.selected_objects}
             vanished = [
                 ob.name
                 for ob in selection
-                if ob.name not in bpy.context.selected_objects
+                if ob.type in FBXExporter.EXPORT_OBJECT_TYPES
+                and ob.name not in exported_names
             ]
             if vanished:
                 print(
