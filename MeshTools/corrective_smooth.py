@@ -11,7 +11,11 @@ float32 precision.  Key facts that are easy to get wrong:
   the *current* tangent frame (``T_rest`` forward, ``T_cur`` inverse).  Swapping
   those two breaks rigid-motion invariance.
 * ``Original Coords`` reads the mesh datablock, so with shape keys the natural
-  reference is the Basis while the edit cage holds the active shape key.
+  reference is the Basis while the edit cage holds the active shape key.  Note
+  that ``mesh.vertices`` is frozen while you stay in edit mode, so it is only a
+  valid reference when a *non-Basis* shape key is being edited; the operator
+  checks that structurally rather than by comparing coordinates, otherwise a
+  cage moved by another tool in the same session would make it rebound.
 * delta-mush is exact when rest == deformed, so editing the Basis (or a mesh
   without shape keys) has nothing to correct and the operator refuses to run.
 
@@ -444,8 +448,8 @@ class HO_OT_LocalCorrectiveSmooth(bpy.types.Operator):
         layout.prop(self, "scale")
         layout.prop(self, "smooth_type")
         layout.prop(self, "anchor_selection")
-        layout.label(text="参考坐标：网格基础坐标（形态键 Basis）")
-        layout.label(text="参考与当前相同时：细节=1 无变化，细节=0 等于局部平滑")
+        layout.label(text="参考坐标：网格基础坐标（需要形态键，且当前编辑的不是 Basis）")
+        layout.label(text="形态键与 Basis 相同时：细节=1 无变化，细节=0 等于局部平滑")
 
     # -- HUD ---------------------------------------------------------------
 
@@ -516,6 +520,37 @@ class HO_OT_LocalCorrectiveSmooth(bpy.types.Operator):
         bm = bmesh.from_edit_mesh(active.data)
         bm.verts.ensure_lookup_table()
         self._degenerate = False
+
+        # While you stay in edit mode, `mesh.vertices` does NOT follow the edit
+        # cage: it is a snapshot frozen at the moment edit mode was entered (the
+        # shape key blocks are frozen too).  So the *only* state for which it is
+        # a valid reference is the Basis of a mesh with shape keys, viewed while
+        # a non-Basis key is being edited.  In every other case "Original
+        # Coords" would merely be an older copy of the same geometry, and the
+        # delta computed against it springs the mesh back to that snapshot.
+        #
+        # This is invisible when the operator is used on its own (the snapshot
+        # still equals the cage, so the result is the identity), but as soon as
+        # another smoothing tool moves the cage in the same edit session the
+        # reference silently diverges and the mesh rebounds.  Hence a structural
+        # test instead of comparing the coordinates.
+        keys = active.data.shape_keys
+        key_index = getattr(active, "active_shape_key_index", 0)
+        if keys is None:
+            self.report(
+                {'WARNING'},
+                "网格没有形态键：网格基础坐标就是当前编辑的几何本身，没有第二份"
+                "参考坐标。请改用松弛 / 奇异点平滑，或先添加形态键",
+            )
+            return None, None
+        if key_index == 0:
+            self.report(
+                {'WARNING'},
+                "正在编辑 Basis：参考坐标就是当前几何本身。"
+                "请切换到 Basis 之外的那条形态键",
+            )
+            return None, None
+
         try:
             solver = _DeltaMushSolver(active)
         except RuntimeError as exc:
@@ -525,23 +560,38 @@ class HO_OT_LocalCorrectiveSmooth(bpy.types.Operator):
             self.report({'WARNING'}, "请先选择要做矫正平滑的顶点")
             return None, None
         if solver.reference_delta() <= 1.0e-9:
-            # Matches the modifier, which has no rest==deformed guard: the
-            # correction collapses to ``P - S_P``, so ``scale`` still controls
-            # the result (1 = identity, 0 = plain smooth, 2 = overshoot).
-            # Report a hint instead of refusing to run.
+            # A genuine reference that happens to equal the cage: correct, but
+            # the result is the identity unless `scale` is moved off 1.
             self._degenerate = True
             self.report(
                 {'INFO'},
-                "参考坐标与当前坐标相同（没有形态键，或正在编辑 Basis）："
-                "细节=1 时结果与原网格一致，细节=0 时相当于局部平滑",
+                "当前形态键与 Basis 完全相同：细节=1 时结果不变，"
+                "细节=0 时相当于局部平滑",
             )
         return bm, solver
 
     def _write(self, context, target):
-        _write_coords(self._bm.verts, target)
-        self._bm.normal_update()
+        # The edit BMesh can be recreated behind our back (a mode switch, an
+        # undo, another operator on the same object, an F9 repeat).  Cached
+        # element references then point at removed data -- the same trap
+        # `edge_flow._refresh_bmeshes` documents -- so re-acquire it every time.
+        # Edit mode preserves vertex order, so index based writes stay valid and
+        # the cached base coordinates remain meaningful.
+        obj = self._obj
+        if obj is None:
+            raise RuntimeError("对象已失效")
+        if getattr(obj, "mode", None) != 'EDIT':
+            raise RuntimeError("对象已不在编辑模式")
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        if len(bm.verts) != len(target):
+            raise RuntimeError(
+                "网格顶点数已变化（%d -> %d），无法写回" % (len(target), len(bm.verts)))
+        _write_coords(bm.verts, target)
+        bm.normal_update()
         bmesh.update_edit_mesh(
-            self._obj.data, loop_triangles=False, destructive=False)
+            obj.data, loop_triangles=False, destructive=False)
+        self._bm = bm
         self._tag_redraw(context)
 
     def _apply(self, context):
@@ -561,8 +611,10 @@ class HO_OT_LocalCorrectiveSmooth(bpy.types.Operator):
         try:
             self._write(context, self._solver.original)
         except (AttributeError, RuntimeError, TypeError, ValueError,
-                ReferenceError):
-            pass
+                ReferenceError) as error:
+            # Never fail mute: the preview may still be applied, so the user has
+            # to know that cancelling did not restore the mesh.
+            self.report({'WARNING'}, f"取消时未能还原网格: {error}")
         self._remove_hud()
         self._tag_redraw(context)
         return {'CANCELLED'}

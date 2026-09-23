@@ -129,6 +129,50 @@ def _get_edge_loops(bm, edges):
     return result
 
 
+def _opposite_edge_pairs(vert, edge_set):
+    """Pair a vertex's selected edges into the most nearly opposite pairs.
+
+    Used by the vertex-only domain, where the selection is a *star* rather than
+    a loop.  Each pair becomes a two-edge straight-through path, so
+    ``set_linear`` makes the pairs collinear and ``set_curve_flow`` re-places the
+    centre vertex along a curve through the pair.  The pairing is geometric
+    (most anti-parallel first) rather than traversal based, so it stays
+    predictable on a valence != 4 vertex.  An odd edge is simply left alone.
+    """
+    incident = [edge for edge in vert.link_edges if edge in edge_set]
+    directions = []
+    for edge in incident:
+        delta = edge.other_vert(vert).co - vert.co
+        directions.append(delta.normalized() if delta.length else delta)
+
+    remaining = list(range(len(incident)))
+    pairs = []
+    while len(remaining) >= 2:
+        best_pair = None
+        best_score = None
+        for first in range(len(remaining)):
+            for second in range(first + 1, len(remaining)):
+                a, b = remaining[first], remaining[second]
+                score = directions[a].dot(directions[b])
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_pair = (a, b)
+        a, b = best_pair
+        pairs.append((incident[a], incident[b]))
+        remaining = [index for index in remaining if index not in best_pair]
+    return pairs
+
+
+def _vertex_domain_loops(bm, verts, edges):
+    """Build the straight-through pair loops for a vertex-only selection."""
+    edge_set = set(edges)
+    loops = []
+    for vert in verts:
+        for first, second in _opposite_edge_pairs(vert, edge_set):
+            loops.append(_EdgeLoop(bm, [first, second]))
+    return loops
+
+
 def _map_segment_onto_spline(segment, positions):
     """Place segment vertices at equal arc-length intervals on a spline."""
     if len(segment) <= 2 or len(positions) < 2:
@@ -383,6 +427,7 @@ class _SetEdgeLoopBase:
         self._bmeshes = {}
         self._edgeloops = {}
         self._edge_keys = {}
+        self._vertex_nodes = {}
         self._initial_positions = {}
         for obj in selected:
             if obj.type != 'MESH' or obj.mode != 'EDIT':
@@ -393,12 +438,27 @@ class _SetEdgeLoopBase:
             bm.edges.ensure_lookup_table()
             bm.edges.index_update()
             edges = [edge for edge in bm.edges if edge.select]
+            vertices = ()
             if not edges:
-                continue
-            loops = _get_edge_loops(bm, edges)
+                # Blender only flags an edge as selected when *both* ends are
+                # selected, so a lone vertex leaves zero selected edges.  Fall
+                # back to the selected vertices' own edges; the two domains are
+                # mutually exclusive, an edge selection always wins.
+                vertices = tuple(
+                    vert for vert in bm.verts if vert.select and not vert.hide)
+                edges = sorted(
+                    {edge for vert in vertices for edge in vert.link_edges},
+                    key=lambda edge: edge.index,
+                )
+                if not edges:
+                    continue
             self._objects.append(obj)
             self._bmeshes[obj] = bm
-            self._edgeloops[obj] = loops
+            self._vertex_nodes[obj] = tuple(vert.index for vert in vertices)
+            self._edgeloops[obj] = (
+                _vertex_domain_loops(bm, vertices, edges) if vertices
+                else _get_edge_loops(bm, edges)
+            )
             self._edge_keys[obj] = [
                 tuple(sorted(vertex.index for vertex in edge.verts))
                 for edge in edges
@@ -442,7 +502,7 @@ class _SetEdgeLoopBase:
             if not edges or len(edges) != len(edge_keys):
                 continue
 
-            loops = _get_edge_loops(bm, edges)
+            loops = self._build_loops(obj, bm, edges)
             initial_positions = self._initial_positions[obj]
             for loop in loops:
                 loop.initial_vert_positions = [
@@ -454,6 +514,49 @@ class _SetEdgeLoopBase:
 
         self._bmeshes = bmeshes
         self._edgeloops = edgeloops
+
+    def _build_loops(self, obj, bm, edges):
+        """Vertex-only selections become straight-through pairs, edge
+        selections become loops."""
+        indices = self._vertex_nodes.get(obj, ())
+        vertices = tuple(
+            bm.verts[index] for index in indices if 0 <= index < len(bm.verts))
+        if vertices:
+            return _vertex_domain_loops(bm, vertices, edges)
+        return _get_edge_loops(bm, edges)
+
+    def _prepare_and_check(self, context):
+        """Prepare (or rebind) the selection; report instead of failing mute."""
+        if not getattr(self, "_prepared", False):
+            self._prepare(context)
+        else:
+            self._refresh_bmeshes()
+        if not self._edgeloops:
+            self.report(
+                {'WARNING'},
+                "请先选择边环；或只选中顶点，以处理它们周围的边",
+            )
+            return False
+        return True
+
+    def _report_if_unchanged(self):
+        """Tell the user when the selection produced no movement at all.
+
+        A single-edge "loop" (what selecting one face produces) is skipped by
+        the linear and curve transforms, which used to look like a silent
+        failure because ``execute`` always reported success.
+        """
+        for obj, loops in self._edgeloops.items():
+            initial = self._initial_positions.get(obj, {})
+            for loop in loops:
+                for vertex in loop.verts:
+                    before = initial.get(vertex.index)
+                    if before is not None and (vertex.co - before).length > 1.0e-9:
+                        return
+        self.report(
+            {'INFO'},
+            "所选边环无需调整（只有一条边的环不会被直线/曲线处理）",
+        )
 
     def _reset_positions(self):
         for obj, bm in self._bmeshes.items():
@@ -534,10 +637,8 @@ class HO_OT_SetEdgeFlow(bpy.types.Operator, _SetEdgeLoopBase):
         layout.prop(self, "blend_type", expand=True)
 
     def execute(self, context):
-        if not getattr(self, "_prepared", False):
-            self._prepare(context)
-        else:
-            self._refresh_bmeshes()
+        if not self._prepare_and_check(context):
+            return {'CANCELLED'}
         self._reset_positions()
         for obj, loops in self._edgeloops.items():
             for _ in range(self.iterations):
@@ -556,6 +657,7 @@ class HO_OT_SetEdgeFlow(bpy.types.Operator, _SetEdgeLoopBase):
         self._apply_mix()
         for obj in self._bmeshes:
             bmesh.update_edit_mesh(obj.data, destructive=False)
+        self._report_if_unchanged()
         return {'FINISHED'}
 
 
@@ -644,10 +746,8 @@ class HO_OT_SetEdgeCurve(bpy.types.Operator, _SetEdgeLoopBase):
             column.prop(self, "rail_end_factor")
 
     def execute(self, context):
-        if not getattr(self, "_prepared", False):
-            self._prepare(context)
-        else:
-            self._refresh_bmeshes()
+        if not self._prepare_and_check(context):
+            return {'CANCELLED'}
         self._reset_positions()
         for obj, loops in self._edgeloops.items():
             for loop in loops:
@@ -661,6 +761,7 @@ class HO_OT_SetEdgeCurve(bpy.types.Operator, _SetEdgeLoopBase):
         self._apply_mix()
         for obj in self._bmeshes:
             bmesh.update_edit_mesh(obj.data, destructive=False)
+        self._report_if_unchanged()
         return {'FINISHED'}
 
 
@@ -682,10 +783,8 @@ class HO_OT_SetEdgeLinear(bpy.types.Operator, _SetEdgeLoopBase):
         layout.prop(self, "space_evenly")
 
     def execute(self, context):
-        if not getattr(self, "_prepared", False):
-            self._prepare(context)
-        else:
-            self._refresh_bmeshes()
+        if not self._prepare_and_check(context):
+            return {'CANCELLED'}
         self._reset_positions()
         for obj, loops in self._edgeloops.items():
             for loop in loops:
@@ -695,6 +794,7 @@ class HO_OT_SetEdgeLinear(bpy.types.Operator, _SetEdgeLoopBase):
         self._apply_mix()
         for obj in self._bmeshes:
             bmesh.update_edit_mesh(obj.data, destructive=False)
+        self._report_if_unchanged()
         return {'FINISHED'}
 
 

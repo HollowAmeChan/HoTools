@@ -507,10 +507,25 @@ class HO_OT_MeshSingularitySmooth(bpy.types.Operator):
         return bm, solver
 
     def _write(self, context, target):
-        _write_coords(self._bm.verts, target)
-        self._bm.normal_update()
+        # The edit BMesh can be recreated behind our back (mode switch, undo,
+        # another operator, F9 repeat); cached element references then point at
+        # removed data, so re-acquire it every time.  Edit mode preserves vertex
+        # order, so index based writes and the cached arrays stay valid.
+        obj = self._obj
+        if obj is None:
+            raise RuntimeError("对象已失效")
+        if getattr(obj, "mode", None) != 'EDIT':
+            raise RuntimeError("对象已不在编辑模式")
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        if len(bm.verts) != len(target):
+            raise RuntimeError(
+                "网格顶点数已变化（%d -> %d），无法写回" % (len(target), len(bm.verts)))
+        _write_coords(bm.verts, target)
+        bm.normal_update()
         bmesh.update_edit_mesh(
-            self._obj.data, loop_triangles=False, destructive=False)
+            obj.data, loop_triangles=False, destructive=False)
+        self._bm = bm
         self._tag_redraw(context)
 
     def _apply(self, context):
@@ -530,8 +545,9 @@ class HO_OT_MeshSingularitySmooth(bpy.types.Operator):
         try:
             self._write(context, self._solver.original)
         except (AttributeError, RuntimeError, TypeError, ValueError,
-                ReferenceError):
-            pass
+                ReferenceError) as error:
+            # Never fail mute: the preview may still be applied.
+            self.report({'WARNING'}, f"取消时未能还原网格: {error}")
         self._remove_hud()
         self._tag_redraw(context)
         return {'CANCELLED'}
