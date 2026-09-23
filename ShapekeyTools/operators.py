@@ -1316,6 +1316,216 @@ class OP_AddShapekeysByTemplate(Operator):
         # 弹出对话框让用户选择形态键列表
         return context.window_manager.invoke_props_dialog(self)
 
+
+class OP_AddShapekeyMatrix(Operator):
+    """快速生成 n×n 的形态键矩阵（2D 混合树用的方阵）"""
+
+    bl_idname = "ho.add_shapekey_matrix"
+    bl_label = "快速添加矩阵键"
+    bl_description = (
+        "按「树名__X轴语义__Y轴语义__A刻度X坐标Y坐标」的规范，"
+        "一次性生成 n×n 的形态键方阵（坐标左下为原点、从 0 起）"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    SEPARATOR = "__"
+
+    tree: StringProperty(
+        name="树名",
+        description=(
+            "矩阵的名字段；左右两棵树除了名字完全一样，不带侧就会重名"
+            "（例：LidL / Mouth）"
+        ),
+        default="",
+    )  # type: ignore
+    axis_x: StringProperty(
+        name="X 轴语义",
+        description="横轴语义，正端在前（例：开合「闭 / 睁大」写作 BlinkWide）",
+        default="H",
+    )  # type: ignore
+    axis_y: StringProperty(
+        name="Y 轴语义",
+        description="纵轴语义，正端在前（例：单端的「眯眼」写作 Squint）",
+        default="V",
+    )  # type: ignore
+    scales: IntProperty(
+        name="刻度",
+        description=(
+            "方阵每轴的刻度数（必定方形）：3 档 = 3×3，中间刻度就是中线"
+        ),
+        default=3,
+        min=1,
+        soft_max=9,
+        max=32,
+    )  # type: ignore
+    value: FloatProperty(
+        name="键值",
+        description="写进本批矩阵键的 key 值（键本身仍是空形变，数值留给你自己调）",
+        default=0.0,
+        soft_min=0.0,
+        soft_max=100.0,
+        precision=2,
+    )  # type: ignore
+    overwrite: BoolProperty(
+        name="覆盖已有",
+        description="同名形态键已存在时：勾上=清回基础键形状重新生成，不勾=跳过",
+        default=False,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == 'MESH'
+
+    # -- 取名规则 --------------------------------------------------------
+    @classmethod
+    def parse_matrix_name(cls, name):
+        """从 ``<树>__<x>__<y>__A<刻度>X<n>Y<n>`` 拆出各段。
+
+        返回 ``(树, X 语义, Y 语义, 刻度, X 坐标, Y 坐标)``；不合规返回 ``None``。
+        刻度是**每轴**的，矩阵必定方形。
+        """
+        parts = str(name or "").split(cls.SEPARATOR)
+        if len(parts) != 4:
+            return None
+        tree, axis_x, axis_y, grid = parts
+        if not (tree and axis_x and axis_y):
+            return None
+        if not grid.startswith("A") or "X" not in grid or "Y" not in grid:
+            return None
+        grid_part, rest = grid.split("X", 1)
+        coordinate_x, _separator, coordinate_y = rest.partition("Y")
+        try:
+            scales = int(grid_part[1:])
+        except ValueError:
+            return None
+        if scales <= 0 or not coordinate_x or not coordinate_y:
+            return None
+        return (tree, axis_x, axis_y, scales, coordinate_x, coordinate_y)
+
+    @classmethod
+    def assign_matrix_name(cls, tree, axis_x, axis_y, scales, column, row):
+        """按规范拼一个名字：坐标从 0 起、左下为原点、永不出现负号。"""
+        return cls.SEPARATOR.join((
+            tree, axis_x, axis_y, f"A{scales}X{column}Y{row}",
+        ))
+
+    @classmethod
+    def matrix_names(cls, tree, axis_x, axis_y, scales):
+        """方阵：按左下起、行优先（先左右后上下）产出全部 ``(列, 行, 名字)``。"""
+        names = []
+        for row in range(scales):
+            for column in range(scales):
+                names.append((
+                    column, row,
+                    cls.assign_matrix_name(
+                        tree, axis_x, axis_y, scales, column, row),
+                ))
+        return names
+
+    # -- 从活动键预填 ----------------------------------------------------
+    def _prefill_from_active(self, context):
+        """活动键符合矩阵命名规则时，照它预填树名、轴语义与方阵刻度。"""
+        obj = context.object
+        if obj is None or obj.type != 'MESH' or not obj.data.shape_keys:
+            return False
+        active = obj.active_shape_key
+        name = active.name if active is not None else ""
+        data = self.parse_matrix_name(name)
+        if data is None:
+            # 不合规范：整名当树名，轴语义保持默认
+            self.tree = name or "Matrix"
+            return False
+        tree, axis_x, axis_y, scales, _coordinate_x, _coordinate_y = data
+        self.tree = tree
+        self.axis_x = axis_x
+        self.axis_y = axis_y
+        self.scales = scales
+        return True
+
+    # -- 弹窗与生成 ------------------------------------------------------
+    def invoke(self, context, event):
+        self._prefill_from_active(context)
+        return context.window_manager.invoke_props_dialog(self, width=400)
+
+    def draw(self, context):
+        layout: UILayout = self.layout
+        column = layout.column(align=True)
+        column.prop(self, "tree", icon="SORTALPHA")
+        axes = column.row(align=True)
+        axes.prop(self, "axis_x", text="")
+        axes.prop(self, "axis_y", text="")
+        column.prop(self, "scales")
+        column.prop(self, "value")
+        column.prop(self, "overwrite")
+        column.separator()
+        note = column.row()
+        note.enabled = False
+        note.label(text=f"将生成 {self.scales * self.scales} 个键"
+                        f"（{self.scales}×{self.scales} 方阵）："
+                        f"X0..X{max(0, self.scales - 1)} / "
+                        f"Y0..Y{max(0, self.scales - 1)}")
+
+    def execute(self, context):
+        obj = context.object
+        if obj is None or obj.type != 'MESH':
+            self.report({'ERROR'}, "请选中一个网格物体")
+            return {'CANCELLED'}
+        tree = self.tree.strip()
+        axis_x = self.axis_x.strip()
+        axis_y = self.axis_y.strip()
+        if not (tree and axis_x and axis_y):
+            self.report({'ERROR'}, "树名与两根轴语义都要填")
+            return {'CANCELLED'}
+        if any(self.SEPARATOR in part for part in (tree, axis_x, axis_y)):
+            self.report({'ERROR'}, f"名字里不要出现 {self.SEPARATOR}")
+            return {'CANCELLED'}
+
+        if not obj.data.shape_keys:
+            shapekey_utils.ensure_basis_shape_key(obj)
+        shape_keys = obj.data.shape_keys
+        keys = shape_keys.key_blocks
+        basis = shape_keys.reference_key
+
+        created, overwritten, skipped = [], [], []
+        for _column, _row, name in self.matrix_names(
+                tree, axis_x, axis_y, self.scales):
+            existing = keys.get(name)
+            if existing is not None:
+                if not self.overwrite:
+                    skipped.append(name)
+                    continue
+                # 覆盖：接回基础键、清回基础形状，再写回键值
+                try:
+                    existing.relative_key = basis
+                    shapekey_utils.copy_shape_key_positions(basis, existing)
+                except shapekey_utils.ShapeKeyUtilsError as exc:
+                    self.report({'WARNING'}, f"{name} 覆盖失败：{exc}")
+                    skipped.append(name)
+                    continue
+                existing.value = self.value
+                overwritten.append(name)
+                continue
+            new_key = obj.shape_key_add(name=name, from_mix=False)
+            new_key.value = self.value
+            created.append(name)
+
+        if not (created or overwritten):
+            self.report({'WARNING'},
+                        f"没有新建任何键（{len(skipped)} 个已存在，未勾选覆盖）")
+            return {'CANCELLED'}
+
+        if created:
+            obj.active_shape_key_index = keys.find(created[0])
+        message = f"生成 {len(created)} 个矩阵键（{self.scales}×{self.scales} 方阵）"
+        if overwritten:
+            message += f"，覆盖 {len(overwritten)} 个"
+        if skipped:
+            message += f"，跳过已存在 {len(skipped)} 个"
+        self.report({'INFO'}, message)
+        return {'FINISHED'}
+
+
 class OP_ShapekeyTools_copyShapekey2ShearPlate(Operator):
     bl_idname = "ho.shapekeytools_copyshapekey2shearplate"
     bl_label = "复制形态键到剪切板"
@@ -2504,6 +2714,7 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
     layout.operator(OP_RemoveEmptyShapekeys.bl_idname,text="删除空键",icon="X")
     layout.operator(OP_deleteUnusingShapeKeys.bl_idname,icon="X")
     layout.operator(OP_AddShapekeysByTemplate.bl_idname,icon="ADD")
+    layout.operator(OP_AddShapekeyMatrix.bl_idname,icon="MESH_GRID")
     layout.operator(OP_ShapekeyTools_CopyList2selectedObjects.bl_idname,icon="FORWARD")
     layout.operator(OP_ShapekeyTools_Apply_ActiveShapekey2Basis.bl_idname,icon="KEY_HLT")
     
@@ -2729,6 +2940,7 @@ cls = [PG_ShapeKeyTools_ListenerCache,
     OP_ClearAllShapekeyValue, OP_SetBasisShapekeyActive,
     OP_applyShowingModifiersKeepShapekeys, OP_ApplyArmatureModifiersKeepShapekeys,
     OP_deleteUnusingShapeKeys, OP_AddShapekeysByTemplate,
+    OP_AddShapekeyMatrix,
     OP_ShapekeyTools_copyShapekey2ShearPlate,OP_ShapekeyTools_importShapekeyFromShearPlate,
     OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add,OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub,
     OP_ShapekeyTools_copyPartialRelativeShapekey2ShearPlate,

@@ -1,4 +1,4 @@
-"""形态键混合矩阵调试页的界面（左右两个工作区）。
+﻿"""形态键混合矩阵调试页的界面（左右两个工作区）。
 
 布局：
 
@@ -153,23 +153,24 @@ class HO_UL_ShapekeyTools_BlendPoints(UIList):
         pick.alignment = 'RIGHT'
         pick.menu(HO_MT_ShapekeyTools_BlendPointKey.bl_idname,
                   text="", icon='DOWNARROW_HLT')
+        pick.ui_units_x = 1
 
         # 键值：当前权重
         value = row.row(align=True)
         value.alignment = 'RIGHT'
-        value.ui_units_x = 3.5
+        value.ui_units_x = 2
         value.label(text=f"{weight:.3f}")
 
-        # 控制点位置：只读显示
-        position = row.row(align=True)
-        position.alignment = 'RIGHT'
-        position.ui_units_x = 8.0
-        position.label(text=f"{item.u:.3f}, {item.v:.3f}")
+        # # 控制点位置：只读显示
+        # position = row.row(align=True)
+        # position.alignment = 'RIGHT'
+        # position.ui_units_x = 1
+        # position.label(text=f"{item.u:.3f}, {item.v:.3f}")
 
-        # 跳到该点位
-        jump = row.operator(
-            OP_ShapekeyTools_BlendJumpToPoint.bl_idname, text="", icon='EYEDROPPER')
-        jump.index = index
+        # # 跳到该点位
+        # jump = row.operator(
+        #     OP_ShapekeyTools_BlendJumpToPoint.bl_idname, text="", icon='EYEDROPPER')
+        # jump.index = index
 
 
 class HO_UL_ShapekeyTools_BlendObjects(UIList):
@@ -380,7 +381,7 @@ def _draw_points(layout: UILayout, context: Context, item) -> None:
     index = max(0, min(item.point_index, len(item.points) - 1))
     point = item.points[index]
     edit = box.row(align=True)
-    edit.label(text=f"#{index + 1}")
+    edit.label(text=f"#{index + 1}-{point.shape_key}")
     edit.prop(point, "u", text=item.u_name[:6] or "U")
     edit.prop(point, "v", text=item.v_name[:6] or "V")
     edit.operator(
