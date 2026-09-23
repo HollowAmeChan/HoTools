@@ -113,10 +113,10 @@ class BlendApplyReport:
     def __init__(self):
         self.objects = 0
         self.written = 0
+        self.zeroed = 0
         self.missing_keys = []
         self.failed = []
         self.skipped_objects = []
-        self.muted = []
 
     @property
     def total(self) -> int:
@@ -124,13 +124,13 @@ class BlendApplyReport:
 
     def summary(self) -> str:
         parts = [f"写入 {self.written} 个形态键 / {self.objects} 个物体"]
+        if self.zeroed:
+            parts.append(f"其他键归零 {self.zeroed}")
         if self.missing_keys:
             names = "、".join(sorted(set(self.missing_keys))[:4])
             parts.append(f"缺少形态键：{names}")
         if self.skipped_objects:
             parts.append(f"跳过 {len(self.skipped_objects)} 个无效物体")
-        if self.muted:
-            parts.append(f"静音 {self.muted[0]}")
         if self.failed:
             parts.append(f"失败 {len(self.failed)}：{self.failed[0]}")
         return "；".join(parts)
@@ -140,7 +140,9 @@ def apply_weights(context, item, report=None) -> BlendApplyReport:
     """把当前权重写进操作物体的形态键。
 
     与 Unity 混合树一致的口径：权重按坐标求解，再作为各形态键的 value 写入。
-    ``ho_bs_mute_others`` 打开时，矩阵之外的形态键会被静音，保证预览与矩阵一致。
+    ``ho_bs_mute_others``（面板上的「关闭其他」）打开时，**没进矩阵的形态键一律归零**：
+    不管是列表里没有的键，还是这个物体上矩阵没覆盖到的键，都清成 0，
+    这样预览结果只由矩阵决定。
     """
     if report is None:
         report = BlendApplyReport()
@@ -151,7 +153,7 @@ def apply_weights(context, item, report=None) -> BlendApplyReport:
     if not pairs:
         return report
 
-    mute_others = bool(getattr(context.scene, "ho_bs_mute_others", False))
+    zero_others = bool(getattr(context.scene, "ho_bs_mute_others", False))
     matrix_names = {name for name, _weight in pairs}
     for obj in resolve_item_objects(item, context):
         shape_keys = getattr(obj.data, "shape_keys", None)
@@ -162,16 +164,13 @@ def apply_weights(context, item, report=None) -> BlendApplyReport:
         basis = shape_keys.reference_key
         report.objects += 1
 
-        if mute_others:
-            hidden = 0
+        if zero_others:
             for key in key_blocks:
                 if key == basis or key.name in matrix_names:
                     continue
-                if not key.mute:
-                    key.mute = True
-                hidden += 1
-            if hidden:
-                report.muted.append(f"{obj.name} {hidden} 个键")
+                if key.value != 0.0:
+                    key.value = 0.0
+                    report.zeroed += 1
 
         for name, weight in pairs:
             key = key_blocks.get(name)

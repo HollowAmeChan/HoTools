@@ -72,6 +72,7 @@ for operator_id in (
     "shapekeytools_blend_debug_remove",
     "shapekeytools_blend_debug_clear",
     "shapekeytools_blend_point_add_active",
+    "shapekeytools_blend_point_append_active",
     "shapekeytools_blend_point_remove",
     "shapekeytools_blend_point_reorder",
     "shapekeytools_blend_point_nudge",
@@ -241,9 +242,42 @@ assert (moved.u, moved.v) == (-1.0, 1.0), "2×2 一步跨到另一侧"
 scratch.matrix_columns = scratch.matrix_rows = 1
 moved.u, moved.v = 0.0, 0.0
 assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=1, dv=0) == {'CANCELLED'}
+
+# ── 控键重复 / 控键数量溢出 ───────────────────────────────────────────────
+# 2×2 格点上塞 5 个点：4 个铺满格点，第 5 个只能贴在最后一个格点上 → 1 处重复、溢出 1
+scratch.points.clear()
+scratch.matrix_columns, scratch.matrix_rows = 2, 2
+assert store.count_overflow(scratch) == 0
+assert store.count_duplicate_points(scratch) == 0
+for slot in range(5):
+    extra = scratch.points.add()
+    extra.shape_key = f"O{slot}"
+bpy.context.scene.ho_bs_debug_index = len(bpy.context.scene.ho_bs_debug_items) - 1
+assert bpy.ops.ho.shapekeytools_blend_point_reorder() == {'FINISHED'}
+assert store.count_duplicate_points(scratch) == 1, "第 5 个点与第 4 个重合"
+assert store.count_overflow(scratch) == 1, "5 个控键超出 2×2=4 的格点数"
+# 把矩阵放大后需要再重排一次，点位才会落到新格点上（改大小不会自动动点位）
+scratch.matrix_columns, scratch.matrix_rows = 3, 2
+assert store.count_overflow(scratch) == 0, "溢出只看数量，放大后就没有了"
+assert store.count_duplicate_points(scratch) == 1, "改大小不会自动挪点位，仍然是重合的"
+assert bpy.ops.ho.shapekeytools_blend_point_reorder() == {'FINISHED'}
+assert store.count_duplicate_points(scratch) == 0, "重排后 5 个点各有独立格点"
+assert store.count_overflow(scratch) == 0
 bpy.context.scene.ho_bs_debug_items.remove(
     len(bpy.context.scene.ho_bs_debug_items) - 1)
 store.clamp_index(bpy.context.scene)
+
+# ── 从活动物体追加所有键 ──────────────────────────────────────────────────
+# item 此时有 Smile_L / Smile_R / Open 三个点，追加后应补上 Extra，且不重复
+bpy.context.view_layer.objects.active = face_a
+assert [point.shape_key for point in item.points] == ["Smile_L", "Smile_R", "Open"]
+assert bpy.ops.ho.shapekeytools_blend_point_append_active() == {'FINISHED'}
+assert [point.shape_key for point in item.points] == [
+    "Smile_L", "Smile_R", "Open", "Extra"], "只补没进矩阵的键"
+assert len(store.occupied_coordinates(item)) == 4, "每个点仍占独立格点"
+# 再点一次：全都已在矩阵里，算子应取消（不产生新点位 / 不产生 undo 步骤）
+assert bpy.ops.ho.shapekeytools_blend_point_append_active() == {'CANCELLED'}
+assert len(item.points) == 4
 
 # 加/减/清空：操作物体对象列表（行下标存在场景上，供 template_list 使用）
 face_b.select_set(True)
@@ -284,7 +318,9 @@ item.objects[0].object_name = face_a.name
 assert shapekey_utils.active_objects(item) == [face_a, face_b]
 
 # ── 权重求值与写入 ────────────────────────────────────────────────────────
-# 把三个点位摆成明确的三角形，权重才好算
+# 只留三个点，摆成明确的三角形，权重才好算
+while len(item.points) > 3:
+    item.points.remove(len(item.points) - 1)
 item.points[0].shape_key = "Smile_L"
 item.points[1].shape_key = "Smile_R"
 item.points[2].shape_key = "Open"
@@ -300,6 +336,9 @@ assert_close(weights[1], 1.0, message="右上角应完全取 Smile_R")
 assert_close(weights[0], 0.0)
 assert_close(weights[2], 0.0)
 
+# 先把矩阵外的键抬起来，验证「关闭其他」会把它归零
+face_a.data.shape_keys.key_blocks["Extra"].value = 0.7
+face_b.data.shape_keys.key_blocks["Extra"].value = 0.7
 report = blend_func.apply_weights(bpy.context, item)
 assert not report.failed, report.failed
 assert report.objects == 2
@@ -307,9 +346,19 @@ assert report.written == 6  # 3 个键 × 2 个物体
 assert_close(face_a.data.shape_keys.key_blocks["Smile_R"].value, 1.0)
 assert_close(face_b.data.shape_keys.key_blocks["Smile_R"].value, 1.0)
 assert_close(face_a.data.shape_keys.key_blocks["Smile_L"].value, 0.0)
-assert face_a.data.shape_keys.key_blocks["Extra"].mute is True, "矩阵外的键应被静音"
-assert face_a.data.shape_keys.key_blocks["Smile_L"].mute is False, "矩阵内的键不应被静音"
-assert face_a.data.shape_keys.key_blocks["Smile_R"].mute is False
+# 「关闭其他」= 没进矩阵的键值全部归零（不是静音）
+assert face_a.data.shape_keys.key_blocks["Extra"].value == 0.0, (
+    "矩阵外的键应该被归零")
+assert report.zeroed == 2, f"两个物体各归零 1 个键，实际 {report.zeroed}"
+assert face_a.data.shape_keys.key_blocks["Extra"].mute is False, "不再用静音实现"
+# 关掉这个开关后，矩阵外的键保持原值
+face_a.data.shape_keys.key_blocks["Extra"].value = 0.6
+bpy.context.scene.ho_bs_mute_others = False
+blend_func.apply_weights(bpy.context, item)
+assert_close(face_a.data.shape_keys.key_blocks["Extra"].value, 0.6), (
+    "关闭「关闭其他」时不该动矩阵外的键")
+bpy.context.scene.ho_bs_mute_others = True
+face_a.data.shape_keys.key_blocks["Extra"].value = 0.0
 
 # 中心点：三点矩阵的输入落在两个点上时权重均分
 item.cursor_u = 0.0

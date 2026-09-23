@@ -1,4 +1,4 @@
-﻿"""形态键混合矩阵调试页的界面（左右两个工作区）。
+"""形态键混合矩阵调试页的界面（左右两个工作区）。
 
 布局：
 
@@ -19,13 +19,11 @@ try:
     from . import blend_debug_store as _store
     from . import blend_overlay as _overlay
     from .blend_utils import blend_func as _func
-    from .blend_utils import point_layout as _layout
     from .blend_utils import shapekey_utils as _keys
 except ImportError:  # 兼容旧工具直接导入脚本
     import blend_debug_store as _store
     import blend_overlay as _overlay
     from blend_utils import blend_func as _func
-    from blend_utils import point_layout as _layout
     from blend_utils import shapekey_utils as _keys
 
 
@@ -342,10 +340,15 @@ def _draw_points(layout: UILayout, context: Context, item) -> None:
     header.label(text=f"{item.matrix_columns}×{item.matrix_rows} 栅格")
     header.label(text=f" ({len(item.points)}/{item.matrix_columns * item.matrix_rows})点位")
 
-    duplicates = _layout.duplicate_coordinate_groups(item) if len(item.points) > 1 else []
-    if duplicates:
+    # 控键重复：同一格点上挤了多个控键；控键数量溢出：点位比矩阵格点还多
+    duplicates = _store.count_duplicate_points(item)
+    overflow = _store.count_overflow(item)
+    if duplicates or overflow:
         header.alert = True
-        header.label(text=f"重合 {len(duplicates)} 处", icon='ERROR')
+        if duplicates:
+            header.label(text=f"控键重复 {duplicates} 处", icon='ERROR')
+        if overflow:
+            header.label(text=f"控键数量溢出 {overflow}", icon='ERROR')
         header.alert = False
 
     row = box.row(align=True)
@@ -361,6 +364,9 @@ def _draw_points(layout: UILayout, context: Context, item) -> None:
     column.operator(
         _store.OP_ShapekeyTools_BlendPointRemove.bl_idname, text="", icon='REMOVE')
     column.separator()
+    column.operator(
+        _store.OP_ShapekeyTools_BlendPointAppendFromActive.bl_idname,
+        text="", icon='IMPORT')
     column.operator(
         _store.OP_ShapekeyTools_BlendPointReorder.bl_idname, text="", icon='GRID')
 
@@ -414,7 +420,7 @@ def _draw_actions(layout: UILayout, context: Context, item) -> None:
 
     option = box.row(align=True)
     option.prop(scene, "ho_bs_apply_on_cursor", text="控点立刻更新", toggle=True)
-    option.prop(scene, "ho_bs_mute_others", text="关闭其他", toggle=True)
+    option.prop(scene, "ho_bs_mute_others", text="关闭其他（其他键归零）", toggle=True)
 
 
 def _draw_debug_actions(layout: UILayout, context: Context) -> None:

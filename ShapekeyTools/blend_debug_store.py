@@ -170,8 +170,11 @@ def reg_props():
     # “Writing to ID classes in this context is not allowed”，整个面板会从那里断掉。
     bpy.types.Scene.ho_bs_object_list = IntProperty(name="当前操作物体", default=0)
     bpy.types.Scene.ho_bs_mute_others = BoolProperty(
-        name="静音矩阵外的形态键",
-        description="应用权重时，把不在矩阵里的形态键临时静音（调试预览用）",
+        name="关闭其他",
+        description=(
+            "应用控制时，把没进矩阵的形态键值一律归零"
+            "（含列表里没有的键、以及该物体上矩阵没覆盖到的键），让预览只由矩阵决定"
+        ),
         default=True,
     )
     bpy.types.Scene.ho_bs_apply_on_cursor = BoolProperty(
@@ -362,6 +365,42 @@ def reorder_points_to_grid(item) -> int:
     return len(item.points)
 
 
+def count_overflow(item) -> int:
+    """控键数量溢出：点位比矩阵格点多了多少个（当前矩阵表达不了的点位数）。"""
+    if item is None:
+        return 0
+    return max(0, len(item.points) - matrix_cell_count(item))
+
+
+def count_duplicate_points(item) -> int:
+    """控键重复：坐标完全重合的点位有几处（同一格点上挤了多个控键）。
+
+    与 :func:`_layout.duplicate_coordinate_groups` 同源，这里只给界面一个总数。
+    """
+    if item is None:
+        return 0
+    return sum(len(group) - 1
+               for group in _layout.duplicate_coordinate_groups(item))
+
+
+def append_all_from_active(item, obj) -> int:
+    """把 ``obj`` 上还没进矩阵的形态键全部追加进来，返回新增数量。
+
+    新点位按矩阵格点顺序占空位；矩阵已满时后续点位会落到最后一个格点（界面提示溢出）。
+    """
+    if item is None or obj is None:
+        return 0
+    existing = {point.shape_key for point in item.points if point.shape_key}
+    added = 0
+    for name in _keys.shape_key_names(obj):
+        if name in existing:
+            continue
+        _append_point(item, name)
+        existing.add(name)
+        added += 1
+    return added
+
+
 def _append_point(item, name: str, *, u=None, v=None):
     """往矩阵里加一个坐标点；``u/v`` 为 ``None`` 时按矩阵格点自动占位。"""
     if u is None or v is None:
@@ -454,6 +493,45 @@ class OP_ShapekeyTools_BlendPointAddActive(Operator):
         except (AttributeError, ReferenceError, TypeError, ValueError):
             switched = "?"
         self.report({'INFO'}, f"已添加 {name}，活动键切到 {switched}")
+        return {'FINISHED'}
+
+
+class OP_ShapekeyTools_BlendPointAppendFromActive(Operator):
+    bl_idname = "ho.shapekeytools_blend_point_append_active"
+    bl_label = "追加活动物体所有键"
+    bl_description = (
+        "把当前活动物体上**还没进矩阵**的形态键全部追加到列表末尾（按矩阵格点占位），"
+        "已经在矩阵里的键不会重复添加"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        scene = context.scene
+        item = active_item(scene)
+        if item is None:
+            self.report({'WARNING'}, "请先新建一个调试矩阵")
+            return {'CANCELLED'}
+        obj = context.object
+        if not _keys.shape_key_names(obj):
+            self.report({'WARNING'}, "活动物体没有可用的形态键")
+            return {'CANCELLED'}
+
+        added = append_all_from_active(item, obj)
+        if not added:
+            self.report({'INFO'}, "活动物体的形态键都已经在矩阵里了")
+            return {'CANCELLED'}
+
+        if not item.objects:
+            before = len(item.objects)
+            if _keys.append_object(item, obj):
+                set_object_list_index(scene, before)
+
+        overflow = count_overflow(item)
+        if overflow:
+            self.report({'WARNING'},
+                        f"追加 {added} 个控键，已有 {overflow} 个超出矩阵格点")
+        else:
+            self.report({'INFO'}, f"已追加 {added} 个控键")
         return {'FINISHED'}
 
 
@@ -621,6 +699,7 @@ cls = [
     OP_ShapekeyTools_BlendDebugRemove,
     OP_ShapekeyTools_BlendDebugClear,
     OP_ShapekeyTools_BlendPointAddActive,
+    OP_ShapekeyTools_BlendPointAppendFromActive,
     OP_ShapekeyTools_BlendPointRemove,
     OP_ShapekeyTools_BlendPointReorder,
     OP_ShapekeyTools_BlendPointNudge,
