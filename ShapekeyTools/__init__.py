@@ -3,6 +3,7 @@ import bmesh
 from bpy.types import Panel
 
 from . import operators, transfer, manager, multiObjectFlow, rebase
+from . import blend_debug_store, blend_editor, blend_overlay
 
 
 def reg_props():
@@ -11,6 +12,7 @@ def reg_props():
         ('PANEL_SHAPEKEYTOOLS_MANAGER', "管理", ""),
         ('PANEL_SHAPEKEYTOOLS_TRANSFER', "传递", ""),
         ('PANEL_SHAPEKEYTOOLS_REBASE', "变基", ""),
+        ('PANEL_SHAPEKEYTOOLS_BLENDMATRIX', "混合矩阵", "n×n 表情矩阵的调试与混合"),
     ]
     bpy.types.Scene.ho_ShapekeyToolsPanel_Mod = bpy.props.EnumProperty(
         name="ShapekeyToolsPanelMod", items=enum_items)
@@ -44,6 +46,8 @@ class ShapekeyTools(Panel):
             manager.drawShapekeyManagerPanel(self.layout, context)
         if context.scene.ho_ShapekeyToolsPanel_Mod == "PANEL_SHAPEKEYTOOLS_REBASE":
             rebase.drawRebasePanel(self.layout, context)
+        if context.scene.ho_ShapekeyToolsPanel_Mod == "PANEL_SHAPEKEYTOOLS_BLENDMATRIX":
+            blend_editor.drawBlendPanel(self.layout, context)
 
 cls = [ShapekeyTools]
 # endregion
@@ -77,6 +81,9 @@ def register():
     manager.register()
     multiObjectFlow.register()
     rebase.register()
+    blend_debug_store.register()
+    blend_overlay.register()
+    blend_editor.register()
 
     for i in cls:
         bpy.utils.register_class(i)
@@ -90,6 +97,9 @@ def unregister():
     for i in reversed(cls):
         bpy.utils.unregister_class(i)
 
+    blend_editor.unregister()
+    blend_overlay.unregister()
+    blend_debug_store.unregister()
     rebase.unregister()
     multiObjectFlow.unregister()
     manager.unregister()
