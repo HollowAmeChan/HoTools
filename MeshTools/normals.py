@@ -205,11 +205,16 @@ class OP_MergeOverlapping_VertexNormals(Operator):
             self.report({"WARNING"}, "没有处于编辑模式的非活动网格物体")
             return {"CANCELLED"}
 
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+        # Read the selection *after* leaving edit mode.  While edit mode stays
+        # open, mesh.vertices -- including its select flags -- is frozen at the
+        # moment edit mode was entered, so reading it first would pick up the
+        # selection from the previous session.
         selected_target_indices = {
             vertex.index for vertex in active.data.vertices
             if vertex.select and not vertex.hide
         }
-        bpy.ops.object.mode_set(mode="OBJECT")
 
         source_items = []
         for obj in source_objects:

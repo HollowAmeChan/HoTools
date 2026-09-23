@@ -98,27 +98,30 @@ def _normalize_inplace(vectors):
     )
 
 
-def _loop_tables(mesh):
-    """Per-corner vertex, next-vertex and owning-face index arrays."""
-    loop_count = len(mesh.loops)
-    corner_verts = np.empty(loop_count, dtype=np.int32)
-    mesh.loops.foreach_get("vertex_index", corner_verts)
-    corner_verts = corner_verts.astype(np.int64)
+def _loop_tables(bm):
+    """Per-corner vertex, next-vertex and owning-face index arrays.
 
-    face_count = len(mesh.polygons)
-    starts = np.empty(face_count, dtype=np.int32)
-    totals = np.empty(face_count, dtype=np.int32)
-    mesh.polygons.foreach_get("loop_start", starts)
-    mesh.polygons.foreach_get("loop_total", totals)
-    starts = starts.astype(np.int64)
-    totals = totals.astype(np.int64)
-
-    indices = np.arange(loop_count, dtype=np.int64)
-    first = np.repeat(starts, totals)
-    size = np.repeat(totals, totals)
-    following = np.where(indices - first == size - 1, first, indices + 1)
-    loop_face = np.repeat(np.arange(face_count, dtype=np.int64), totals)
-    return corner_verts, corner_verts[following], loop_face
+    Read from the BMesh rather than the mesh datablock: while edit mode stays
+    open the datablock's topology is frozen at the moment edit mode was entered
+    (only leaving edit mode re-syncs it), so after a topology change there
+    (subdivide, delete, extrude) its loops no longer line up with the cage and
+    index based writes would land on the wrong vertices.
+    """
+    bm.verts.index_update()
+    corner = []
+    following = []
+    owner = []
+    for face_index, face in enumerate(bm.faces):
+        verts = face.verts
+        size = len(verts)
+        for index in range(size):
+            corner.append(verts[index].index)
+            following.append(verts[(index + 1) % size].index)
+            owner.append(face_index)
+    corner_verts = np.array(corner, dtype=np.int64)
+    return (corner_verts,
+            corner_verts[np.array(following, dtype=np.int64)],
+            np.array(owner, dtype=np.int64))
 
 
 class _DefectSolver:
@@ -128,10 +131,11 @@ class _DefectSolver:
         mesh = obj.data
         bm = bmesh.from_edit_mesh(mesh)
         bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.verts.index_update()
+        bm.edges.index_update()
         self.obj = obj
         self.vert_count = len(bm.verts)
-        if len(mesh.vertices) != self.vert_count:
-            raise RuntimeError("网格数据与编辑网格的顶点数不一致，无法计算")
 
         self.original = _read_coords(bm.verts, self.vert_count)
         self.selected = np.fromiter(
@@ -140,17 +144,20 @@ class _DefectSolver:
         )
         self.movable = bool(self.selected.any())
 
-        edge_count = len(mesh.edges)
+        # Everything below comes from the BMesh, the only live source of truth
+        # while edit mode is open.
+        edge_count = len(bm.edges)
         if edge_count:
-            edges = np.empty(edge_count * 2, dtype=np.int32)
-            mesh.edges.foreach_get("vertices", edges)
-            edges = edges.reshape(edge_count, 2).astype(np.int64)
+            edges = np.fromiter(
+                (index for edge in bm.edges
+                 for index in (edge.verts[0].index, edge.verts[1].index)),
+                dtype=np.int64, count=edge_count * 2).reshape(edge_count, 2)
         else:
             edges = np.empty((0, 2), dtype=np.int64)
         self.edges = edges
 
-        self.corner_verts, self.next_verts, self.loop_face = _loop_tables(mesh)
-        self.face_count = len(mesh.polygons)
+        self.corner_verts, self.next_verts, self.loop_face = _loop_tables(bm)
+        self.face_count = len(bm.faces)
 
         # Global edge-length scale, frozen so the collapse threshold never
         # drifts while the operator is running.

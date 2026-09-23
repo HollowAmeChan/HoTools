@@ -119,34 +119,30 @@ def _write_coords(vertices, coords):
             vert.co = coords[index].tolist()
 
 
-def _loop_neighbours(mesh):
-    """Return per-corner vertex, previous vertex and next vertex indices.
+def _loop_neighbours(bm):
+    """Per-corner vertex, previous vertex and next vertex indices.
 
-    ``prev``/``next`` follow the face winding, matching the ``prev_corner`` /
-    ``next_corner`` walk of ``calc_tangent_spaces``.  Reading the topology from
-    the mesh datablock is safe in edit mode because this operator never changes
-    topology, so the corner order matches the bmesh.
+    Read from the BMesh rather than the mesh datablock: while edit mode stays
+    open the datablock's topology is frozen at the moment edit mode was entered
+    (only leaving edit mode re-syncs it), so after a topology change there its
+    loops no longer line up with the cage.  The ``prev``/``next`` order follows
+    the face winding, matching the ``prev_corner``/``next_corner`` walk of
+    ``calc_tangent_spaces``.
     """
-    loop_count = len(mesh.loops)
-    loop_verts = np.empty(loop_count, dtype=np.int32)
-    mesh.loops.foreach_get("vertex_index", loop_verts)
-    loop_verts = loop_verts.astype(np.int64)
-
-    face_count = len(mesh.polygons)
-    starts = np.empty(face_count, dtype=np.int32)
-    totals = np.empty(face_count, dtype=np.int32)
-    mesh.polygons.foreach_get("loop_start", starts)
-    mesh.polygons.foreach_get("loop_total", totals)
-    starts = starts.astype(np.int64)
-    totals = totals.astype(np.int64)
-
-    indices = np.arange(loop_count, dtype=np.int64)
-    first = np.repeat(starts, totals)
-    size = np.repeat(totals, totals)
-    offset = indices - first
-    previous = np.where(offset == 0, first + size - 1, indices - 1)
-    following = np.where(offset == size - 1, first, indices + 1)
-    return loop_verts, loop_verts[previous], loop_verts[following]
+    bm.verts.index_update()
+    corner = []
+    previous = []
+    following = []
+    for face in bm.faces:
+        verts = face.verts
+        size = len(verts)
+        for index in range(size):
+            corner.append(verts[index].index)
+            previous.append(verts[index - 1].index)
+            following.append(verts[(index + 1) % size].index)
+    return (np.array(corner, dtype=np.int64),
+            np.array(previous, dtype=np.int64),
+            np.array(following, dtype=np.int64))
 
 
 def _smooth(coords, edges, valence, weights, iterations, strength, smooth_type):
@@ -232,13 +228,22 @@ class _DeltaMushSolver:
         mesh = obj.data
         bm = bmesh.from_edit_mesh(mesh)
         bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.verts.index_update()
+        bm.edges.index_update()
         self.obj = obj
         self.vert_count = len(bm.verts)
         if len(mesh.vertices) != self.vert_count:
-            raise RuntimeError("网格数据与编辑网格的顶点数不一致，无法计算矫正平滑")
+            # With shape keys Blender forbids topology edits, so this only fires
+            # if the reference really is out of step with the cage.
+            raise RuntimeError(
+                "参考坐标与编辑网格的顶点数不一致（%d vs %d），无法计算矫正平滑"
+                % (len(mesh.vertices), self.vert_count))
 
         # Reference state: the mesh datablock, i.e. the Basis when shape keys
         # exist.  This mirrors the modifier's "Original Coords" rest source.
+        # Reading it here is fine *because* it is deliberately a different,
+        # frozen state -- it must not be confused with the live cage.
         reference = np.empty(self.vert_count * 3, dtype=np.float32)
         mesh.vertices.foreach_get("co", reference)
         self.reference = reference.reshape(self.vert_count, 3).astype(np.float64)
@@ -253,11 +258,14 @@ class _DeltaMushSolver:
         self.selected = selected
         self.movable = bool(selected.any())
 
-        edge_count = len(mesh.edges)
+        # Topology comes from the BMesh: the datablock's edges/loops/polygons
+        # are frozen while edit mode stays open.
+        edge_count = len(bm.edges)
         if edge_count:
-            edges = np.empty(edge_count * 2, dtype=np.int32)
-            mesh.edges.foreach_get("vertices", edges)
-            edges = edges.reshape(edge_count, 2).astype(np.int64)
+            edges = np.fromiter(
+                (index for edge in bm.edges
+                 for index in (edge.verts[0].index, edge.verts[1].index)),
+                dtype=np.int64, count=edge_count * 2).reshape(edge_count, 2)
             self.valence = np.bincount(
                 edges.ravel(), minlength=self.vert_count).astype(np.float64)
         else:
@@ -265,7 +273,7 @@ class _DeltaMushSolver:
             self.valence = np.zeros(self.vert_count, dtype=np.float64)
         self.edges = edges
 
-        self.corner_verts, self.prev_verts, self.next_verts = _loop_neighbours(mesh)
+        self.corner_verts, self.prev_verts, self.next_verts = _loop_neighbours(bm)
 
         self._key = None
         self._state = None
