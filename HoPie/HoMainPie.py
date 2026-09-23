@@ -357,19 +357,21 @@ def _draw_edge_flow_tools(layout: LayoutBuilder, context):
     col.scale_y = 1.35
 
     row = col.row(align=True)
-    row.operator("ho.set_edge_flow", text="loop设流",icon="SPHERECURVE")
+    row.operator("ho.mesh_flatten", text="压平", icon="NOCURVE")
     row.operator("ho.set_edge_curve", text="并排设流",icon="MOD_WAVE")
     row.operator("ho.set_edge_linear", text="并排设直",icon="FILE_VOLUME")
 
     row = col.row(align=True)
     row.operator("ho.slide_cut",text="滑切",icon="MOD_INSTANCE",operator_context="INVOKE_DEFAULT",)
-    row.operator("ho.parallel_manifold_subdivide",text="并排流形细分",icon="FILE_VOLUME",operator_context="EXEC_DEFAULT",)
+    row.operator("ho.parallel_manifold_subdivide",text="并排流细分",icon="FILE_VOLUME",operator_context="EXEC_DEFAULT",)
+    row.operator("ho.mesh_circle_even", text="均匀圆化", icon="MESH_CIRCLE")
+
 
     row = col.row(align=True)
-    row.operator("ho.mesh_flatten", text="压平", icon="NOCURVE")
+    row.operator("ho.set_edge_flow", text="设流",icon="SPHERECURVE")
     row.operator("ho.mesh_relax", text="松弛", icon="MOD_SMOOTH")
     row.operator("ho.local_corrective_smooth", text="矫正平滑", icon="MOD_SMOOTH")
-    row.operator("ho.mesh_circle_even", text="均匀圆化", icon="MESH_CIRCLE")
+    row.operator("ho.mesh_singularity_smooth", text="奇异平滑", icon="MOD_SMOOTH")
 
 
 
