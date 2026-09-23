@@ -64,8 +64,11 @@ item = store.active_item(bpy.context.scene)
 item.name = "口型 3x3"
 item.u_name = "MouthOpen"
 item.v_name = "MouthWide"
-assert bpy.ops.ho.shapekeytools_blend_point_from_active() == {'FINISHED'}
+# 用「添加当前形态键」按顺序把 9 个键点进来，顺便验证自动切键与格子分配
+for _ in range(9):
+    assert bpy.ops.ho.shapekeytools_blend_point_add_active() == {'FINISHED'}
 assert len(item.points) == 9, [p.shape_key for p in item.points]
+assert len(store.occupied_coordinates(item)) == 9, "9 个点位应各占一格"
 print("SMOKE points", len(item.points), flush=True)
 
 bpy.context.scene.ho_ShapekeyToolsPanel_Mod = 'PANEL_SHAPEKEYTOOLS_BLENDMATRIX'
@@ -110,10 +113,15 @@ else:
     hit = overlay.pick_in_area(bpy.context, centre[0], centre[1], area)
     print("SMOKE pick centre:", hit, flush=True)
     assert hit == ("centre", -1), f"中心点点不中：{hit}"
-    _kind, first_index, first_x, first_y = handles[0]
-    hit_point = overlay.pick_in_area(bpy.context, first_x, first_y, area)
+    # 挑一个不和中心点重合的方块（9 点矩阵里必然有），命中判定优先中心点，
+    # 所以贴着中心点的那个方块本来就会让位给中心点，这是预期行为。
+    target = next(
+        entry for entry in handles
+        if (entry[2] - centre[0]) ** 2 + (entry[3] - centre[1]) ** 2 > 400.0)
+    _kind, point_index, point_x, point_y = target
+    hit_point = overlay.pick_in_area(bpy.context, point_x, point_y, area)
     print("SMOKE pick point:", hit_point, flush=True)
-    assert hit_point == ("point", first_index), f"坐标点点不中：{hit_point}"
+    assert hit_point == ("point", point_index), f"坐标点点不中：{hit_point}"
     # 空白处不命中（要能放行给 Blender 做选择/框选）
     assert overlay.pick_in_area(bpy.context, 1.0, 1.0, area) == (None, -1)
     # 命令算子：R / W / [ / ]

@@ -66,29 +66,43 @@ panel_items = [
     bpy.types.Scene.ho_ShapekeyToolsPanel_Mod.keywords['items']
 ] if 'items' in bpy.types.Scene.ho_ShapekeyToolsPanel_Mod.keywords else None
 assert panel_items is None or 'PANEL_SHAPEKEYTOOLS_BLENDMATRIX' in panel_items
+# 注意：bpy.ops.ho.xxx 是动态命名空间，用 hasattr 永远为真，必须查注册表
 for operator_id in (
     "shapekeytools_blend_debug_add",
     "shapekeytools_blend_debug_remove",
     "shapekeytools_blend_debug_clear",
-    "shapekeytools_blend_point_add",
+    "shapekeytools_blend_point_add_active",
     "shapekeytools_blend_point_remove",
-    "shapekeytools_blend_point_clear",
-    "shapekeytools_blend_point_from_active",
-    "shapekeytools_blend_point_grid",
-    "shapekeytools_blend_point_toggle",
-    "shapekeytools_blend_point_nudge",
+    "shapekeytools_blend_point_set_key",
     "shapekeytools_blend_object_add",
     "shapekeytools_blend_object_remove",
     "shapekeytools_blend_object_clear",
     "shapekeytools_blend_apply",
     "shapekeytools_blend_reset_cursor",
-    "shapekeytools_blend_clear_weights",
+    "shapekeytools_blend_clear_all_keys",
+    "shapekeytools_blend_jump_to_point",
     "shapekeytools_blend_widget",
     "shapekeytools_blend_widget_pick",
     "shapekeytools_blend_widget_key",
     "shapekeytools_blend_widget_stop",
 ):
-    assert hasattr(bpy.ops.ho, operator_id), operator_id
+    struct = "HO_OT_" + operator_id
+    assert hasattr(bpy.types, struct), f"{operator_id} 没有注册（{struct} 不存在）"
+
+# 被删掉的一坨添加/批量功能必须真的消失
+for removed in (
+    "shapekeytools_blend_point_add",
+    "shapekeytools_blend_point_clear",
+    "shapekeytools_blend_point_from_active",
+    "shapekeytools_blend_point_from_object",
+    "shapekeytools_blend_point_grid",
+    "shapekeytools_blend_point_toggle",
+    "shapekeytools_blend_point_nudge",
+    "shapekeytools_blend_clear_weights",
+    "shapekeytools_blend_toggle_weights",
+):
+    assert not hasattr(bpy.types, "HO_OT_" + removed), f"{removed} 应该已删除"
+    assert not hasattr(store, removed), f"{removed} 应该已删除"
 
 # ── 坐标自动排布 ──────────────────────────────────────────────────────────
 assert point_layout.grid_coordinates(0) == []
@@ -116,16 +130,53 @@ assert bpy.ops.ho.shapekeytools_blend_debug_add() == {'FINISHED'}
 item = store.active_item(bpy.context.scene)
 assert item is not None
 assert [entry.object for entry in item.objects] == [face_a]
-assert bpy.ops.ho.shapekeytools_blend_point_from_active() == {'FINISHED'}
+
+# ── 添加当前形态键（唯一的新增入口）：加一个、活动键切到下一个 ──────────────
+# 先把活动键摆在第一个，方便按顺序验证
+shape_keys = face_a.data.shape_keys
+face_a.active_shape_key_index = shape_keys.key_blocks.find("Smile_L")
+assert bpy.ops.ho.shapekeytools_blend_point_add_active() == {'FINISHED'}
+assert [point.shape_key for point in item.points] == ["Smile_L"]
+assert face_a.active_shape_key.name == "Smile_R", "添加后活动键应切到下一个"
+# 连续点击会把剩下的键逐个加进来
+for expected in ("Smile_R", "Open", "Extra"):
+    assert bpy.ops.ho.shapekeytools_blend_point_add_active() == {'FINISHED'}
+    assert item.points[-1].shape_key == expected
 assert [point.shape_key for point in item.points] == [
     "Smile_L", "Smile_R", "Open", "Extra"]
 assert len(item.points) == 4
-assert (item.points[0].u, item.points[0].v) == (-1.0, 1.0)
-assert (item.points[1].u, item.points[1].v) == (1.0, 1.0)
-assert (item.points[2].u, item.points[2].v) == (-1.0, -1.0)
-assert (item.points[3].u, item.points[3].v) == (1.0, -1.0)
+# 点位自动占空格子：坐标互不重合，且落在矩阵范围内
+assert len(store.occupied_coordinates(item)) == 4, "每个点位应占一个不同的格子"
+for point in item.points:
+    assert -1.0 <= point.u <= 1.0 and -1.0 <= point.v <= 1.0, (point.u, point.v)
 # 删掉多余的点，后面的断言按三点矩阵算
 item.points.remove(3)
+
+# 重复添加同一个键不会新建点位，只把活动行切过去
+face_a.active_shape_key_index = shape_keys.key_blocks.find("Smile_L")
+assert bpy.ops.ho.shapekeytools_blend_point_add_active() == {'FINISHED'}
+assert len(item.points) == 3, "已在矩阵里的键不该重复添加"
+assert item.point_index == 0, "应该切到已有的那一行"
+# 停在基础键上时从第一个可用键开始
+face_a.active_shape_key_index = shape_keys.key_blocks.find("Basis")
+assert bpy.ops.ho.shapekeytools_blend_point_add_active() == {'FINISHED'}
+assert len(item.points) == 3, "基础键不产生新点位"
+
+# ── 点位找空位 ────────────────────────────────────────────────────────────
+# 用一个临时矩阵验证，别动上面那个已经摆好的
+scratch = bpy.context.scene.ho_bs_debug_items.add()
+assert store.free_grid_coordinate(scratch) == (0.0, 0.0), "空矩阵的第一个格子是原点"
+scratch_point = scratch.points.add()
+scratch_point.shape_key = "K0"
+scratch_point.u, scratch_point.v = (0.0, 0.0)
+assert store.free_grid_coordinate(scratch) in point_layout.grid_coordinates(2), (
+    "原点被占了以后要换到相邻格子")
+assert store.free_grid_coordinate(scratch) != (0.0, 0.0)
+assert store.occupied_coordinates(scratch) == {(0.0, 0.0): 0}
+assert store.occupied_coordinates(scratch, exclude=0) == {}
+bpy.context.scene.ho_bs_debug_items.remove(
+    len(bpy.context.scene.ho_bs_debug_items) - 1)
+store.clamp_index(bpy.context.scene)
 
 # 加/减/清空：操作物体对象列表（行下标存在场景上，供 template_list 使用）
 face_b.select_set(True)
@@ -165,20 +216,13 @@ item.objects[0].object = face_a
 item.objects[0].object_name = face_a.name
 assert shapekey_utils.active_objects(item) == [face_a, face_b]
 
-# 坐标点：启停与微调
-assert bpy.ops.ho.shapekeytools_blend_point_toggle(index=2) == {'FINISHED'}
-assert item.points[2].enabled is False
-assert len(shapekey_utils.enabled_points(item)) == 2
-assert bpy.ops.ho.shapekeytools_blend_point_toggle(index=2) == {'FINISHED'}
-item.point_index = 1
-assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=0.5, dv=-0.25) == {'FINISHED'}
-assert_close(item.points[1].u, 1.5)
-assert_close(item.points[1].v, 0.75)
-assert bpy.ops.ho.shapekeytools_blend_point_grid() == {'FINISHED'}
-assert_close(item.points[1].u, 1.0)
-assert_close(item.points[1].v, 1.0)
-
 # ── 权重求值与写入 ────────────────────────────────────────────────────────
+# 把三个点位摆成明确的三角形，权重才好算
+item.points[0].shape_key = "Smile_L"
+item.points[1].shape_key = "Smile_R"
+item.points[2].shape_key = "Open"
+for point, (u, v) in zip(item.points, ((-1.0, 1.0), (1.0, 1.0), (-1.0, -1.0))):
+    point.u, point.v = u, v
 item.mix_mode = blend_math.MODE_CARTESIAN_2D
 item.cursor_u = 1.0
 item.cursor_v = 1.0
@@ -228,19 +272,16 @@ assert_close(weights[2], 0.5, message="1D 相邻插值（Open）")
 assert_close(weights[1], 0.5, message="1D 相邻插值（Smile_R）")
 assert_close(weights[0], 0.0, message="1D 不相邻点权重为 0")
 
-# 禁用某个坐标点后，它的键不再被写入，权重仍然归一化
-item.mix_mode = blend_math.MODE_CARTESIAN_2D
-item.cursor_u = 0.0
-item.cursor_v = 1.0
-editor.invalidate_weight_cache()
-item.points[2].enabled = False
-editor.invalidate_weight_cache()
-weights, names = editor.evaluate_item(item)
-assert names == ("Smile_L", "Smile_R")
-assert_close(sum(weights), 1.0, message="禁用后的权重和")
-assert_close(weights[0], 0.5, message="禁用后两点均分")
-assert_close(weights[1], 0.5, message="禁用后两点均分")
-item.points[2].enabled = True
+# 点位没有启用/禁用开关了：矩阵里出现的点一律参与混合
+assert store.PG_ShapekeyTools_BlendPoint.bl_rna.properties.get("enabled") is None
+for removed in ("shapekeytools_blend_point_toggle",
+                "shapekeytools_blend_point_nudge",
+                "shapekeytools_blend_point_clear",
+                "shapekeytools_blend_point_grid",
+                "shapekeytools_blend_point_from_active",
+                "shapekeytools_blend_point_from_object"):
+    assert not hasattr(bpy.types, "HO_OT_" + removed), f"{removed} 应该已删除"
+assert shapekey_utils.points(item) == tuple(item.points)
 
 # 空物体列表时不会误写，且报告里能看出没有物体
 item.objects.clear()
@@ -249,24 +290,35 @@ empty_report = blend_func.apply_weights(bpy.context, item)
 assert empty_report.written == 0 and empty_report.objects == 0
 assert bpy.ops.ho.shapekeytools_blend_object_add() == {'FINISHED'}
 
-# 归零
-assert bpy.ops.ho.shapekeytools_blend_clear_weights() == {'FINISHED'}
+# ── 全键归零：所有形态键归零 + 活动键切回基型 ─────────────────────────────
+bpy.context.view_layer.objects.active = face_a
+face_a.active_shape_key_index = face_a.data.shape_keys.key_blocks.find("Smile_R")
+face_a.data.shape_keys.key_blocks["Extra"].value = 0.7
+assert bpy.ops.ho.shapekeytools_blend_clear_all_keys() == {'FINISHED'}
 assert_close(face_a.data.shape_keys.key_blocks["Smile_R"].value, 0.0)
+assert_close(face_a.data.shape_keys.key_blocks["Extra"].value, 0.0), (
+    "矩阵里没有的键也要归零")
+assert face_a.active_shape_key.name == "Basis", "全键归零后活动键要切回基型"
+assert face_b.data.shape_keys.key_blocks["Smile_R"].value == 0.0
+assert not hasattr(bpy.types, "HO_OT_shapekeytools_blend_clear_weights"), (
+    "旧的「归零权重」应已被「全键归零」取代")
+assert not hasattr(bpy.types, "HO_OT_shapekeytools_blend_toggle_weights")
 
 # ── 调试矩阵：新建/删除/清空 ─────────────────────────────────────────────
 assert bpy.ops.ho.shapekeytools_blend_debug_add() == {'FINISHED'}
 assert len(bpy.context.scene.ho_bs_debug_items) == 2
 assert bpy.ops.ho.shapekeytools_blend_debug_remove() == {'FINISHED'}
 assert len(bpy.context.scene.ho_bs_debug_items) == 1
+assert store.active_item(bpy.context.scene).as_pointer() == item.as_pointer(), (
+    "删除新建的矩阵后活动矩阵应回到原来那个")
 
-# 从指定物体取键（菜单路径）
-assert bpy.ops.ho.shapekeytools_blend_point_from_object(
-    object_name="FaceB") == {'FINISHED'}
-assert [p.shape_key for p in store.active_item(bpy.context.scene).points] == [
-    "Smile_L", "Smile_R", "Open", "Extra"]
-# 从活动物体取键
-assert bpy.ops.ho.shapekeytools_blend_point_from_active() == {'FINISHED'}
-assert len(store.active_item(bpy.context.scene).points) == 4
+# 换一个形态键名也要能改（挑选菜单走这条路径）
+assert bpy.ops.ho.shapekeytools_blend_point_set_key(
+    index=0, shape_key="Open") == {'FINISHED'}
+assert item.points[0].shape_key == "Open"
+assert item.points[0].name == "Open"
+assert bpy.ops.ho.shapekeytools_blend_point_set_key(
+    index=0, shape_key="Smile_L") == {'FINISHED'}
 
 assert bpy.ops.ho.shapekeytools_blend_debug_clear() == {'FINISHED'}
 assert len(bpy.context.scene.ho_bs_debug_items) == 0
@@ -346,10 +398,11 @@ for _kind, index, x, y in handles_nine:
     assert plot_rect[0] <= x <= plot_rect[0] + plot_rect[2], (index, x)
     assert plot_rect[1] <= y <= plot_rect[1] + plot_rect[3], (index, y)
 
-point_layout.assign_grid(item)  # 重排为矩阵：坐标变了，数量没变
+for slot, point in enumerate(item.points):  # 只改坐标、不改数量
+    point.u, point.v = (-1.0, 0.0, 1.0)[slot % 3], (1.0, 0.0, -1.0)[slot % 3]
 grid_range = overlay._cached_axis_range(item)
 assert grid_range == (-1.15, 1.15, -1.15, 1.15), (
-    f"重排后坐标系范围必须重新适配，实际 {grid_range}")
+    f"改坐标后坐标系范围必须重新适配，实际 {grid_range}")
 layout_grid = overlay.compute_layout(900.0, 700.0, item, 9)
 handles_grid, _centre_grid = overlay._compute_handles(item, layout_grid)
 grid_rect = layout_grid["plot"]
@@ -518,8 +571,8 @@ assert_registered_identifiers(store, None)
 assert_registered_identifiers(editor, None)
 assert_registered_identifiers(overlay, None)
 for klass in (editor.HO_UL_ShapekeyTools_BlendPoints,
-              editor.HO_MT_ShapekeyTools_BlendPointKey,
-              editor.HO_MT_ShapekeyTools_BlendPointFromObject):
+              editor.HO_UL_ShapekeyTools_BlendObjects,
+              editor.HO_MT_ShapekeyTools_BlendPointKey):
     assert issubclass(klass, (bpy.types.UIList, bpy.types.Menu)), klass
     assert klass.bl_idname, f"{klass.__name__} 必须显式声明 bl_idname"
 assert editor.HO_UL_ShapekeyTools_BlendPoints.bl_idname == (
@@ -542,7 +595,7 @@ bpy.ops.ho.shapekeytools_blend_debug_add()
 empty_item = store.active_item(bpy.context.scene)
 assert editor.evaluate_item(empty_item) == ((), ())
 assert blend_func.evaluate_item(empty_item) == ((), ())
-assert shapekey_utils.enabled_points(empty_item) == ()
+assert shapekey_utils.points(empty_item) == ()
 assert point_layout.duplicate_coordinate_groups(empty_item) == []
 assert shapekey_utils.candidate_shape_keys(empty_item, bpy.context) == [
     "Smile_L", "Smile_R", "Open", "Extra"]
@@ -577,7 +630,7 @@ assert overlay.__name__.endswith("blend_overlay")
 # 数据层不应该再带界面 / 绘制 / 取值 / 排布代码：store 只留数据模型与数据算子
 for leaked in (
     "draw_object_list",        # 列表绘制 → blend_editor 的标准 UIList
-    "enabled_points",          # 取值 → shapekey_utils
+    "enabled_points",          # 点位不再有启用开关
     "active_objects",
     "resolve_object",
     "shape_key_names",
@@ -586,7 +639,7 @@ for leaked in (
     "mesh_candidates",
     "append_object",
     "grid_coordinates",        # 排布 → point_layout
-    "assign_grid",
+    "assign_grid",             # 重排已删
     "duplicate_coordinate_groups",
     "iter_points",
 ):
@@ -624,7 +677,7 @@ assert store.PG_ShapekeyTools_BlendObject.bl_rna.properties.get("enabled") is No
 
 # 取值工具的两种入口都要能用（shapekey_utils 实现 + blend_func 转发别名）
 assert shapekey_utils.shape_key_names(face_a) == blend_func.shape_key_names(face_a)
-assert shapekey_utils.enabled_points is blend_func.enabled_points
+assert shapekey_utils.points is blend_func.points
 assert shapekey_utils.active_objects is blend_func.active_objects
 # 往列表里加物体：去重 + 类型校验
 probe_item = bpy.context.scene.ho_bs_debug_items.add()
@@ -645,7 +698,6 @@ bpy.context.scene.ho_bs_debug_items.remove(
 cold = draw_func.weight_color(0.0)
 hot = draw_func.weight_color(1.0)
 assert hot[0] > cold[0] and hot[2] < cold[2], (cold, hot)
-assert draw_func.weight_color(0.5, enabled=False) == draw_func.COLOR_DISABLED
 mid = draw_func.weight_color(0.5)
 assert cold[0] < mid[0] < hot[0], (cold, mid, hot)
 # 夹取与坐标映射的薄封装要和数学层一致

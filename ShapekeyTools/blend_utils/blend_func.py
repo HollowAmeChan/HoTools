@@ -32,7 +32,7 @@ def _weight_signature(item):
         round(item.cursor_v, 4),
         item.mix_mode,
         tuple(
-            (round(point.u, 4), round(point.v, 4), point.shape_key, point.enabled)
+            (round(point.u, 4), round(point.v, 4), point.shape_key)
             for point in item.points
         ),
     )
@@ -49,13 +49,13 @@ def evaluate_item(item):
     if _WEIGHT_CACHE["key"] == signature:
         return _WEIGHT_CACHE["weights"], _WEIGHT_CACHE["names"]
 
-    enabled = _keys.enabled_points(item)
-    coordinates = [(point.u, point.v) for point in enabled]
+    points = tuple(item.points)
+    coordinates = [(point.u, point.v) for point in points]
     weights = _math.blend_weights(coordinates, item.cursor_u, item.cursor_v,
                                   item.mix_mode)
     names = tuple(
         point.shape_key or point.name or f"点位 {index + 1}"
-        for index, point in enumerate(enabled)
+        for index, point in enumerate(points)
     )
     _WEIGHT_CACHE["key"] = signature
     _WEIGHT_CACHE["weights"] = tuple(weights)
@@ -79,7 +79,7 @@ def invalidate_weight_cache():
 resolve_item_objects = _keys.active_objects
 candidate_shape_keys = _keys.candidate_shape_keys
 candidate_shape_key_names = _keys.candidate_shape_keys
-enabled_points = _keys.enabled_points
+points = _keys.points
 active_objects = _keys.active_objects
 unique_shape_keys = _keys.unique_shape_keys
 shape_key_names = _keys.shape_key_names
@@ -87,14 +87,14 @@ shape_key_names = _keys.shape_key_names
 
 def item_weights(item):
     """返回 ``[(形态键名, 权重), ...]``，跳过没有名字的坐标点。"""
-    enabled = _keys.enabled_points(item)
-    if not enabled:
+    entries = tuple(item.points) if item is not None else ()
+    if not entries:
         return []
-    coordinates = [(point.u, point.v) for point in enabled]
+    coordinates = [(point.u, point.v) for point in entries]
     weights = _math.blend_weights(coordinates, item.cursor_u, item.cursor_v,
                                   item.mix_mode)
     resolved = []
-    for point, weight in zip(enabled, weights):
+    for point, weight in zip(entries, weights):
         name = point.shape_key or point.name
         if name:
             resolved.append((name, weight))
@@ -190,21 +190,31 @@ def apply_weights(context, item, report=None) -> BlendApplyReport:
     return report
 
 
-def clear_weights(item) -> int:
-    """把该调试矩阵涉及的形态键权重全部清零，返回清零的键数量。
+def clear_all_keys(item, context=None) -> int:
+    """全键归零：列表里每个物体的**所有**形态键都归零，并把活动键切回基型。
 
-    含被临时禁用的点位：禁用只是不参与混合，归零时仍然要一起清掉。
+    和形态键工具里的「全键归零 + 选中基型」是同一件事，不限于矩阵里出现的键；
+    只有当前活动物体需要切活动键（其它物体没有“活动键”这个概念）。
+    返回归零的键数量。
     """
     cleared = 0
+    active_object = getattr(context, "object", None) if context is not None else None
     for obj in _keys.active_objects(item):
         shape_keys = getattr(obj.data, "shape_keys", None)
         if shape_keys is None:
             continue
-        for name in _keys.unique_shape_keys(item):
-            key = shape_keys.key_blocks.get(name)
-            if key is not None and key != shape_keys.reference_key:
+        basis = shape_keys.reference_key
+        for key in shape_keys.key_blocks:
+            if key == basis:
+                continue
+            if key.value != 0.0:
                 key.value = 0.0
                 cleared += 1
+        if obj is active_object and basis is not None:
+            try:
+                obj.active_shape_key_index = shape_keys.key_blocks.find(basis.name)
+            except (AttributeError, ReferenceError, TypeError, ValueError):
+                pass
     return cleared
 
 

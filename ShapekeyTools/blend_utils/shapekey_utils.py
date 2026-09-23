@@ -18,11 +18,9 @@ import bpy
 # region 点位与物体取值
 
 
-def enabled_points(item):
-    """返回参与混合的坐标点（跳过临时禁用的）。"""
-    if item is None:
-        return ()
-    return tuple(point for point in item.points if point.enabled)
+def points(item):
+    """返回矩阵里的全部坐标点（列表里出现的点都参与混合）。"""
+    return tuple(item.points) if item is not None else ()
 
 
 def resolve_object(entry):

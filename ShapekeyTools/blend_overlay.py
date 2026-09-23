@@ -57,12 +57,11 @@ _COLOR_AXIS = _draw.COLOR_AXIS
 _COLOR_TEXT = _draw.COLOR_TEXT
 _COLOR_TEXT_DIM = _draw.COLOR_TEXT_DIM
 _COLOR_CENTER = _draw.COLOR_CENTER
-_COLOR_DISABLED = _draw.COLOR_DISABLED
 _COLOR_HOVER = _draw.COLOR_HOVER
 
 
-def _weight_color(weight, enabled=True):
-    return _draw.weight_color(weight, enabled)
+def _weight_color(weight):
+    return _draw.weight_color(weight)
 
 
 def _get_shader():
@@ -148,10 +147,9 @@ class _WidgetState:
         item = _store.active_item(context.scene) if context is not None else None
         if item is None:
             return "无调试矩阵：请先在左侧新建"
-        enabled = _keys.enabled_points(item)
         return (
             f"{item.name or '未命名'}｜{item.u_name}/{item.v_name}｜"
-            f"点位 {len(enabled)}/{len(item.points)}｜"
+            f"点位 {len(item.points)}｜"
             f"({item.cursor_u:.3f}, {item.cursor_v:.3f})"
         )
 
@@ -583,16 +581,12 @@ def _draw_points(item, weights, handles, layout) -> None:
     for index, point in enumerate(item.points):
         _kind, _index, x, y = handles[index]
         weight = weights[index] if index < len(weights) else 0.0
-        color = _weight_color(weight, point.enabled)
+        color = _weight_color(weight)
         radius = _HANDLE_RADIUS
         if hovered and WIDGET.hover_index == index:
             radius += 1.5
             _draw.draw_ring(x, y, radius + 3.0, _COLOR_HOVER, 1.4)
         _draw.draw_square(x, y, radius, color)
-        if not point.enabled:
-            _draw.draw_line_strip(
-                ((x - radius, y - radius), (x + radius, y + radius)),
-                _COLOR_DISABLED, 1.6)
         if item.point_index == index:
             _draw.draw_ring(x, y, radius + 4.0, _COLOR_CENTER, 1.2)
         if weight > 1e-6 or (hovered and WIDGET.hover_index == index):
@@ -737,11 +731,12 @@ def reset_cursor(context):
     return True
 
 
-def clear_weights(context):
+def clear_all_keys(context):
+    """全键归零（键盘 W / 面板按钮共用）。"""
     item = _store.active_item(context.scene)
     if item is None:
         return False
-    _func.clear_weights(item)
+    _func.clear_all_keys(item, context)
     WIDGET.tag_redraw()
     return True
 
@@ -993,7 +988,7 @@ class OP_ShapekeyTools_BlendWidgetKey(Operator):
         if self.command == 'RESET':
             reset_cursor(context)
         elif self.command == 'CLEAR':
-            clear_weights(context)
+            clear_all_keys(context)
         elif self.command == 'SCALE_UP':
             scale_widget(context, 0.1)
         elif self.command == 'SCALE_DOWN':

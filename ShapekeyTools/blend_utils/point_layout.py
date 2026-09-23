@@ -1,7 +1,6 @@
 """混合矩阵的坐标点位排布工具（纯计算，只依赖 ``math``）。
 
-- :func:`grid_coordinates`：把 N 个点位铺成居中的行列矩阵；
-- :func:`assign_grid`：把铺开结果写回调试矩阵的点位；
+- :func:`grid_coordinates`：把 N 个点位铺成居中的行列矩阵（新增点位找空位时用）；
 - :func:`duplicate_coordinate_groups`：找出坐标完全重合的点位，供界面提示。
 
 坐标映射本身在 ``blend_space_math``，这里只负责“怎么摆”。
@@ -12,7 +11,6 @@ from __future__ import annotations
 import math
 
 __all__ = (
-    "assign_grid",
     "duplicate_coordinate_groups",
     "grid_coordinates",
 )
@@ -37,15 +35,6 @@ def grid_coordinates(count: int, *, span: float = 1.0) -> list[tuple[float, floa
         v = (1.0 - row / (rows - 1) * 2.0) * span if rows > 1 else 0.0
         coordinates.append((round(u, 4), round(v, 4)))
     return coordinates
-
-
-def assign_grid(item) -> None:
-    """按当前点位数量重排全部坐标（就地改写）。"""
-    if item is None:
-        return
-    for point, (u, v) in zip(item.points, grid_coordinates(len(item.points))):
-        point.u = u
-        point.v = v
 
 
 def duplicate_coordinate_groups(item):

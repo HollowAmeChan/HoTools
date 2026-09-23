@@ -2,8 +2,8 @@
 
 布局：
 
-- 左列：矩阵列表 + 矩阵配置 + 可折叠的「操作物体对象列表」，底部是生成/关闭调试矩阵；
-- 右列：坐标点位列表、实时权重读数、应用权重等动作。
+- 左列：矩阵列表 + 矩阵属性 + 可折叠的「操作物体对象列表」，底部是生成/关闭调试矩阵；
+- 右列：坐标点位列表（键名 / 键值 / 控制点位置 / 跳转），以及应用控制与全键归零。
 
 工具都抽到了 ``blend_utils``：功能（权重求值、形态键读写）在 ``blend_func``，
 绘制（GPU 图元、文字、坐标映射）在 ``draw_func``。这里只做界面编排。
@@ -12,26 +12,23 @@
 from __future__ import annotations
 
 import bpy
-from bpy.props import BoolProperty, StringProperty
+from bpy.props import StringProperty
 from bpy.types import Context, Menu, Operator, UIList, UILayout
 
 try:
     from . import blend_debug_store as _store
     from . import blend_overlay as _overlay
     from .blend_utils import blend_func as _func
-    from .blend_utils import draw_func as _draw
     from .blend_utils import point_layout as _layout
     from .blend_utils import shapekey_utils as _keys
 except ImportError:  # 兼容旧工具直接导入脚本
     import blend_debug_store as _store
     import blend_overlay as _overlay
     from blend_utils import blend_func as _func
-    from blend_utils import draw_func as _draw
     from blend_utils import point_layout as _layout
     from blend_utils import shapekey_utils as _keys
 
 
-# 兼容旧调用名（外部脚本/测试可能还在用 evaluate_item 这套名字）
 evaluate_item = _func.evaluate_item
 invalidate_weight_cache = _func.invalidate_weight_cache
 
@@ -45,7 +42,7 @@ def _active_item(context):
 
 class OP_ShapekeyTools_BlendApplyWeights(Operator):
     bl_idname = "ho.shapekeytools_blend_apply"
-    bl_label = "应用权重"
+    bl_label = "应用控制"
     bl_description = (
         "按当前混合矩阵把权重写进操作物体的形态键（对齐 Unity 混合树的混合逻辑）"
     )
@@ -69,8 +66,8 @@ class OP_ShapekeyTools_BlendApplyWeights(Operator):
 
 class OP_ShapekeyTools_BlendResetCursor(Operator):
     bl_idname = "ho.shapekeytools_blend_reset_cursor"
-    bl_label = "回到原点"
-    bl_description = "把当前输入坐标复位到 (0, 0)"
+    bl_label = "控制点归零"
+    bl_description = "把控制点（输入坐标）复位到原点 (0, 0)"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -85,36 +82,28 @@ class OP_ShapekeyTools_BlendResetCursor(Operator):
         return {'FINISHED'}
 
 
-class OP_ShapekeyTools_BlendClearWeights(Operator):
-    bl_idname = "ho.shapekeytools_blend_clear_weights"
-    bl_label = "归零权重"
-    bl_description = "把当前调试矩阵涉及的全部形态键权重清零（含被禁用的点位）"
+class OP_ShapekeyTools_BlendClearAllKeys(Operator):
+    bl_idname = "ho.shapekeytools_blend_clear_all_keys"
+    bl_label = "全键归零"
+    bl_description = (
+        "把操作物体的全部形态键归零（不只矩阵里的），并把活动键切回基型；"
+        "与形态键工具里的「全键归零 + 选中基型」一致"
+    )
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         item = _active_item(context)
         if item is None:
             return {'CANCELLED'}
-        cleared = _func.clear_weights(item)
-        self.report({'INFO'}, f"已清零 {cleared} 个形态键")
-        return {'FINISHED'}
-
-
-class OP_ShapekeyTools_BlendToggleWeightsPanel(Operator):
-    bl_idname = "ho.shapekeytools_blend_toggle_weights"
-    bl_label = "折叠权重读数"
-    bl_options = {'INTERNAL'}
-
-    def execute(self, context):
-        scene = context.scene
-        scene.ho_bs_weights_expanded = not scene.ho_bs_weights_expanded
+        cleared = _func.clear_all_keys(item, context)
+        self.report({'INFO'}, f"已归零 {cleared} 个形态键")
         return {'FINISHED'}
 
 
 class OP_ShapekeyTools_BlendJumpToPoint(Operator):
     bl_idname = "ho.shapekeytools_blend_jump_to_point"
-    bl_label = "跳到该坐标点"
-    bl_description = "把当前输入坐标设为该坐标点的位置（预览它的权重）"
+    bl_label = "跳到该控制点"
+    bl_description = "把控制点移动到该点位（预览它的权重）"
     bl_options = {'REGISTER', 'UNDO'}
 
     index: bpy.props.IntProperty(name="下标", default=-1)  # type: ignore
@@ -143,40 +132,44 @@ class OP_ShapekeyTools_BlendJumpToPoint(Operator):
 
 
 class HO_UL_ShapekeyTools_BlendPoints(UIList):
-    """坐标点列表：禁用开关 / 键名（带挑选菜单）/ 矩阵坐标 / 权重。"""
+    """坐标点位列表。每行横排：``键名 - 键值(权重) - 控制点位置 - 跳转``。
+
+    行里不放启用开关，也不放坐标编辑：坐标只在视口里拖方块改，或者选中这一行后在
+    下面的「控制点位置」里改。最右侧的取色器图标把控制点跳到该点位。
+    """
 
     # UIList 不会自动从类名生成 bl_idname，template_list 按 idname 查找，必须显式声明。
     bl_idname = "HO_UL_ShapekeyTools_BlendPoints"
 
     def draw_item(self, context, layout: UILayout, data, item, icon,
                   active_data, active_propname, index):
-        weights, _ = _func.evaluate_item(_active_item(context))
+        item_data = _active_item(context)
+        weights, _names = _func.evaluate_item(item_data)
         weight = weights[index] if index < len(weights) else 0.0
         row = layout.row(align=True)
         row.alignment = 'EXPAND'
 
-        toggle = row.operator(
-            _store.OP_ShapekeyTools_BlendPointToggle.bl_idname,
-            text="",
-            icon='CHECKBOX_HLT' if item.enabled else 'CHECKBOX_DEHLT',
-            emboss=False,
-        )
-        toggle.index = index
-
-        if not item.enabled:
-            row.alert = True
+        # 键名（可手打，也可以用右侧菜单从物体的键里挑）
         row.prop(item, "shape_key", text="")
         pick = row.row(align=True)
         pick.alignment = 'RIGHT'
         pick.menu(HO_MT_ShapekeyTools_BlendPointKey.bl_idname,
                   text="", icon='DOWNARROW_HLT')
-        row.prop(item, "u", text="")
-        row.prop(item, "v", text="")
 
-        weight_row = row.row(align=True)
-        weight_row.alignment = 'RIGHT'
-        weight_row.label(text=f"{weight:.2f}")
-        jump = weight_row.operator(
+        # 键值：当前权重
+        value = row.row(align=True)
+        value.alignment = 'RIGHT'
+        value.ui_units_x = 3.5
+        value.label(text=f"{weight:.3f}")
+
+        # 控制点位置：只读显示
+        position = row.row(align=True)
+        position.alignment = 'RIGHT'
+        position.ui_units_x = 8.0
+        position.label(text=f"{item.u:.3f}, {item.v:.3f}")
+
+        # 跳到该点位
+        jump = row.operator(
             OP_ShapekeyTools_BlendJumpToPoint.bl_idname, text="", icon='EYEDROPPER')
         jump.index = index
 
@@ -209,27 +202,6 @@ class HO_UL_ShapekeyTools_BlendObjects(UIList):
         spacer.ui_units_x = 2.0
 
 
-class HO_MT_ShapekeyTools_BlendPointFromObject(Menu):
-    """“从物体取键”菜单：列出场景里所有带形态键的网格物体。"""
-
-    bl_idname = "HO_MT_ShapekeyTools_BlendPointFromObject"
-    bl_label = "从物体取键"
-
-    def draw(self, context):
-        layout = self.layout
-        found = False
-        for obj in bpy.data.objects:
-            if _keys.shape_key_names(obj):
-                operator = layout.operator(
-                    _store.OP_ShapekeyTools_BlendPointFromObject.bl_idname,
-                    text=f"{obj.name}（{len(_keys.shape_key_names(obj))}）",
-                )
-                operator.object_name = obj.name
-                found = True
-        if not found:
-            layout.label(text="场景里没有带形态键的网格", icon='INFO')
-
-
 class HO_MT_ShapekeyTools_BlendPointKey(Menu):
     """坐标点的形态键挑选菜单：列出操作物体与活动物体上的键名。"""
 
@@ -243,7 +215,7 @@ class HO_MT_ShapekeyTools_BlendPointKey(Menu):
             layout.label(text="没有坐标点", icon='INFO')
             return
         index = max(0, min(item.point_index, len(item.points) - 1))
-        names = _keys.candidate_shape_keys(item, context)
+        names = _func.candidate_shape_key_names(item, context)
         if not names:
             layout.label(text="物体上没有形态键", icon='INFO')
             return
@@ -260,124 +232,6 @@ class HO_MT_ShapekeyTools_BlendPointKey(Menu):
 
 
 # region 面板绘制
-
-
-def _draw_points(layout: UILayout, context: Context, item) -> None:
-    box = layout.box()
-    header = box.row(align=True)
-    duplicates = _layout.duplicate_coordinate_groups(item) if len(item.points) > 1 else []
-    if duplicates:
-        header.alert = True
-        header.label(text=f"重合 {len(duplicates)} 处", icon='ERROR')
-        header.alert = False
-
-    row = box.row(align=True)
-    row.template_list(
-        HO_UL_ShapekeyTools_BlendPoints.__name__, "",
-        item, "points",
-        item, "point_index",
-        rows=8,
-    )
-    column = row.column(align=True)
-    column.operator(
-        _store.OP_ShapekeyTools_BlendPointAdd.bl_idname, text="", icon='ADD')
-    column.operator(
-        _store.OP_ShapekeyTools_BlendPointRemove.bl_idname, text="", icon='REMOVE')
-    column.separator()
-    column.operator(
-        _store.OP_ShapekeyTools_BlendPointFromActive.bl_idname, text="", icon='IMPORT')
-    column.menu(
-        HO_MT_ShapekeyTools_BlendPointFromObject.bl_idname, text="", icon='OBJECT_DATA')
-    column.operator(
-        _store.OP_ShapekeyTools_BlendPointApplyGrid.bl_idname, text="", icon='GRID')
-    column.operator(
-        _store.OP_ShapekeyTools_BlendPointClear.bl_idname, text="", icon='TRASH')
-
-    if not item.points:
-        note = box.row()
-        note.enabled = False
-        note.label(text="空：用 ⤓ 从活动物体取键，或点 + 手动添加", icon='INFO')
-        return
-
-    # 当前坐标点的精确编辑与微调
-    index = max(0, min(item.point_index, len(item.points) - 1))
-    point = item.points[index]
-    edit = box.row(align=True)
-    edit.label(text=f"#{index + 1}")
-    edit.prop(point, "u", text=item.u_name[:4] or "U")
-    edit.prop(point, "v", text=item.v_name[:4] or "V")
-    step_row = box.row(align=True)
-    step_row.label(text="微调")
-    for label, du, dv in (("←", -0.05, 0.0), ("→", 0.05, 0.0),
-                          ("↓", 0.0, -0.05), ("↑", 0.0, 0.05)):
-        nudge = step_row.operator(
-            _store.OP_ShapekeyTools_BlendPointNudge.bl_idname, text=label)
-        nudge.du = du
-        nudge.dv = dv
-
-
-def _draw_weights(layout: UILayout, context: Context, item) -> None:
-    box = layout.box()
-    header = box.row(align=True)
-    header.operator(
-        OP_ShapekeyTools_BlendToggleWeightsPanel.bl_idname,
-        text="",
-        icon='TRIA_DOWN' if context.scene.ho_bs_weights_expanded else 'TRIA_RIGHT',
-        emboss=False,
-    )
-    header.label(text="权重读数")
-
-    enabled = _keys.enabled_points(item)
-    weights, _names = _func.evaluate_item(item)
-    active_count = sum(1 for weight in weights if weight > 1e-6)
-    header.label(text=f"生效 {active_count}/{len(enabled)}")
-
-    if not context.scene.ho_bs_weights_expanded:
-        return
-
-    known = set(_keys.candidate_shape_keys(item, context))
-    if not weights:
-        box.label(text="没有启用的坐标点", icon='INFO')
-        return
-    for index, weight in enumerate(weights):
-        name = _names[index]
-        row = box.row(align=True)
-        if weight <= 1e-6:
-            row.enabled = False
-        row.label(text=f"{index + 1:>2}. {name}")
-        value_row = row.row(align=True)
-        value_row.alignment = 'RIGHT'
-        if known and name not in known:
-            value_row.alert = True
-            value_row.label(text="", icon='ERROR')
-        value_row.label(text=f"{weight:.3f}")
-
-
-def _draw_actions(layout: UILayout, context: Context, item) -> None:
-    scene = context.scene
-    box = layout.box()
-    row = box.row(align=True)
-    row.scale_y = 1.6
-    row.operator(
-        OP_ShapekeyTools_BlendApplyWeights.bl_idname,
-        text="应用权重",
-        icon='CHECKMARK',
-    )
-    row.operator(
-        OP_ShapekeyTools_BlendResetCursor.bl_idname, text="", icon='LOOP_BACK')
-
-    if not _keys.active_objects(item):
-        warn = box.row()
-        warn.alert = True
-        warn.label(text="操作物体对象列表为空或全部被禁用", icon='ERROR')
-
-    option = box.row(align=True)
-    option.prop(scene, "ho_bs_apply_on_cursor", text="控点立刻更新", toggle=True)
-    option.prop(scene, "ho_bs_mute_others", text="关闭其他", toggle=True)
-
-    actions = box.row(align=True)
-    actions.operator(
-        OP_ShapekeyTools_BlendClearWeights.bl_idname, text="归零权重", icon='X')
 
 
 def _draw_debug_list(layout: UILayout, context: Context) -> None:
@@ -398,6 +252,32 @@ def _draw_debug_list(layout: UILayout, context: Context) -> None:
         _store.OP_ShapekeyTools_BlendDebugRemove.bl_idname, text="", icon='REMOVE')
     column.operator(
         _store.OP_ShapekeyTools_BlendDebugClear.bl_idname, text="", icon='TRASH')
+
+
+def _draw_debug_config(layout: UILayout, context: Context) -> None:
+    """矩阵属性。"""
+    item = _active_item(context)
+    if item is None:
+        placeholder = layout.box()
+        placeholder.label(text="没有调试矩阵", icon='INFO')
+        return
+
+    box = layout.box()
+    column = box.column(align=True)
+
+    mode_row = column.row(align=True)
+    mode_row.prop(item, "mix_mode", text="")
+
+    axis_row = column.row(align=True)
+    axis_row.prop(item, "u_name", text="")
+    axis_row.prop(item, "v_name", text="")
+
+    cursor_row = column.row(align=True)
+    cursor_row.prop(item, "cursor_u", text="")
+    cursor_row.prop(item, "cursor_v", text="")
+    # 控制点归零：就放在 XY 右侧角落，一个图标
+    cursor_row.operator(
+        OP_ShapekeyTools_BlendResetCursor.bl_idname, text="", icon='LOOP_BACK')
 
 
 def _draw_debug_objects(layout: UILayout, context: Context) -> None:
@@ -453,22 +333,72 @@ def _draw_debug_objects(layout: UILayout, context: Context) -> None:
         note.label(text="选中网格物体后点 + 快速添加", icon='INFO')
 
 
-def _draw_debug_config(layout: UILayout, context: Context) -> None:
-    """矩阵配置。"""
-    item = _active_item(context)
-
+def _draw_points(layout: UILayout, context: Context, item) -> None:
+    """坐标点位列表 + 当前点位的坐标编辑。"""
     box = layout.box()
-    column = box.column(align=True)
+    header = box.row(align=True)
+    header.label(text=f"坐标点位 ({len(item.points)})", icon='MESH_GRID')
+    duplicates = _layout.duplicate_coordinate_groups(item) if len(item.points) > 1 else []
+    if duplicates:
+        header.alert = True
+        header.label(text=f"重合 {len(duplicates)} 处", icon='ERROR')
+        header.alert = False
 
-    mode_row = column.row(align=True)
-    mode_row.prop(item, "mix_mode", text="")
-    mode_row.prop(item, "auto_fill_grid", text="", icon='GRID')
+    row = box.row(align=True)
+    row.template_list(
+        HO_UL_ShapekeyTools_BlendPoints.__name__, "",
+        item, "points",
+        item, "point_index",
+        rows=8,
+    )
+    column = row.column(align=True)
+    column.operator(
+        _store.OP_ShapekeyTools_BlendPointAddActive.bl_idname, text="", icon='ADD')
+    column.operator(
+        _store.OP_ShapekeyTools_BlendPointRemove.bl_idname, text="", icon='REMOVE')
 
-    axis_row = column.row(align=True)
-    axis_row.prop(item, "u_name", text="")
-    axis_row.prop(item, "v_name", text="")
-    axis_row.prop(item, "cursor_u", text="")
-    axis_row.prop(item, "cursor_v", text="")
+    if not item.points:
+        note = box.row()
+        note.enabled = False
+        note.label(text="点 + 添加当前活动形态键（自动切到下一个键）", icon='INFO')
+        return
+
+    # 当前活动点位的坐标：选中行后在这里改
+    index = max(0, min(item.point_index, len(item.points) - 1))
+    point = item.points[index]
+    edit = box.row(align=True)
+    edit.label(text=f"#{index + 1} 控制点位置")
+    edit.prop(point, "u", text=item.u_name[:6] or "U")
+    edit.prop(point, "v", text=item.v_name[:6] or "V")
+    edit.operator(
+        OP_ShapekeyTools_BlendJumpToPoint.bl_idname, text="", icon='EYEDROPPER')
+
+
+def _draw_actions(layout: UILayout, context: Context, item) -> None:
+    """应用控制 / 全键归零。"""
+    scene = context.scene
+    box = layout.box()
+    row = box.row(align=True)
+    row.scale_y = 1.5
+    row.operator(
+        OP_ShapekeyTools_BlendApplyWeights.bl_idname,
+        text="应用控制",
+        icon='CHECKMARK',
+    )
+    row.operator(
+        OP_ShapekeyTools_BlendClearAllKeys.bl_idname,
+        text="全键归零",
+        icon='X',
+    )
+
+    if not _keys.active_objects(item):
+        warn = box.row()
+        warn.alert = True
+        warn.label(text="操作物体对象列表为空", icon='ERROR')
+
+    option = box.row(align=True)
+    option.prop(scene, "ho_bs_apply_on_cursor", text="控点立刻更新", toggle=True)
+    option.prop(scene, "ho_bs_mute_others", text="关闭其他", toggle=True)
 
 
 def _draw_debug_actions(layout: UILayout, context: Context) -> None:
@@ -479,7 +409,6 @@ def _draw_debug_actions(layout: UILayout, context: Context) -> None:
         return
     box = layout.box().column(align=True)
     _draw_points(box, context, item)
-    _draw_weights(box, context, item)
     _draw_actions(box, context, item)
 
 
@@ -525,13 +454,10 @@ def drawBlendPanel(layout: UILayout, context: Context) -> None:
 
 
 def reg_props():
-    bpy.types.Scene.ho_bs_weights_expanded = BoolProperty(
-        name="展开权重读数", default=True)
     bpy.types.Scene.ho_bs_debug_list = StringProperty(default="")
 
 
 def ureg_props():
-    del bpy.types.Scene.ho_bs_weights_expanded
     del bpy.types.Scene.ho_bs_debug_list
 
 
@@ -539,11 +465,9 @@ cls = [
     HO_UL_ShapekeyTools_BlendPoints,
     HO_UL_ShapekeyTools_BlendObjects,
     HO_MT_ShapekeyTools_BlendPointKey,
-    HO_MT_ShapekeyTools_BlendPointFromObject,
     OP_ShapekeyTools_BlendApplyWeights,
     OP_ShapekeyTools_BlendResetCursor,
-    OP_ShapekeyTools_BlendClearWeights,
-    OP_ShapekeyTools_BlendToggleWeightsPanel,
+    OP_ShapekeyTools_BlendClearAllKeys,
     OP_ShapekeyTools_BlendJumpToPoint,
 ]
 

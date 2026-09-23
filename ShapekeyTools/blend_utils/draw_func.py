@@ -31,7 +31,6 @@ COLOR_AXIS = (0.62, 0.72, 0.86, 0.75)
 COLOR_TEXT = (0.92, 0.94, 0.97, 1.0)
 COLOR_TEXT_DIM = (0.62, 0.66, 0.72, 1.0)
 COLOR_CENTER = (1.0, 0.85, 0.25, 1.0)
-COLOR_DISABLED = (0.55, 0.55, 0.58, 1.0)
 COLOR_HOVER = (1.0, 1.0, 1.0, 1.0)
 COLOR_IDLE_POINT = (0.35, 0.38, 0.42, 1.0)
 
@@ -39,10 +38,8 @@ _WEIGHT_COLD = (0.24, 0.45, 0.85)
 _WEIGHT_HOT = (0.98, 0.35, 0.25)
 
 
-def weight_color(weight: float, enabled: bool = True):
-    """按权重从冷到暖着色，权重为 0 时是暗灰，被禁用的点位是中性灰。"""
-    if not enabled:
-        return COLOR_DISABLED
+def weight_color(weight: float):
+    """按权重从冷到暖着色，权重为 0 时是暗灰。"""
     if weight <= 1e-6:
         return COLOR_IDLE_POINT
     ratio = max(0.0, min(1.0, weight))
@@ -78,10 +75,6 @@ def reset_shader():
     """丢弃缓存的着色器（绘制异常或上下文切换后重新获取）。"""
     global _SHADER
     _SHADER = None
-
-
-def has_gpu() -> bool:
-    return get_shader() is not None
 
 
 def _batch(primitive, coords):

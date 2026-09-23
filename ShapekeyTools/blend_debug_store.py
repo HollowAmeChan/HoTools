@@ -72,17 +72,6 @@ class PG_ShapekeyTools_BlendPoint(PropertyGroup):
         description="该坐标点驱动的形态键名；用右侧菜单直接从物体的键里挑，也可以手打",
         default="",
     )  # type: ignore
-    enabled: BoolProperty(
-        name="启用",
-        description="临时禁用该坐标点：不参与混合，也不会被写入",
-        default=True,
-    )  # type: ignore
-    is_current: BoolProperty(
-        name="当前",
-        description="该坐标点与当前输入坐标重合（只读标记）",
-        default=False,
-        options={'HIDDEN'},
-    )  # type: ignore
 
 
 class PG_ShapekeyTools_BlendObject(PropertyGroup):
@@ -144,11 +133,9 @@ class PG_ShapekeyTools_BlendDebugItem(PropertyGroup):
         name="展开操作物体对象列表",
         default=True,
     )  # type: ignore
-    auto_fill_grid: BoolProperty(
-        name="自动排布",
-        description="从活动物体取键时，按行列矩阵自动铺开坐标点",
-        default=True,
-    )  # type: ignore
+
+
+# endregion
 
 
 # region 属性注册
@@ -307,37 +294,99 @@ class OP_ShapekeyTools_BlendDebugClear(Operator):
 # region 坐标点算子
 
 
-def _rebuild_points(item, names) -> int:
-    """用一组形态键名重建坐标点列表（含可选的矩阵自动排布），返回点位数量。"""
-    item.points.clear()
-    for name in names:
-        point = item.points.add()
-        point.name = name
-        point.shape_key = name
-        point.enabled = True
-    if item.auto_fill_grid:
-        _layout.assign_grid(item)
-    item.point_index = 0
-    return len(item.points)
+def occupied_coordinates(item, *, exclude=-1):
+    """已占用的坐标格子（跳过错开的点位）。"""
+    taken = {}
+    for index, point in enumerate(item.points):
+        if index == exclude:
+            continue
+        taken[(round(point.u, 4), round(point.v, 4))] = index
+    return taken
 
 
-class OP_ShapekeyTools_BlendPointAdd(Operator):
-    bl_idname = "ho.shapekeytools_blend_point_add"
-    bl_label = "添加坐标点"
-    bl_description = "在原点附近添加一个坐标点"
+def free_grid_coordinate(item, *, exclude=-1):
+    """按矩阵顺序找第一个没被占用的格子，返回 ``(u, v)``。
+
+    找不到空位（矩阵已铺满）就返回 ``(0.0, 0.0)``，由调用方决定怎么处理。
+    """
+    span = max(1, len(item.points) + 1)
+    taken = occupied_coordinates(item, exclude=exclude)
+    for coordinate in _layout.grid_coordinates(span):
+        if coordinate not in taken:
+            return coordinate
+    return 0.0, 0.0
+
+
+def _append_point(item, name: str, *, u=None, v=None):
+    """往矩阵里加一个坐标点；``u/v`` 为 ``None`` 时自动找空位。"""
+    if u is None or v is None:
+        u, v = free_grid_coordinate(item)
+    point = item.points.add()
+    point.name = name
+    point.shape_key = name
+    point.u = round(float(u), 4)
+    point.v = round(float(v), 4)
+    item.point_index = len(item.points) - 1
+    return point
+
+
+class OP_ShapekeyTools_BlendPointAddActive(Operator):
+    bl_idname = "ho.shapekeytools_blend_point_add_active"
+    bl_label = "添加当前形态键"
+    bl_description = (
+        "把当前活动形态键加进矩阵（自动占一个空格子），并把活动形态键切到下一个，"
+        "方便一个一个往下点；活动物体不在操作物体列表里时会一并加进去"
+    )
     bl_options = {'REGISTER', 'UNDO'}
 
-    shape_key: StringProperty(name="形态键", default="")  # type: ignore
-
     def execute(self, context):
-        item = active_item(context.scene)
+        scene = context.scene
+        item = active_item(scene)
         if item is None:
-            self.report({'WARNING'}, "请先新建一个调试项")
+            self.report({'WARNING'}, "请先新建一个调试矩阵")
             return {'CANCELLED'}
-        point = item.points.add()
-        point.shape_key = self.shape_key
-        point.name = self.shape_key or f"点位 {len(item.points)}"
-        item.point_index = len(item.points) - 1
+        obj = context.object
+        names = _keys.shape_key_names(obj)
+        if not names:
+            self.report({'WARNING'}, "活动物体没有可用的形态键")
+            return {'CANCELLED'}
+
+        shape_keys = getattr(obj.data, "shape_keys", None)
+        basis = shape_keys.reference_key if shape_keys is not None else None
+        active = getattr(obj, "active_shape_key", None)
+        if active is None:
+            self.report({'WARNING'}, "活动物体没有活动形态键")
+            return {'CANCELLED'}
+        name = active.name
+        if basis is not None and active == basis:
+            # 停在基础键上时，从第一个可用的非基础键开始
+            name = names[0]
+        if shape_keys.key_blocks.get(name) is None:
+            self.report({'WARNING'}, f"活动键 {name} 不在形态键列表里")
+            return {'CANCELLED'}
+
+        existing = next(
+            (index for index, point in enumerate(item.points)
+             if point.shape_key == name), None)
+        if existing is None:
+            _append_point(item, name)
+        else:
+            # 已经在矩阵里：不新建，只把活动行切过去，避免重复点位
+            item.point_index = existing
+
+        if not item.objects:
+            before = len(item.objects)
+            if _keys.append_object(item, obj):
+                set_object_list_index(scene, before)
+
+        # 切到下一个键，方便连续点击
+        next_index = (names.index(name) + 1) % len(names)
+        try:
+            obj.active_shape_key_index = shape_keys.key_blocks.find(names[next_index])
+            switched = names[next_index]
+        except (AttributeError, ReferenceError, TypeError, ValueError):
+            switched = "?"
+        self.report({'INFO'}, f"已添加 {name}，活动键切到 {switched}")
         return {'FINISHED'}
 
 
@@ -357,124 +406,10 @@ class OP_ShapekeyTools_BlendPointRemove(Operator):
         return {'FINISHED'}
 
 
-class OP_ShapekeyTools_BlendPointClear(Operator):
-    bl_idname = "ho.shapekeytools_blend_point_clear"
-    bl_label = "清空坐标点"
-    bl_description = "删除当前调试项的全部坐标点"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        item = active_item(context.scene)
-        if item is None:
-            return {'CANCELLED'}
-        item.points.clear()
-        item.point_index = 0
-        return {'FINISHED'}
-
-
-class OP_ShapekeyTools_BlendPointFromActive(Operator):
-    bl_idname = "ho.shapekeytools_blend_point_from_active"
-    bl_label = "从活动物体取键"
-    bl_description = (
-        "把活动物体的全部形态键（不含基础键）按顺序生成为坐标点，"
-        "可选按行列矩阵自动铺开坐标"
-    )
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        scene = context.scene
-        item = active_item(scene)
-        if item is None:
-            self.report({'WARNING'}, "请先新建一个调试矩阵")
-            return {'CANCELLED'}
-        obj = context.object
-        names = _keys.shape_key_names(obj)
-        if not names:
-            self.report({'WARNING'}, "活动物体没有可用的形态键")
-            return {'CANCELLED'}
-
-        _rebuild_points(item, names)
-        item.name = item.name or obj.name
-        if not item.objects:
-            before = len(item.objects)
-            if _keys.append_objects(item, _keys.mesh_candidates(context)):
-                set_object_list_index(context.scene, before)
-        self.report({'INFO'}, f"已取入 {len(names)} 个形态键")
-        return {'FINISHED'}
-
-
-class OP_ShapekeyTools_BlendPointFromObject(Operator):
-    bl_idname = "ho.shapekeytools_blend_point_from_object"
-    bl_label = "从该物体取键"
-    bl_description = "用指定网格对象的全部形态键（不含基础键）重建坐标点列表"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    # 算子属性不支持 PointerProperty（数据块属性），所以按名字传。
-    object_name: StringProperty(name="物体名", default="")  # type: ignore
-
-    def _target(self):
-        if self.object_name:
-            return bpy.data.objects.get(self.object_name)
-        return None
-
-    def execute(self, context):
-        item = active_item(context.scene)
-        if item is None:
-            self.report({'WARNING'}, "请先新建一个调试矩阵")
-            return {'CANCELLED'}
-        obj = self._target()
-        names = _keys.shape_key_names(obj)
-        if not names:
-            self.report({'WARNING'}, "该物体没有可用的形态键")
-            return {'CANCELLED'}
-        _rebuild_points(item, names)
-        if obj is not None:
-            before = len(item.objects)
-            if _keys.append_object(item, obj):
-                set_object_list_index(context.scene, before)
-        self.report({'INFO'}, f"已从 {obj.name if obj else '物体'} 取入 {len(names)} 个形态键")
-        return {'FINISHED'}
-
-
-class OP_ShapekeyTools_BlendPointApplyGrid(Operator):
-    bl_idname = "ho.shapekeytools_blend_point_grid"
-    bl_label = "重排为矩阵"
-    bl_description = "按当前点位数量把坐标重新铺成居中的行列矩阵"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        item = active_item(context.scene)
-        if item is None or len(item.points) < 2:
-            self.report({'WARNING'}, "至少需要两个坐标点")
-            return {'CANCELLED'}
-        _layout.assign_grid(item)
-        return {'FINISHED'}
-
-
-class OP_ShapekeyTools_BlendPointToggle(Operator):
-    bl_idname = "ho.shapekeytools_blend_point_toggle"
-    bl_label = "启用/禁用坐标点"
-    bl_description = "临时禁用坐标点：不参与混合，也不会被写入"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    index: IntProperty(name="下标", default=-1)  # type: ignore
-
-    def execute(self, context):
-        item = active_item(context.scene)
-        if item is None:
-            return {'CANCELLED'}
-        index = self.index if self.index >= 0 else item.point_index
-        if not 0 <= index < len(item.points):
-            return {'CANCELLED'}
-        point = item.points[index]
-        point.enabled = not point.enabled
-        return {'FINISHED'}
-
-
 class OP_ShapekeyTools_BlendPointSetShapeKey(Operator):
     bl_idname = "ho.shapekeytools_blend_point_set_key"
     bl_label = "指定形态键"
-    bl_description = "把该坐标点指向一个具体的形态键（从物体的键里选或直接填名字）"
+    bl_description = "把该坐标点指向一个具体的形态键（从物体的键里选）"
     bl_options = {'REGISTER', 'UNDO'}
 
     index: IntProperty(name="下标", default=-1)  # type: ignore
@@ -491,26 +426,6 @@ class OP_ShapekeyTools_BlendPointSetShapeKey(Operator):
         point.shape_key = self.shape_key
         if self.shape_key:
             point.name = self.shape_key
-        return {'FINISHED'}
-
-
-class OP_ShapekeyTools_BlendPointNudge(Operator):
-    bl_idname = "ho.shapekeytools_blend_point_nudge"
-    bl_label = "微调坐标点"
-    bl_description = "按步长微调当前坐标点位置"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    du: FloatProperty(name="横轴步长", default=0.0)  # type: ignore
-    dv: FloatProperty(name="纵轴步长", default=0.0)  # type: ignore
-
-    def execute(self, context):
-        item = active_item(context.scene)
-        if item is None or not item.points:
-            return {'CANCELLED'}
-        index = max(0, min(item.point_index, len(item.points) - 1))
-        point = item.points[index]
-        point.u = round(point.u + self.du, 4)
-        point.v = round(point.v + self.dv, 4)
         return {'FINISHED'}
 
 
@@ -591,15 +506,9 @@ cls = [
     OP_ShapekeyTools_BlendDebugAdd,
     OP_ShapekeyTools_BlendDebugRemove,
     OP_ShapekeyTools_BlendDebugClear,
-    OP_ShapekeyTools_BlendPointAdd,
+    OP_ShapekeyTools_BlendPointAddActive,
     OP_ShapekeyTools_BlendPointRemove,
-    OP_ShapekeyTools_BlendPointClear,
-    OP_ShapekeyTools_BlendPointFromActive,
-    OP_ShapekeyTools_BlendPointFromObject,
-    OP_ShapekeyTools_BlendPointApplyGrid,
-    OP_ShapekeyTools_BlendPointToggle,
     OP_ShapekeyTools_BlendPointSetShapeKey,
-    OP_ShapekeyTools_BlendPointNudge,
     OP_ShapekeyTools_BlendObjectAdd,
     OP_ShapekeyTools_BlendObjectRemove,
     OP_ShapekeyTools_BlendObjectClear,
