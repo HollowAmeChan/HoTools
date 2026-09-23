@@ -1,9 +1,13 @@
-"""混合矩阵的坐标点位排布工具（纯计算，只依赖 ``math``）。
+"""混合矩阵的格点划分工具（纯计算，只依赖 ``math``）。
 
-- :func:`grid_coordinates`：把 N 个点位铺成居中的行列矩阵（新增点位找空位时用）；
+矩阵格点由**矩阵大小属性**（行/列格子数）强制划分：
+
+- :func:`matrix_grid`：按行列数给出格点坐标（左上起、行优先）；
+- :func:`matrix_unit`：单个格子的步长（用于微调与吸附）；
+- :func:`snap_to_grid`：把一个坐标吸附到最近的格点上；
 - :func:`duplicate_coordinate_groups`：找出坐标完全重合的点位，供界面提示。
 
-坐标映射本身在 ``blend_space_math``，这里只负责“怎么摆”。
+坐标到像素的映射在 ``blend_space_math``，这里只负责“格点在哪”。
 """
 
 from __future__ import annotations
@@ -11,30 +15,71 @@ from __future__ import annotations
 import math
 
 __all__ = (
+    "MAX_MATRIX_SIZE",
+    "MIN_MATRIX_SIZE",
     "duplicate_coordinate_groups",
-    "grid_coordinates",
+    "matrix_grid",
+    "matrix_grid_index",
+    "matrix_unit",
+    "snap_to_grid",
 )
 
+MIN_MATRIX_SIZE = 1
+MAX_MATRIX_SIZE = 16
 
-def grid_coordinates(count: int, *, span: float = 1.0) -> list[tuple[float, float]]:
-    """把 ``count`` 个坐标点铺成居中的行列矩阵，范围 ``[-span, span]``。
 
-    单点直接落在原点；其余情况按接近正方形的行列数铺开，行优先（先左右后上下），
-    这样“嘴巴上下 / 左右”这类二维表能直接从键的顺序读出来。
+def matrix_unit(count: int, *, span: float = 1.0) -> float:
+    """单格步长：``count`` 个格子铺满 ``[-span, span]`` 时的间距。
+
+    只有一个格子（或更少）时返回 ``2 * span``，这样“往右挪一格”会夹到边界，
+    等价于“已经在边上、挪不动”。
     """
-    if count <= 0:
-        return []
-    if count == 1:
-        return [(0.0, 0.0)]
-    columns = max(2, math.ceil(math.sqrt(count)))
-    rows = math.ceil(count / columns)
+    count = max(MIN_MATRIX_SIZE, int(count))
+    if count <= 1:
+        return 2.0 * span
+    return 2.0 * span / (count - 1)
+
+
+def matrix_grid(columns: int, rows: int, *, span: float = 1.0):
+    """按矩阵大小给出格点坐标，**从左到右、从上到下**（行优先）。
+
+    返回 ``[(-1, 1), (0, 1), (1, 1), (-1, 0), ...]`` 这样的列表，长度 ``columns*rows``。
+    """
+    columns = max(MIN_MATRIX_SIZE, int(columns))
+    rows = max(MIN_MATRIX_SIZE, int(rows))
+    step_u = matrix_unit(columns, span=span)
+    step_v = matrix_unit(rows, span=span)
     coordinates = []
-    for index in range(count):
-        row, column = divmod(index, columns)
-        u = (column / (columns - 1) * 2.0 - 1.0) * span if columns > 1 else 0.0
-        v = (1.0 - row / (rows - 1) * 2.0) * span if rows > 1 else 0.0
-        coordinates.append((round(u, 4), round(v, 4)))
+    for row in range(rows):
+        for column in range(columns):
+            u = -span + column * step_u if columns > 1 else 0.0
+            v = span - row * step_v if rows > 1 else 0.0
+            coordinates.append((round(u, 4), round(v, 4)))
     return coordinates
+
+
+def matrix_grid_index(u, v, columns, rows, *, span: float = 1.0):
+    """把一个坐标映射到最近的格点 ``(列, 行)`` 下标（不含合法性判断）。"""
+    columns = max(MIN_MATRIX_SIZE, int(columns))
+    rows = max(MIN_MATRIX_SIZE, int(rows))
+    step_u = matrix_unit(columns, span=span)
+    step_v = matrix_unit(rows, span=span)
+    column = 0 if columns <= 1 else int(round((float(u) + span) / step_u))
+    row = 0 if rows <= 1 else int(round((span - float(v)) / step_v))
+    return (
+        max(0, min(column, columns - 1)),
+        max(0, min(row, rows - 1)),
+    )
+
+
+def snap_to_grid(u, v, columns, rows, *, span: float = 1.0):
+    """把坐标吸附到最近的格点，返回 ``(u, v)``。"""
+    column, row = matrix_grid_index(u, v, columns, rows, span=span)
+    step_u = matrix_unit(columns, span=span)
+    step_v = matrix_unit(rows, span=span)
+    snapped_u = 0.0 if columns <= 1 else -span + column * step_u
+    snapped_v = 0.0 if rows <= 1 else span - row * step_v
+    return round(snapped_u, 4), round(snapped_v, 4)
 
 
 def duplicate_coordinate_groups(item):

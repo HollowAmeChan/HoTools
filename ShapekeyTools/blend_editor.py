@@ -1,4 +1,4 @@
-"""形态键混合矩阵调试页的界面（左右两个工作区）。
+﻿"""形态键混合矩阵调试页的界面（左右两个工作区）。
 
 布局：
 
@@ -198,8 +198,9 @@ class HO_UL_ShapekeyTools_BlendObjects(UIList):
         if missing:
             row.label(text="", icon='ERROR')
         # 右侧留白：这一小节没有任何控件，点它就是点在这一行上
-        spacer = row.row(align=True)
-        spacer.ui_units_x = 2.0
+        spacer = row.row()
+        spacer.ui_units_x = 2
+        spacer.label(text=" ")
 
 
 class HO_MT_ShapekeyTools_BlendPointKey(Menu):
@@ -257,16 +258,17 @@ def _draw_debug_list(layout: UILayout, context: Context) -> None:
 def _draw_debug_config(layout: UILayout, context: Context) -> None:
     """矩阵属性。"""
     item = _active_item(context)
-    if item is None:
-        placeholder = layout.box()
-        placeholder.label(text="没有调试矩阵", icon='INFO')
-        return
 
     box = layout.box()
     column = box.column(align=True)
 
     mode_row = column.row(align=True)
     mode_row.prop(item, "mix_mode", text="")
+
+    size_row = column.row(align=True)
+    size_row.label(text="矩阵")
+    size_row.prop(item, "matrix_columns", text="列")
+    size_row.prop(item, "matrix_rows", text="行")
 
     axis_row = column.row(align=True)
     axis_row.prop(item, "u_name", text="")
@@ -299,7 +301,7 @@ def _draw_debug_objects(layout: UILayout, context: Context) -> None:
         icon='TRIA_DOWN' if item.objects_expanded else 'TRIA_RIGHT',
         emboss=False,
     )
-    header.label(text=f"操作物体对象列表 ({len(item.objects)})")
+    header.label(text=f"物体列表 ({len(item.objects)})")
     if item.objects:
         valid_count = len(_keys.active_objects(item))
         if valid_count != len(item.objects):
@@ -334,10 +336,12 @@ def _draw_debug_objects(layout: UILayout, context: Context) -> None:
 
 
 def _draw_points(layout: UILayout, context: Context, item) -> None:
-    """坐标点位列表 + 当前点位的坐标编辑。"""
+    """坐标点位列表 + 当前点位的位置编辑与微调。"""
     box = layout.box()
     header = box.row(align=True)
-    header.label(text=f"坐标点位 ({len(item.points)})", icon='MESH_GRID')
+    header.label(text=f"{item.matrix_columns}×{item.matrix_rows} 栅格")
+    header.label(text=f" ({len(item.points)}/{item.matrix_columns * item.matrix_rows})点位")
+
     duplicates = _layout.duplicate_coordinate_groups(item) if len(item.points) > 1 else []
     if duplicates:
         header.alert = True
@@ -356,6 +360,9 @@ def _draw_points(layout: UILayout, context: Context, item) -> None:
         _store.OP_ShapekeyTools_BlendPointAddActive.bl_idname, text="", icon='ADD')
     column.operator(
         _store.OP_ShapekeyTools_BlendPointRemove.bl_idname, text="", icon='REMOVE')
+    column.separator()
+    column.operator(
+        _store.OP_ShapekeyTools_BlendPointReorder.bl_idname, text="", icon='GRID')
 
     if not item.points:
         note = box.row()
@@ -363,15 +370,24 @@ def _draw_points(layout: UILayout, context: Context, item) -> None:
         note.label(text="点 + 添加当前活动形态键（自动切到下一个键）", icon='INFO')
         return
 
-    # 当前活动点位的坐标：选中行后在这里改
+    # 当前活动点位：位置可以直接填，也可以按格点微调
     index = max(0, min(item.point_index, len(item.points) - 1))
     point = item.points[index]
     edit = box.row(align=True)
-    edit.label(text=f"#{index + 1} 控制点位置")
+    edit.label(text=f"#{index + 1}")
     edit.prop(point, "u", text=item.u_name[:6] or "U")
     edit.prop(point, "v", text=item.v_name[:6] or "V")
     edit.operator(
         OP_ShapekeyTools_BlendJumpToPoint.bl_idname, text="", icon='EYEDROPPER')
+
+    # 微调：裸的一排上下左右，一次挪一个格点
+    nudge = box.row(align=True)
+    for label, du, dv in (("←", -1, 0), ("↑", 0, 1), ("↓", 0, -1), ("→", 1, 0)):
+        button = nudge.operator(
+            _store.OP_ShapekeyTools_BlendPointNudge.bl_idname, text=label)
+        button.index = index
+        button.du = du
+        button.dv = dv
 
 
 def _draw_actions(layout: UILayout, context: Context, item) -> None:

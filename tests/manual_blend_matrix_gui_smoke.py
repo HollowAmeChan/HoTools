@@ -43,6 +43,7 @@ from HoTools.ShapekeyTools import blend_debug_store as store
 from HoTools.ShapekeyTools import blend_editor as editor
 from HoTools.ShapekeyTools import blend_overlay as overlay
 from HoTools.ShapekeyTools.blend_utils import blend_func as blend_func
+from HoTools.ShapekeyTools.blend_utils import point_layout as point_layout
 
 # ── 造一个带 3x3 口型矩阵的网格 ───────────────────────────────────────────
 for obj in list(bpy.data.objects):
@@ -69,6 +70,18 @@ for _ in range(9):
     assert bpy.ops.ho.shapekeytools_blend_point_add_active() == {'FINISHED'}
 assert len(item.points) == 9, [p.shape_key for p in item.points]
 assert len(store.occupied_coordinates(item)) == 9, "9 个点位应各占一格"
+# 重排矩阵：左上起、行优先（先把点打乱）
+for point in item.points:
+    point.u, point.v = 0.31, -0.27
+assert bpy.ops.ho.shapekeytools_blend_point_reorder() == {'FINISHED'}
+assert [(point.u, point.v) for point in item.points] == \
+    point_layout.matrix_grid(3, 3), "重排后应铺满 3×3 格点"
+# 微调：按格点步长挪一格
+item.point_index = 4
+assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=1, dv=0) == {'FINISHED'}
+assert (item.points[4].u, item.points[4].v) == (1.0, 0.0)
+assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=-1, dv=0) == {'FINISHED'}
+assert (item.points[4].u, item.points[4].v) == (0.0, 0.0)
 print("SMOKE points", len(item.points), flush=True)
 
 bpy.context.scene.ho_ShapekeyToolsPanel_Mod = 'PANEL_SHAPEKEYTOOLS_BLENDMATRIX'

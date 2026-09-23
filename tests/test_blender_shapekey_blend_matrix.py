@@ -73,6 +73,8 @@ for operator_id in (
     "shapekeytools_blend_debug_clear",
     "shapekeytools_blend_point_add_active",
     "shapekeytools_blend_point_remove",
+    "shapekeytools_blend_point_reorder",
+    "shapekeytools_blend_point_nudge",
     "shapekeytools_blend_point_set_key",
     "shapekeytools_blend_object_add",
     "shapekeytools_blend_object_remove",
@@ -90,6 +92,7 @@ for operator_id in (
     assert hasattr(bpy.types, struct), f"{operator_id} 没有注册（{struct} 不存在）"
 
 # 被删掉的一坨添加/批量功能必须真的消失
+# （注意 point_reorder / point_nudge 是这一版新加的，语义与旧的 grid/nudge 不同）
 for removed in (
     "shapekeytools_blend_point_add",
     "shapekeytools_blend_point_clear",
@@ -97,22 +100,39 @@ for removed in (
     "shapekeytools_blend_point_from_object",
     "shapekeytools_blend_point_grid",
     "shapekeytools_blend_point_toggle",
-    "shapekeytools_blend_point_nudge",
     "shapekeytools_blend_clear_weights",
     "shapekeytools_blend_toggle_weights",
 ):
     assert not hasattr(bpy.types, "HO_OT_" + removed), f"{removed} 应该已删除"
     assert not hasattr(store, removed), f"{removed} 应该已删除"
 
-# ── 坐标自动排布 ──────────────────────────────────────────────────────────
-assert point_layout.grid_coordinates(0) == []
-assert point_layout.grid_coordinates(1) == [(0.0, 0.0)]
-assert point_layout.grid_coordinates(2) == [(-1.0, 0.0), (1.0, 0.0)]
-assert point_layout.grid_coordinates(4) == [
+# ── 矩阵格点划分（纯计算） ────────────────────────────────────────────────
+assert point_layout.matrix_grid(1, 1) == [(0.0, 0.0)]
+# 2x2：四角，左上起、行优先
+assert point_layout.matrix_grid(2, 2) == [
     (-1.0, 1.0), (1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
-nine = point_layout.grid_coordinates(9)
-assert len(nine) == 9 and nine[0] == (-1.0, 1.0) and nine[4] == (0.0, 0.0)
-assert nine[-1] == (1.0, -1.0)
+# 3x3：完整九宫格
+three = point_layout.matrix_grid(3, 3)
+assert len(three) == 9
+assert three[0] == (-1.0, 1.0) and three[1] == (0.0, 1.0) and three[2] == (1.0, 1.0)
+assert three[3] == (-1.0, 0.0) and three[4] == (0.0, 0.0) and three[5] == (1.0, 0.0)
+assert three[8] == (1.0, -1.0), "最后一个格点是右下角"
+# 非正方形：列数决定横向格数，行数决定纵向格数
+four_by_two = point_layout.matrix_grid(4, 2)
+assert len(four_by_two) == 8
+assert four_by_two[0] == (-1.0, 1.0) and four_by_two[3] == (1.0, 1.0)
+assert four_by_two[4] == (-1.0, -1.0) and four_by_two[7] == (1.0, -1.0)
+assert all(abs(point[0]) <= 1.0 and abs(point[1]) <= 1.0 for point in four_by_two)
+# 单行/单列会被摆到中线
+assert point_layout.matrix_grid(3, 1) == [(-1.0, 0.0), (0.0, 0.0), (1.0, 0.0)]
+assert point_layout.matrix_grid(1, 3) == [(0.0, 1.0), (0.0, 0.0), (0.0, -1.0)]
+# 步长与吸附
+assert point_layout.matrix_unit(3) == 1.0
+assert point_layout.matrix_unit(2) == 2.0
+assert point_layout.matrix_unit(1) == 2.0, "单格时挪一格等价于顶到边界"
+assert point_layout.snap_to_grid(0.4, -0.6, 3, 3) == (0.0, -1.0)
+assert point_layout.snap_to_grid(-9.0, 9.0, 3, 3) == (-1.0, 1.0), "越界要夹到角上"
+assert point_layout.matrix_grid_index(0.4, -0.6, 3, 3) == (1, 2)
 
 # ── 场景数据 ──────────────────────────────────────────────────────────────
 clear_scene()
@@ -145,10 +165,12 @@ for expected in ("Smile_R", "Open", "Extra"):
 assert [point.shape_key for point in item.points] == [
     "Smile_L", "Smile_R", "Open", "Extra"]
 assert len(item.points) == 4
-# 点位自动占空格子：坐标互不重合，且落在矩阵范围内
+# 点位按矩阵格点自动占位：默认 3×3，前四个点应落在左上四个格点上
+assert (item.matrix_columns, item.matrix_rows) == (3, 3), "默认矩阵大小是 3×3"
+grid = point_layout.matrix_grid(3, 3)
+assert [(point.u, point.v) for point in item.points] == grid[:4], (
+    "新点位要按矩阵格点顺序占位")
 assert len(store.occupied_coordinates(item)) == 4, "每个点位应占一个不同的格子"
-for point in item.points:
-    assert -1.0 <= point.u <= 1.0 and -1.0 <= point.v <= 1.0, (point.u, point.v)
 # 删掉多余的点，后面的断言按三点矩阵算
 item.points.remove(3)
 
@@ -162,18 +184,63 @@ face_a.active_shape_key_index = shape_keys.key_blocks.find("Basis")
 assert bpy.ops.ho.shapekeytools_blend_point_add_active() == {'FINISHED'}
 assert len(item.points) == 3, "基础键不产生新点位"
 
-# ── 点位找空位 ────────────────────────────────────────────────────────────
-# 用一个临时矩阵验证，别动上面那个已经摆好的
+# ── 矩阵大小改了，格点与占位都要跟着变 ────────────────────────────────────
 scratch = bpy.context.scene.ho_bs_debug_items.add()
-assert store.free_grid_coordinate(scratch) == (0.0, 0.0), "空矩阵的第一个格子是原点"
+assert scratch.matrix_columns == 3 and scratch.matrix_rows == 3
+scratch.matrix_columns, scratch.matrix_rows = 2, 2
+assert store.free_grid_coordinate(scratch) == (-1.0, 1.0), "2×2 的第一个格点是左上角"
 scratch_point = scratch.points.add()
 scratch_point.shape_key = "K0"
-scratch_point.u, scratch_point.v = (0.0, 0.0)
-assert store.free_grid_coordinate(scratch) in point_layout.grid_coordinates(2), (
-    "原点被占了以后要换到相邻格子")
-assert store.free_grid_coordinate(scratch) != (0.0, 0.0)
-assert store.occupied_coordinates(scratch) == {(0.0, 0.0): 0}
+scratch_point.u, scratch_point.v = (-1.0, 1.0)
+assert store.free_grid_coordinate(scratch) == (1.0, 1.0), "下一个格点是右上角"
+assert store.occupied_coordinates(scratch) == {(-1.0, 1.0): 0}
 assert store.occupied_coordinates(scratch, exclude=0) == {}
+
+# ── 重排矩阵：左上起、行优先 ──────────────────────────────────────────────
+# 先把点位打乱，再重排回来
+scratch.points.clear()
+scratch.matrix_columns, scratch.matrix_rows = 2, 2
+for slot in range(5):
+    extra = scratch.points.add()
+    extra.shape_key = f"K{slot}"
+    extra.u, extra.v = 0.37, -0.42
+# 重排算子作用于「当前调试矩阵」，所以先把活动矩阵切到 scratch
+bpy.context.scene.ho_bs_debug_index = len(bpy.context.scene.ho_bs_debug_items) - 1
+assert store.active_item(bpy.context.scene).as_pointer() == scratch.as_pointer()
+assert bpy.ops.ho.shapekeytools_blend_point_reorder() == {'FINISHED'}
+expected_order = point_layout.matrix_grid(2, 2)
+assert [(point.u, point.v) for point in scratch.points[:4]] == expected_order, (
+    "重排要按左上起、行优先铺满格点")
+# 第 5 个点超出 2×2 格点：吸附到最后一个格点（会重合，界面会提示）
+assert (scratch.points[4].u, scratch.points[4].v) == expected_order[-1]
+
+# ── 微调：按矩阵格点步长挪一格 ────────────────────────────────────────────
+scratch.points.clear()
+scratch.matrix_columns, scratch.matrix_rows = 3, 3
+moved = scratch.points.add()
+moved.shape_key = "M"
+moved.u, moved.v = 0.0, 0.0
+assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=1, dv=0) == {'FINISHED'}
+assert (moved.u, moved.v) == (1.0, 0.0), "3×3 一格正好是 1.0"
+assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=0, dv=1) == {'FINISHED'}
+assert (moved.u, moved.v) == (1.0, 1.0)
+# 已经在角上，再往上/往右都挪不动 → 算子返回 CANCELLED
+assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=1, dv=0) == {'CANCELLED'}
+assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=0, dv=1) == {'CANCELLED'}
+assert (moved.u, moved.v) == (1.0, 1.0)
+# 往左下走两格
+assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=-1, dv=0) == {'FINISHED'}
+assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=0, dv=-1) == {'FINISHED'}
+assert (moved.u, moved.v) == (0.0, 0.0)
+# 2×2 时一格是 2.0
+scratch.matrix_columns, scratch.matrix_rows = 2, 2
+moved.u, moved.v = 1.0, 1.0
+assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=-1, dv=0) == {'FINISHED'}
+assert (moved.u, moved.v) == (-1.0, 1.0), "2×2 一步跨到另一侧"
+# 单格矩阵：挪不动
+scratch.matrix_columns = scratch.matrix_rows = 1
+moved.u, moved.v = 0.0, 0.0
+assert bpy.ops.ho.shapekeytools_blend_point_nudge(du=1, dv=0) == {'CANCELLED'}
 bpy.context.scene.ho_bs_debug_items.remove(
     len(bpy.context.scene.ho_bs_debug_items) - 1)
 store.clamp_index(bpy.context.scene)
@@ -275,12 +342,13 @@ assert_close(weights[0], 0.0, message="1D 不相邻点权重为 0")
 # 点位没有启用/禁用开关了：矩阵里出现的点一律参与混合
 assert store.PG_ShapekeyTools_BlendPoint.bl_rna.properties.get("enabled") is None
 for removed in ("shapekeytools_blend_point_toggle",
-                "shapekeytools_blend_point_nudge",
                 "shapekeytools_blend_point_clear",
                 "shapekeytools_blend_point_grid",
                 "shapekeytools_blend_point_from_active",
                 "shapekeytools_blend_point_from_object"):
     assert not hasattr(bpy.types, "HO_OT_" + removed), f"{removed} 应该已删除"
+assert store.PG_ShapekeyTools_BlendDebugItem.bl_rna.properties.get(
+    "auto_fill_grid") is None, "自动排布开关应该已删除"
 assert shapekey_utils.points(item) == tuple(item.points)
 
 # 空物体列表时不会误写，且报告里能看出没有物体
@@ -638,12 +706,18 @@ for leaked in (
     "candidate_shape_keys",
     "mesh_candidates",
     "append_object",
-    "grid_coordinates",        # 排布 → point_layout
-    "assign_grid",             # 重排已删
+    "grid_coordinates",        # 旧的按数量排布已删除（改用矩阵格点）
+    "assign_grid",
     "duplicate_coordinate_groups",
     "iter_points",
 ):
     assert not hasattr(store, leaked), f"store 不该再有 {leaked}"
+# 旧的按数量排布 API 必须彻底消失，格点划分只在 point_layout 里
+assert not hasattr(point_layout, "grid_coordinates")
+assert not hasattr(point_layout, "assign_grid")
+for kept in ("matrix_grid", "matrix_unit", "matrix_grid_index", "snap_to_grid",
+             "duplicate_coordinate_groups"):
+    assert hasattr(point_layout, kept), f"point_layout 应该提供 {kept}"
 # store 只保留“选择态”取值（数据和它的下标是同一层的东西）
 for kept in ("debug_items", "active_index", "active_item", "clamp_index",
              "object_list_index", "set_object_list_index"):

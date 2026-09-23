@@ -134,6 +134,25 @@ class PG_ShapekeyTools_BlendDebugItem(PropertyGroup):
         default=True,
     )  # type: ignore
 
+    # 矩阵大小：格点位置由它强制划分（列从左到右、行从上到下），
+    # 新增点位自动占格点、重排按格点顺序铺、微调按格点步长走。
+    matrix_columns: IntProperty(
+        name="列数",
+        description="矩阵横向格子数；格点均分横轴范围",
+        default=3,
+        min=_layout.MIN_MATRIX_SIZE,
+        soft_max=8,
+        max=_layout.MAX_MATRIX_SIZE,
+    )  # type: ignore
+    matrix_rows: IntProperty(
+        name="行数",
+        description="矩阵纵向格子数；格点均分纵轴范围",
+        default=3,
+        min=_layout.MIN_MATRIX_SIZE,
+        soft_max=8,
+        max=_layout.MAX_MATRIX_SIZE,
+    )  # type: ignore
+
 
 # endregion
 
@@ -304,21 +323,47 @@ def occupied_coordinates(item, *, exclude=-1):
     return taken
 
 
-def free_grid_coordinate(item, *, exclude=-1):
-    """按矩阵顺序找第一个没被占用的格子，返回 ``(u, v)``。
+def matrix_grid(item):
+    """当前矩阵大小对应的格点坐标（左上起、行优先）。"""
+    return _layout.matrix_grid(item.matrix_columns, item.matrix_rows)
 
-    找不到空位（矩阵已铺满）就返回 ``(0.0, 0.0)``，由调用方决定怎么处理。
+
+def matrix_cell_count(item) -> int:
+    """矩阵一共有多少个格点。"""
+    return max(1, int(item.matrix_columns)) * max(1, int(item.matrix_rows))
+
+
+def free_grid_coordinate(item, *, exclude=-1):
+    """按矩阵格点顺序找第一个没被占用的格子，返回 ``(u, v)``。
+
+    找不到空位（矩阵已铺满）就返回原点，由调用方决定怎么处理。
     """
-    span = max(1, len(item.points) + 1)
     taken = occupied_coordinates(item, exclude=exclude)
-    for coordinate in _layout.grid_coordinates(span):
+    for coordinate in matrix_grid(item):
         if coordinate not in taken:
             return coordinate
     return 0.0, 0.0
 
 
+def reorder_points_to_grid(item) -> int:
+    """把所有点位按格点顺序（左上起、行优先）重新铺开，返回铺设数量。
+
+    与「添加当前形态键」的占位规则一致：列表里第 n 个点放到第 n 个格点。
+    超出格点数量的尾部点位会被吸附到最后一个格点（会重合，界面会提示）。
+    """
+    grid = matrix_grid(item)
+    if not grid:
+        return 0
+    last = grid[-1]
+    for index, point in enumerate(item.points):
+        u, v = grid[index] if index < len(grid) else last
+        point.u = u
+        point.v = v
+    return len(item.points)
+
+
 def _append_point(item, name: str, *, u=None, v=None):
-    """往矩阵里加一个坐标点；``u/v`` 为 ``None`` 时自动找空位。"""
+    """往矩阵里加一个坐标点；``u/v`` 为 ``None`` 时按矩阵格点自动占位。"""
     if u is None or v is None:
         u, v = free_grid_coordinate(item)
     point = item.points.add()
@@ -328,6 +373,28 @@ def _append_point(item, name: str, *, u=None, v=None):
     point.v = round(float(v), 4)
     item.point_index = len(item.points) - 1
     return point
+
+
+def nudge_point(point, item, du: int, dv: int) -> bool:
+    """按矩阵格点把点位挪动 ``du/dv`` 格（正数向右/向上），返回是否变化。
+
+    只有一个格点的方向（列数或行数为 1）挪不动；``u/v`` 会被夹在矩阵范围内，
+    已经贴边的方向也不再动。
+    """
+    if point is None or item is None:
+        return False
+    columns = max(1, int(item.matrix_columns))
+    rows = max(1, int(item.matrix_rows))
+    new_u, new_v = point.u, point.v
+    if du and columns > 1:
+        new_u = min(1.0, max(-1.0, point.u + du * _layout.matrix_unit(columns)))
+    if dv and rows > 1:
+        new_v = min(1.0, max(-1.0, point.v + dv * _layout.matrix_unit(rows)))
+    if abs(new_u - point.u) < 1e-9 and abs(new_v - point.v) < 1e-9:
+        return False
+    point.u = round(new_u, 4)
+    point.v = round(new_v, 4)
+    return True
 
 
 class OP_ShapekeyTools_BlendPointAddActive(Operator):
@@ -403,6 +470,53 @@ class OP_ShapekeyTools_BlendPointRemove(Operator):
         index = max(0, min(item.point_index, len(item.points) - 1))
         item.points.remove(index)
         item.point_index = max(0, min(index, len(item.points) - 1))
+        return {'FINISHED'}
+
+
+class OP_ShapekeyTools_BlendPointReorder(Operator):
+    bl_idname = "ho.shapekeytools_blend_point_reorder"
+    bl_label = "重排矩阵"
+    bl_description = (
+        "按当前矩阵大小，把点位从左上角开始按行优先顺序铺到格点上"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        item = active_item(context.scene)
+        if item is None or not item.points:
+            self.report({'WARNING'}, "没有点位可重排")
+            return {'CANCELLED'}
+        count = reorder_points_to_grid(item)
+        overflow = count - matrix_cell_count(item)
+        if overflow > 0:
+            self.report(
+                {'WARNING'},
+                f"已重排 {count} 个点位，其中 {overflow} 个超出矩阵格点（会重合）")
+        else:
+            self.report({'INFO'}, f"已把 {count} 个点位铺到 "
+                                  f"{item.matrix_columns}×{item.matrix_rows} 格点")
+        return {'FINISHED'}
+
+
+class OP_ShapekeyTools_BlendPointNudge(Operator):
+    bl_idname = "ho.shapekeytools_blend_point_nudge"
+    bl_label = "微调控制点"
+    bl_description = "按矩阵格点把一个点位挪动一格（正数向右/向上）"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    index: IntProperty(name="下标", default=-1)  # type: ignore
+    du: IntProperty(name="列方向", default=0, min=-1, max=1)  # type: ignore
+    dv: IntProperty(name="行方向", default=0, min=-1, max=1)  # type: ignore
+
+    def execute(self, context):
+        item = active_item(context.scene)
+        if item is None or not item.points:
+            return {'CANCELLED'}
+        index = self.index if self.index >= 0 else item.point_index
+        if not 0 <= index < len(item.points):
+            return {'CANCELLED'}
+        if not nudge_point(item.points[index], item, self.du, self.dv):
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 
@@ -508,6 +622,8 @@ cls = [
     OP_ShapekeyTools_BlendDebugClear,
     OP_ShapekeyTools_BlendPointAddActive,
     OP_ShapekeyTools_BlendPointRemove,
+    OP_ShapekeyTools_BlendPointReorder,
+    OP_ShapekeyTools_BlendPointNudge,
     OP_ShapekeyTools_BlendPointSetShapeKey,
     OP_ShapekeyTools_BlendObjectAdd,
     OP_ShapekeyTools_BlendObjectRemove,
