@@ -2,6 +2,11 @@ import bpy
 
 from . import boolean
 from .bone_chain import OP_CreatBoneChainByMeshFlow
+from .corrective_smooth import (
+    HO_CORRECTIVE_CLASSES,
+    HO_OT_LocalCorrectiveSmooth,
+    cleanup_corrective_smooth_huds,
+)
 from .edge_constraint import OP_TransformEdgeConstrained
 from .edge_flow import (
     EDGE_FLOW_CLASSES,
@@ -83,6 +88,7 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         layout.separator()
         layout.operator(HO_OT_MeshFlatten.bl_idname, icon='MESH_GRID')
         layout.operator(HO_OT_MeshRelax.bl_idname, icon='MOD_SMOOTH')
+        layout.operator(HO_OT_LocalCorrectiveSmooth.bl_idname, icon='MOD_SMOOTH')
         layout.operator(HO_OT_MeshCircleEven.bl_idname, icon='MESH_CIRCLE')
 
 
@@ -93,6 +99,7 @@ def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
 _SUPPLEMENTAL_CLASSES = (
     *EDGE_FLOW_CLASSES,
     *HO_MESH_CLASSES,
+    *HO_CORRECTIVE_CLASSES,
     OP_CustomSplitNormals_Export,
     OP_CustomSplitNormals_Import,
     OP_MergeNearestVertexNormals,
@@ -210,6 +217,10 @@ def register():
 
 
 def unregister():
+    # A modal operator cancelled mid-flight would otherwise leave a HUD draw
+    # handler drawing over a disabled add-on.
+    cleanup_corrective_smooth_huds()
+
     for keymap, keymap_item in addon_keymaps:
         keymap.keymap_items.remove(keymap_item)
     addon_keymaps.clear()
