@@ -34,6 +34,13 @@ except ImportError:  # 兼容直接导入脚本
         get_template_names,
     )
 
+try:
+    from .paste import geometry
+    from .paste.matcher import ShapekeyPasteMatch
+except ImportError:  # 兼容直接导入脚本
+    from paste import geometry
+    from paste.matcher import ShapekeyPasteMatch
+
 
 # 监听器缓存
 LISTENER_CACHE = {
@@ -171,6 +178,19 @@ def reg_props():
         name="局部模式",
         description="开启后复制/粘贴/叠加/叠减只处理选中顶点记录的相对位移；绝对模式下不可用",
         default=False)
+
+    # 拓扑不一致时尽力匹配的默认值：弹窗里改过之后会记住，下次直接沿用。
+    bpy.types.Scene.hoShapekeyTools_paste_match_mode = EnumProperty(
+        name="尽力匹配方式",
+        description="拓扑不一致时的默认匹配方式",
+        items=ShapekeyPasteMatch.MODE_ITEMS,
+        default=ShapekeyPasteMatch.DEFAULT_MODE)
+    bpy.types.Scene.hoShapekeyTools_paste_match_tolerance = FloatProperty(
+        name="尽力匹配容差",
+        description="0 表示按包围盒对角线自动计算",
+        default=ShapekeyPasteMatch.DEFAULT_TOLERANCE,
+        min=0.0,
+        soft_max=1.0)
     
     bpy.types.Scene.hoShapekeyTools_control_shape_key_listener = bpy.props.BoolProperty(
         name="开启全局多物体同步模式",
@@ -212,6 +232,8 @@ def ureg_props():
     del bpy.types.Scene.hoShapekeyTools_splitShapeKey_namesuffix_viewRight
     del bpy.types.Scene.hoShapekeyTools_copy_is_abs
     del bpy.types.Scene.hoShapekeyTools_copy_is_partial
+    del bpy.types.Scene.hoShapekeyTools_paste_match_mode
+    del bpy.types.Scene.hoShapekeyTools_paste_match_tolerance
 
     del bpy.types.Scene.hoShapekeyTools_control_shape_key_listener
     if sk_load_handler in bpy.app.handlers.load_post:
@@ -1530,7 +1552,7 @@ class OP_ShapekeyTools_copyShapekey2ShearPlate(Operator):
     bl_idname = "ho.shapekeytools_copyshapekey2shearplate"
     bl_label = "复制形态键到剪切板"
     bl_options = {'REGISTER', 'UNDO'}
-    bl_description = "默认为相对基型的位移,非solo模式会考虑键值,开启绝对后复制绝对位置,要确保点序一致"
+    bl_description = "默认为相对基型的位移,非solo模式会考虑键值,开启绝对后复制绝对位置"
 
     is_abs:BoolProperty(name="是否绝对复制",default=False) # type: ignore
 
@@ -1545,294 +1567,329 @@ class OP_ShapekeyTools_copyShapekey2ShearPlate(Operator):
             return {'CANCELLED'}
         
         active_sk = obj.active_shape_key
-        basis_key = obj.data.shape_keys.reference_key
         solo_mode = obj.show_only_shape_key
         sk_value = 1.0 if solo_mode else active_sk.value #对齐用户视图显示
 
-        # 提取形态键数据
-        coords = []
-        if self.is_abs:
-            coords = [list(v.co) for v in active_sk.data]
-        else :
-            for base_v, active_v in zip(basis_key.data, active_sk.data):
-                delta = (active_v.co - base_v.co) * sk_value
-                coords.append([delta.x, delta.y, delta.z])
-
+        # 提取形态键数据；同时记下源物体引用，供粘贴时做拓扑不一致的尽力匹配。
+        payload = ShapekeyPasteMatch.build_payload(
+            obj, active_sk, is_abs=self.is_abs, value=sk_value)
 
         # 使用JSON存储并复制到剪切板
-        json_str = json.dumps(coords)
-        context.window_manager.clipboard = json_str
+        context.window_manager.clipboard = json.dumps(payload)
         if not solo_mode:
             self.report({'INFO'},f"已复制 '{active_sk.name}' (value={sk_value:.3f}) 到剪切板，未开启独显模式")
         else:
             self.report({'INFO'},f"已复制 '{active_sk.name}' 数据到剪切板")
         return {'FINISHED'}
 
-class OP_ShapekeyTools_importShapekeyFromShearPlate(Operator):
+def _wrap_dialog_text(text, width=26):
+    """把长提示按固定宽度切成几行，避免弹窗文字溢出。"""
+    lines = [text[index:index + width] for index in range(0, len(text), width)]
+    return lines or [""]
+
+
+class _FullShapekeyPasteBase:
+    """全量粘贴（粘贴 / 叠加 / 叠减）的公共实现。
+
+    剪贴板与目标拓扑一致、或剪贴板还是旧格式时，走与旧实现完全相同的
+    「按点序直填」；只有「源引用健康 + 拓扑不一致」时才进入
+    ``ShapekeyPasteMatch`` 的尽力匹配支线，且必须由用户在弹窗里确认。
+    """
+
+    operation = 'replace'
+    success_verb = "已粘贴到"
+
+    # ---------------- 基础校验 ----------------
+
+    def _validate_target(self, obj):
+        """返回 ``(status, message, active_sk)``；status 为 None 表示可以继续写。"""
+        if obj.type != 'MESH':
+            return 'skipped', "非 Mesh 物体", None
+        if not obj.data.shape_keys:
+            return 'skipped', "没有 ShapeKey", None
+
+        active_sk = obj.active_shape_key
+        if active_sk is None:
+            return 'skipped', "没有活动 ShapeKey", None
+
+        solo_mode = obj.show_only_shape_key
+        if not solo_mode and active_sk.value != 1:
+            return 'warnings', "value 不等于 1 且未开启 Solo/固定模式", None
+        return None, None, active_sk
+
+    # ---------------- 写入 ----------------
+
+    def _write_vertex(self, active_sk, basis, index, offset):
+        if self.operation == 'add':
+            active_sk.data[index].co += offset
+        elif self.operation == 'sub':
+            active_sk.data[index].co -= offset
+        elif getattr(self, "is_abs", False):
+            active_sk.data[index].co = offset
+        else:
+            active_sk.data[index].co = basis.data[index].co + offset
+
+    def paste_to_object(self, obj, coords, mapping=None):
+        """把 ``coords`` 写进 ``obj`` 的活动键。
+
+        ``mapping`` 为 None 时按点序直填（要求点数一致，与旧行为逐位一致）；
+        否则只写 ``{目标顶点索引: [(源顶点索引, 权重)]}`` 里列出的顶点，
+        未列出的顶点保持原值。
+        """
+        status, message, active_sk = self._validate_target(obj)
+        if status is not None:
+            return status, message
+
+        basis = obj.data.shape_keys.reference_key
+        if mapping is None:
+            if len(coords) != len(active_sk.data):
+                return 'skipped', f"顶点数不匹配：剪贴板 {len(coords)} / 当前物体 {len(active_sk.data)}"
+            try:
+                for index, co in enumerate(coords):
+                    self._write_vertex(active_sk, basis, index, Vector(co))
+            except Exception as exc:
+                return 'skipped', f"写入失败：{exc}"
+            return 'success', f"{self.success_verb} {obj.name} 的 {active_sk.name}"
+
+        try:
+            for dest_index, source_list in mapping.items():
+                offset = Vector()
+                for source_index, weight in source_list:
+                    offset += Vector(coords[source_index]) * weight
+                self._write_vertex(active_sk, basis, dest_index, offset)
+        except Exception as exc:
+            return 'skipped', f"写入失败：{exc}"
+
+        return 'success', f"{self.success_verb} {obj.name} 的 {active_sk.name}"
+
+    # ---------------- 弹窗两段式 ----------------
+
+    def _read_payload(self, context):
+        return ShapekeyPasteMatch.parse_payload(context.window_manager.clipboard)
+
+    def invoke(self, context, event):
+        payload, error = self._read_payload(context)
+        if error:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+        # 旧格式剪贴板没有源引用，完全走旧路径，不做任何拓扑体检。
+        if payload["legacy"]:
+            return self.execute(context)
+
+        reference = ShapekeyPasteMatch.resolve_source(payload)
+        if not reference.ok:
+            return context.window_manager.invoke_popup(self, width=460)
+
+        report = ShapekeyPasteMatch.inspect(payload, list(context.selected_objects))
+        if not report.mismatch:
+            return self.execute(context)
+
+        self.match_mode = context.scene.hoShapekeyTools_paste_match_mode
+        self.max_distance = context.scene.hoShapekeyTools_paste_match_tolerance
+        return context.window_manager.invoke_props_dialog(self, width=470)
+
+    def draw(self, context):
+        layout = self.layout
+        payload, error = self._read_payload(context)
+        if payload is None:
+            box = layout.box()
+            box.alert = True
+            box.label(text=error or "剪贴板数据无效", icon='ERROR')
+            return
+
+        reference = ShapekeyPasteMatch.resolve_source(payload)
+        if not reference.ok:
+            box = layout.box()
+            box.alert = True
+            box.label(text="无法尽力匹配", icon='ERROR')
+            for line in _wrap_dialog_text(reference.reason):
+                box.label(text=line)
+            layout.label(text="粘贴已取消，不会修改任何数据", icon='INFO')
+            return
+
+        report = ShapekeyPasteMatch.inspect(payload, list(context.selected_objects))
+        box = layout.box()
+        box.alert = True
+        box.label(text="拓扑不一致，按点序直接粘贴会错位", icon='ERROR')
+        for entry in report.entries:
+            if not entry.mismatch:
+                continue
+            if entry.agreement is None:
+                box.label(
+                    text=f"{entry.name}：剪贴板 {entry.source_count} 点 / "
+                         f"当前 {entry.dest_count} 点")
+            else:
+                box.label(
+                    text=f"{entry.name}：剪贴板 {entry.source_count} 点 / "
+                         f"当前 {entry.dest_count} 点 / 点序吻合 {entry.agreement:.1%}")
+
+        layout.label(text="尽力匹配方式：")
+        layout.prop(self, "match_mode", text="")
+        row = layout.row(align=True)
+        row.prop(self, "max_distance", text="匹配容差")
+        row.label(text="0 = 自动")
+        layout.label(text="点序模式会逐点校验基型位置，错位的点用最近邻修正", icon='INFO')
+        layout.label(text="未匹配的顶点保持原值，不会被写入", icon='INFO')
+        layout.label(text=ShapekeyPasteMatch.UV_MODE_HINT, icon='INFO')
+        layout.label(text=ShapekeyPasteMatch.UV_SIDE_HINT, icon='INFO')
+
+    def execute(self, context):
+        payload, error = self._read_payload(context)
+        if error:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+        if payload["legacy"]:
+            return self._execute_payload(context, payload, None)
+
+        reference = ShapekeyPasteMatch.resolve_source(payload)
+        if not reference.ok:
+            self.report({'WARNING'}, f"{reference.reason}；粘贴已取消")
+            return {'CANCELLED'}
+
+        report = ShapekeyPasteMatch.inspect(payload, list(context.selected_objects))
+        if not report.mismatch:
+            return self._execute_payload(context, payload, None)
+
+        # 弹窗确认过的尽力匹配：记住这次的选择，下次直接沿用。
+        context.scene.hoShapekeyTools_paste_match_mode = self.match_mode
+        context.scene.hoShapekeyTools_paste_match_tolerance = self.max_distance
+        return self._execute_payload(context, payload, reference)
+
+    def _execute_payload(self, context, payload, reference):
+        coords = payload["coords"]
+
+        selected_objects = list(context.selected_objects)
+        if not selected_objects:
+            self.report({'WARNING'}, "没有选中物体")
+            return {'CANCELLED'}
+
+        # 尽力匹配只作用在体检判定为拓扑不一致的物体上；同一批里拓扑一致的物体
+        # 仍然走「按点序直填」，否则用户为 A 选的模式会把只是被挪到别处的 B 一起坑掉。
+        fallback_names = set()
+        if reference is not None:
+            report = ShapekeyPasteMatch.inspect(payload, selected_objects)
+            fallback_names = {entry.name for entry in report.entries if entry.mismatch}
+
+        success = []
+        skipped = []
+        warnings = []
+        details = []
+
+        for obj in selected_objects:
+            status, message, _active_sk = self._validate_target(obj)
+            result = None
+            if status is None and obj.name in fallback_names:
+                try:
+                    result = ShapekeyPasteMatch.build_mapping(
+                        reference.obj, obj, payload,
+                        mode=self.match_mode, max_distance=self.max_distance)
+                except geometry.ShapekeyMatchError as exc:
+                    status, message = 'skipped', str(exc)
+
+            if status is None:
+                status, message = self.paste_to_object(
+                    obj, coords, None if result is None else result.pairs)
+                if status == 'success' and result is not None:
+                    message = f"{message}｜{result.summary()}"
+                    details.append(f"{obj.name}({result.summary()})")
+
+            if len(selected_objects) == 1:
+                if status == 'success':
+                    self.report({'INFO'}, message)
+                    return {'FINISHED'}
+                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
+                return {'CANCELLED'}
+
+            if status == 'success':
+                success.append(obj.name)
+            elif status == 'warnings':
+                warnings.append(f"{obj.name}({message})")
+            else:
+                skipped.append(f"{obj.name}({message})")
+
+        # ---------- 汇总报告 ----------
+        msg = f"成功: {len(success)}"
+        if skipped:
+            msg += f" | 跳过: {len(skipped)}"
+        if warnings:
+            msg += f" | 警告: {len(warnings)}"
+        self.report({'INFO'}, msg+"详情查看控制台")
+
+        print("====Shapekey Paste Result====")
+        if warnings:
+            print("Value Warning Objects:")
+            for w in warnings:
+                print("  ", w)
+        if skipped:
+            print("Skipped Objects:")
+            for s in skipped:
+                print("  ", s)
+        if details:
+            print("Best Effort Matches:")
+            for d in details:
+                print("  ", d)
+        print("====End Result====")
+
+        return {'FINISHED'}
+
+
+class OP_ShapekeyTools_importShapekeyFromShearPlate(_FullShapekeyPasteBase, Operator):
     bl_idname = "ho.shapekeytools_importshapekey_from_shearplate"
     bl_label = "从剪切板粘贴形态键"
     bl_options = {'REGISTER', 'UNDO'}
-    bl_description = "默认为相对基型的位移,非solo模式会考虑键值,开启绝对后粘贴绝对位置,要确保点序一致"
+    bl_description = "默认为相对基型的位移,非solo模式会考虑键值,开启绝对后粘贴绝对位置;拓扑不一致时可选择尽力匹配"
 
     is_abs: BoolProperty(name="是否粘贴绝对位置", default=False)  # type: ignore
+    match_mode: EnumProperty(
+        name="尽力匹配方式",
+        description="拓扑不一致时按什么线索找对应顶点",
+        items=ShapekeyPasteMatch.MODE_ITEMS,
+        default=ShapekeyPasteMatch.DEFAULT_MODE)  # type: ignore
+    max_distance: FloatProperty(
+        name="匹配容差",
+        description="0 表示按包围盒对角线自动计算",
+        default=ShapekeyPasteMatch.DEFAULT_TOLERANCE, min=0.0, soft_max=1.0)  # type: ignore
 
-    def paste_to_object(self, obj, data):
-        if obj.type != 'MESH':
-            return 'skipped', "非 Mesh 物体"
+    operation = 'replace'
+    success_verb = "已粘贴到"
 
-        if not obj.data.shape_keys:
-            return 'skipped', "没有 ShapeKey"
-
-        active_sk = obj.active_shape_key
-        basis_key = obj.data.shape_keys.reference_key
-
-        if active_sk is None:
-            return 'skipped', "没有活动 ShapeKey"
-
-        solo_mode = obj.show_only_shape_key
-        if not solo_mode and active_sk.value != 1:
-            return 'warnings', "value 不等于 1 且未开启 Solo/固定模式"
-
-        if len(data) != len(active_sk.data):
-            return 'skipped', f"顶点数不匹配：剪贴板 {len(data)} / 当前物体 {len(active_sk.data)}"
-
-        try:
-            if self.is_abs:
-                for i, co in enumerate(data):
-                    active_sk.data[i].co = Vector(co)
-            else:
-                for i, delta in enumerate(data):
-                    base = basis_key.data[i].co
-                    active_sk.data[i].co = base + Vector(delta)
-        except Exception as exc:
-            return 'skipped', f"写入失败：{exc}"
-
-        return 'success', f"已粘贴到 {obj.name} 的 {active_sk.name}"
-
-    def execute(self, context):
-        # ---------- 读取剪切板 ----------
-        try:
-            data = json.loads(context.window_manager.clipboard)
-        except Exception:
-            self.report({'ERROR'}, "剪切板数据解析失败")
-            return {'CANCELLED'}
-
-        selected_objects = list(context.selected_objects)
-        if not selected_objects:
-            self.report({'WARNING'}, "没有选中物体")
-            return {'CANCELLED'}
-
-        success = []
-        skipped = []
-        warnings = []
-
-        for obj in selected_objects:
-            status, message = self.paste_to_object(obj, data)
-
-            if len(selected_objects) == 1:
-                if status == 'success':
-                    self.report({'INFO'}, message)
-                    return {'FINISHED'}
-                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
-                return {'CANCELLED'}
-
-            if status == 'success':
-                success.append(obj.name)
-            elif status == 'warnings':
-                warnings.append(f"{obj.name}({message})")
-            else:
-                skipped.append(f"{obj.name}({message})")
-
-        # ---------- 汇总报告 ----------
-        msg = f"成功: {len(success)}"
-        if skipped:
-            msg += f" | 跳过: {len(skipped)}"
-        if warnings:
-            msg += f" | 警告: {len(warnings)}"
-        self.report({'INFO'}, msg+"详情查看控制台")
-
-        print("====Shapekey Paste Result====")
-        if warnings:
-            print("Value Warning Objects:")
-            for w in warnings:
-                print("  ", w)
-        if skipped:
-            print("Skipped Objects:")
-            for s in skipped:
-                print("  ", s)
-        print("====End Result====")
-
-        return {'FINISHED'}
-
-class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add(Operator):
+class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add(_FullShapekeyPasteBase, Operator):
     bl_idname = "ho.shapekeytools_importshapekey_from_shearplate_relatove_add"
     bl_label = "从剪切板粘贴相对形态键进行叠加"
     bl_options = {'REGISTER', 'UNDO'}
-    bl_description = "粘贴相对基型的位移，会直接叠加到当前活动键上，开启绝对后不要使用,要确保点序一致"
+    bl_description = "粘贴相对基型的位移，会直接叠加到当前活动键上;拓扑不一致时可选择尽力匹配"
 
-    def paste_to_object(self, obj, data):
-        if obj.type != 'MESH':
-            return 'skipped', "非 Mesh 物体"
-        if not obj.data.shape_keys:
-            return 'skipped', "没有 ShapeKey"
+    match_mode: EnumProperty(
+        name="尽力匹配方式",
+        description="拓扑不一致时按什么线索找对应顶点",
+        items=ShapekeyPasteMatch.MODE_ITEMS,
+        default=ShapekeyPasteMatch.DEFAULT_MODE)  # type: ignore
+    max_distance: FloatProperty(
+        name="匹配容差",
+        description="0 表示按包围盒对角线自动计算",
+        default=ShapekeyPasteMatch.DEFAULT_TOLERANCE, min=0.0, soft_max=1.0)  # type: ignore
 
-        active_sk = obj.active_shape_key
-        if not active_sk:
-            return 'skipped', "没有活动 ShapeKey"
+    operation = 'add'
+    success_verb = "已叠加到"
 
-        solo_mode = obj.show_only_shape_key
-        if not solo_mode and active_sk.value != 1:
-            return 'warnings', "value 不等于 1 且未开启 Solo/固定模式"
-
-        if len(data) != len(active_sk.data):
-            return 'skipped', f"顶点数不匹配：剪贴板 {len(data)} / 当前物体 {len(active_sk.data)}"
-
-        try:
-            for i, delta in enumerate(data):
-                active_sk.data[i].co += Vector(delta)
-        except Exception as exc:
-            return 'skipped', f"写入失败：{exc}"
-
-        return 'success', f"已叠加到 {obj.name} 的 {active_sk.name}"
-
-    def execute(self, context):
-        try:
-            data = json.loads(context.window_manager.clipboard)
-        except Exception:
-            self.report({'ERROR'}, "剪切板数据解析失败")
-            return {'CANCELLED'}
-
-        selected_objects = list(context.selected_objects)
-        if not selected_objects:
-            self.report({'WARNING'}, "没有选中物体")
-            return {'CANCELLED'}
-
-        success = []
-        skipped = []
-        warnings = []
-
-        for obj in selected_objects:
-            status, message = self.paste_to_object(obj, data)
-
-            if len(selected_objects) == 1:
-                if status == 'success':
-                    self.report({'INFO'}, message)
-                    return {'FINISHED'}
-                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
-                return {'CANCELLED'}
-
-            if status == 'success':
-                success.append(obj.name)
-            elif status == 'warnings':
-                warnings.append(f"{obj.name}({message})")
-            else:
-                skipped.append(f"{obj.name}({message})")
-
-        # ---------- 汇总报告 ----------
-        msg = f"成功: {len(success)}"
-        if skipped:
-            msg += f" | 跳过: {len(skipped)}"
-        if warnings:
-            msg += f" | 警告: {len(warnings)}"
-        self.report({'INFO'}, msg+"详情查看控制台")
-
-        print("====Shapekey Paste Result====")
-        if warnings:
-            print("Value Warning Objects:")
-            for w in warnings:
-                print("  ", w)
-        if skipped:
-            print("Skipped Objects:")
-            for s in skipped:
-                print("  ", s)
-        print("====End Result====")
-
-        return {'FINISHED'}
-
-class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub(Operator):
+class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub(_FullShapekeyPasteBase, Operator):
     bl_idname = "ho.shapekeytools_importshapekey_from_shearplate_relatove_sub"
     bl_label = "从剪切板粘贴相对形态键进行相减"
     bl_options = {'REGISTER', 'UNDO'}
-    bl_description = "粘贴相对基型的位移，会从当前活动键上减去，开启绝对后不要使用,要确保点序一致"
+    bl_description = "粘贴相对基型的位移，会从当前活动键上减去;拓扑不一致时可选择尽力匹配"
 
-    def paste_to_object(self, obj, data):
-        if obj.type != 'MESH':
-            return 'skipped', "非 Mesh 物体"
-        if not obj.data.shape_keys:
-            return 'skipped', "没有 ShapeKey"
+    match_mode: EnumProperty(
+        name="尽力匹配方式",
+        description="拓扑不一致时按什么线索找对应顶点",
+        items=ShapekeyPasteMatch.MODE_ITEMS,
+        default=ShapekeyPasteMatch.DEFAULT_MODE)  # type: ignore
+    max_distance: FloatProperty(
+        name="匹配容差",
+        description="0 表示按包围盒对角线自动计算",
+        default=ShapekeyPasteMatch.DEFAULT_TOLERANCE, min=0.0, soft_max=1.0)  # type: ignore
 
-        active_sk = obj.active_shape_key
-        if not active_sk:
-            return 'skipped', "没有活动 ShapeKey"
-
-        solo_mode = obj.show_only_shape_key
-        if not solo_mode and active_sk.value != 1:
-            return 'warnings', "value 不等于 1 且未开启 Solo/固定模式"
-
-        if len(data) != len(active_sk.data):
-            return 'skipped', f"顶点数不匹配：剪贴板 {len(data)} / 当前物体 {len(active_sk.data)}"
-
-        try:
-            for i, delta in enumerate(data):
-                active_sk.data[i].co -= Vector(delta)
-        except Exception as exc:
-            return 'skipped', f"写入失败：{exc}"
-
-        return 'success', f"已从 {obj.name} 的 {active_sk.name} 叠减"
-
-    def execute(self, context):
-        try:
-            data = json.loads(context.window_manager.clipboard)
-        except Exception:
-            self.report({'ERROR'}, "剪切板数据解析失败")
-            return {'CANCELLED'}
-
-        selected_objects = list(context.selected_objects)
-        if not selected_objects:
-            self.report({'WARNING'}, "没有选中物体")
-            return {'CANCELLED'}
-
-        success = []
-        skipped = []
-        warnings = []
-
-        for obj in selected_objects:
-            status, message = self.paste_to_object(obj, data)
-
-            if len(selected_objects) == 1:
-                if status == 'success':
-                    self.report({'INFO'}, message)
-                    return {'FINISHED'}
-                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
-                return {'CANCELLED'}
-
-            if status == 'success':
-                success.append(obj.name)
-            elif status == 'warnings':
-                warnings.append(f"{obj.name}({message})")
-            else:
-                skipped.append(f"{obj.name}({message})")
-
-        # ---------- 汇总报告 ----------
-        msg = f"成功: {len(success)}"
-        if skipped:
-            msg += f" | 跳过: {len(skipped)}"
-        if warnings:
-            msg += f" | 警告: {len(warnings)}"
-        self.report({'INFO'}, msg+" 详情查看控制台")
-
-        print("====Shapekey Paste Result====")
-        if warnings:
-            print("Value Warning Objects:")
-            for w in warnings:
-                print("  ", w)
-        if skipped:
-            print("Skipped Objects:")
-            for s in skipped:
-                print("  ", s)
-        print("====End Result====")
-
-        return {'FINISHED'}
+    operation = 'sub'
+    success_verb = "已叠减"
 
 PARTIAL_RELATIVE_SHAPEKEY_CLIPBOARD_TYPE = "HOToolsPartialRelativeShapeKeyV1"
 
