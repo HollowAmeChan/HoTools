@@ -817,12 +817,49 @@ assert [entry.object for entry in probe_item.objects] == [bpy.context.object], (
 bpy.context.scene.ho_bs_debug_items.remove(
     len(bpy.context.scene.ho_bs_debug_items) - 1)
 
-# 颜色插值（纯计算，不需要 GPU）：权重越高越暖，0 权重是暗色
-cold = draw_func.weight_color(0.0)
-hot = draw_func.weight_color(1.0)
-assert hot[0] > cold[0] and hot[2] < cold[2], (cold, hot)
-mid = draw_func.weight_color(0.5)
-assert cold[0] < mid[0] < hot[0], (cold, mid, hot)
+# 点位权重用**半径**表达（对齐 Unity 混合树），不再做颜色编码
+assert not hasattr(draw_func, "weight_color"), "不该再有按权重着色的函数"
+assert not hasattr(draw_func, "draw_square"), "点位改成圆了，方块绘制已删"
+assert not hasattr(overlay, "_weight_color")
+assert hasattr(draw_func, "draw_filled_circle"), "实心圆要能画"
+assert hasattr(draw_func, "draw_ring")
+assert draw_func.COLOR_POINT[:3], "点位要有一个统一颜色"
+radius_zero = overlay._point_radius(0.0)
+radius_half = overlay._point_radius(0.5)
+radius_full = overlay._point_radius(1.0)
+assert radius_zero < radius_half < radius_full, (
+    f"半径必须随权重单调变大：{radius_zero} {radius_half} {radius_full}")
+assert radius_full == overlay._HANDLE_RADIUS, "权重 1 就是最大半径"
+assert radius_full >= 15.0, "最大半径要够显眼（对齐 Unity 的观感）"
+assert radius_zero <= 4.0, "权重 0 应该是小圆点"
+assert overlay._point_radius(0.5) > radius_zero + 3.0, "中间权重要有可见差异"
+assert overlay._PICK_RADIUS >= radius_full, "命中半径不能比最大圆还小"
+# 越界权重被夹住，不会画出负半径/超大圆
+assert overlay._point_radius(-1.0) == radius_zero
+assert overlay._point_radius(9.0) == radius_full
+# 填充语义：权重 0 是小实心点；中间权重是空心圆；接近 1 才填实
+fill_zero = overlay._point_fill_radius(0.0)
+assert 0.0 < fill_zero < radius_zero, f"权重 0 要是小实心点：{fill_zero}"
+assert overlay._point_fill_radius(0.25) == 0.0, "低权重仍然是空心圆"
+assert overlay._point_fill_radius(0.3) == 0.0, "三成权重仍然是空心圆"
+# 从"开始填充"到"权重满"要平滑，且任何情况下都要留出圆环边
+# （权重 0 是小实心点，是特例；这里从 0.01 起找"圆环开始被填"的阈值）
+start_fill = next(
+    weight / 100.0 for weight in range(1, 101)
+    if overlay._point_fill_radius(weight / 100.0) > 0.0)
+assert 0.35 <= start_fill <= 0.75, f"开始填充的权重不合理：{start_fill}"
+fill_at_start = overlay._point_fill_radius(start_fill)
+assert fill_at_start <= 0.65 * overlay._point_radius(start_fill), (
+    start_fill, fill_at_start)
+for mid_weight in (0.6, 0.75, 0.9):
+    fill_mid = overlay._point_fill_radius(mid_weight)
+    # 要填就填成一个环（留出描边），不能糊成一坨
+    assert fill_mid <= 0.65 * overlay._point_radius(mid_weight), (
+        mid_weight, fill_mid)
+assert overlay._point_fill_radius(1.0) > 0.0, "权重满要填实"
+assert overlay._point_fill_radius(1.0) < radius_full, "填充要留出圆环边"
+assert overlay._point_fill_radius(9.0) == overlay._point_fill_radius(1.0)
+assert overlay._point_fill_radius(-3.0) == fill_zero
 # 夹取与坐标映射的薄封装要和数学层一致
 rect = (10.0, 20.0, 100.0, 100.0)
 axis_range = (-1.0, 1.0, -1.0, 1.0)

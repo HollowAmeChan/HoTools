@@ -32,23 +32,8 @@ COLOR_TEXT = (0.92, 0.94, 0.97, 1.0)
 COLOR_TEXT_DIM = (0.62, 0.66, 0.72, 1.0)
 COLOR_CENTER = (1.0, 0.85, 0.25, 1.0)
 COLOR_HOVER = (1.0, 1.0, 1.0, 1.0)
-COLOR_IDLE_POINT = (0.35, 0.38, 0.42, 1.0)
-
-_WEIGHT_COLD = (0.24, 0.45, 0.85)
-_WEIGHT_HOT = (0.98, 0.35, 0.25)
-
-
-def weight_color(weight: float):
-    """按权重从冷到暖着色，权重为 0 时是暗灰。"""
-    if weight <= 1e-6:
-        return COLOR_IDLE_POINT
-    ratio = max(0.0, min(1.0, weight))
-    return (
-        _WEIGHT_COLD[0] + (_WEIGHT_HOT[0] - _WEIGHT_COLD[0]) * ratio,
-        _WEIGHT_COLD[1] + (_WEIGHT_HOT[1] - _WEIGHT_COLD[1]) * ratio,
-        _WEIGHT_COLD[2] + (_WEIGHT_HOT[2] - _WEIGHT_COLD[2]) * ratio,
-        1.0,
-    )
+# 矩阵点位只用一个颜色：权重靠半径表达（对齐 Unity 混合树的画法），不再做颜色编码
+COLOR_POINT = (0.45, 0.62, 0.95, 1.0)
 
 
 # endregion
@@ -134,11 +119,6 @@ def draw_line_strip(points, color, width=1.0) -> None:
     gpu.state.blend_set('NONE')
 
 
-def draw_square(cx, cy, radius, color) -> None:
-    """以 ``(cx, cy)`` 为中心画一个填充方块。"""
-    draw_rect(cx - radius, cy - radius, radius * 2.0, radius * 2.0, color)
-
-
 def draw_ring(cx, cy, radius, color, width=1.6, segments=28) -> None:
     """画一个空心圆环。"""
     points = [
@@ -147,6 +127,22 @@ def draw_ring(cx, cy, radius, color, width=1.6, segments=28) -> None:
         for index in range(segments + 1)
     ]
     draw_line_strip(points, color, width)
+
+
+def draw_filled_circle(cx, cy, radius, color, segments=28) -> None:
+    """画一个实心圆（扇形三角化，用现有的 TRIS 路径）。"""
+    if radius <= 0.0:
+        return
+    coords = []
+    for index in range(segments):
+        angle_a = math.tau * index / segments
+        angle_b = math.tau * (index + 1) / segments
+        coords.append((cx, cy))
+        coords.append((cx + radius * math.cos(angle_a),
+                       cy + radius * math.sin(angle_a)))
+        coords.append((cx + radius * math.cos(angle_b),
+                       cy + radius * math.sin(angle_b)))
+    _submit(_batch('TRIS', coords), color)
 
 
 # endregion

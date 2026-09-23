@@ -42,9 +42,15 @@ _MAX_PLOT_SIZE = 940.0
 # 初始坐标系是“翻倍”尺寸：基准边长 472（原来是 236）。
 _BASE_PLOT_SIZE = 472.0
 
-_HANDLE_RADIUS = 6.0
+# 权重 → 半径（像素）：权重 0 是小圆点，权重 1 是最大半径（对齐 Unity 混合树的画法）。
+# 尺寸按屏幕像素走，不随坐标系缩放变化；格点很密时圆会有重叠，属预期。
+_HANDLE_RADIUS = 36.0
+_MIN_HANDLE_RADIUS = 3.0
+# 空心圆的线宽：填充半径 = 半径 − 这个值，所以圆越大越"空"（半权重仍然是空的）
+_MIN_FILL_MARGIN = 8.0
 _CENTER_RADIUS = 8.0
-_PICK_RADIUS = 12.0
+# 圆点画大了，命中半径也跟着放大（Unity 里点的 hit 区域也是跟着尺寸走的）
+_PICK_RADIUS = 20.0
 _GRID_STEPS = (0.25, 0.5, 0.75)
 
 _FONT_SIZE = _draw.FONT_SIZE
@@ -58,10 +64,27 @@ _COLOR_TEXT = _draw.COLOR_TEXT
 _COLOR_TEXT_DIM = _draw.COLOR_TEXT_DIM
 _COLOR_CENTER = _draw.COLOR_CENTER
 _COLOR_HOVER = _draw.COLOR_HOVER
+_COLOR_POINT = _draw.COLOR_POINT
 
 
-def _weight_color(weight):
-    return _draw.weight_color(weight)
+def _point_radius(weight) -> float:
+    """权重 → 点位半径：权重越高圆越大（Unity 混合树就是这么画的）。"""
+    ratio = max(0.0, min(1.0, float(weight)))
+    return _MIN_HANDLE_RADIUS + (_HANDLE_RADIUS - _MIN_HANDLE_RADIUS) * ratio
+
+
+def _point_fill_radius(weight) -> float:
+    """权重 → 实心填充半径；``<= 0`` 表示这一点画成空心圆。
+
+    - 权重 0：非常小的实心点（Unity 里未生效的 motion 就是这个观感）；
+    - 中间权重：细空心圆，**圆越大越空**，让"生效程度"一眼看出来；
+    - 权重接近 1：填实。
+    """
+    radius = _point_radius(weight)
+    if weight <= 1e-6:
+        return max(1.0, radius * 0.55)
+    fill = radius - _MIN_FILL_MARGIN
+    return fill if fill >= 1.0 else 0.0
 
 
 def _get_shader():
@@ -577,18 +600,26 @@ def _draw_axes(layout, item) -> None:
 
 
 def _draw_points(item, weights, handles, layout) -> None:
+    """矩阵点位：**半径随权重变化**（对齐 Unity 混合树的画法），不用颜色编码。
+
+    - 权重 0 → 很小的实心点（未生效的 motion）；权重 1 → 最大实心圆；
+    - 中间权重是空心圆，圆越大越空；
+    - 当前活动点位套一圈高亮环，鼠标悬停再套一圈更亮的；
+    - 权重 > 0 时在圆旁标 `序号:权重`。
+    """
     hovered = WIDGET.hover_kind == "point"
     for index, point in enumerate(item.points):
         _kind, _index, x, y = handles[index]
         weight = weights[index] if index < len(weights) else 0.0
-        color = _weight_color(weight)
-        radius = _HANDLE_RADIUS
+        radius = _point_radius(weight)
         if hovered and WIDGET.hover_index == index:
-            radius += 1.5
             _draw.draw_ring(x, y, radius + 3.0, _COLOR_HOVER, 1.4)
-        _draw.draw_square(x, y, radius, color)
         if item.point_index == index:
             _draw.draw_ring(x, y, radius + 4.0, _COLOR_CENTER, 1.2)
+        _draw.draw_ring(x, y, radius, _COLOR_POINT, 1.6)
+        fill = _point_fill_radius(weight)
+        if fill > 0.0:
+            _draw.draw_filled_circle(x, y, fill, _COLOR_POINT)
         if weight > 1e-6 or (hovered and WIDGET.hover_index == index):
             _draw.draw_text(f"{index + 1}:{weight:.2f}",
                             x + radius + 3.0, y + 3.0, _COLOR_TEXT)
@@ -626,7 +657,7 @@ def _draw_footer(layout, item, weights) -> None:
         text_x, panel_y + _FOOTER_HEIGHT - 16.0, _COLOR_TEXT_DIM, _FONT_SIZE_SMALL,
     )
     _draw.draw_text(
-        "拖动中心点改输入　拖动方块改坐标　R 回原点　W 归零　[ ] 缩放　ESC 关闭",
+        "拖动中心点改输入　拖动圆点改坐标　R 回原点　W 归零　[ ] 缩放　ESC 关闭",
         text_x, panel_y + _FOOTER_HEIGHT - 29.0, _COLOR_TEXT_DIM, _FONT_SIZE_SMALL,
     )
 
