@@ -284,8 +284,26 @@ class FBXExporter:
             ob.matrix_basis = ob.parent.matrix_world.inverted() @ mat_world
     @staticmethod
     def apply_rotation(ob):
+        """给物体自身的数据应用旋转（矫正物体变换用）。
+
+        多用户数据（Alt+D 实例、资产实例）Blender 直接拒绝 transform_apply，
+        报“无法应用一个多用户：物体 …，Mesh …，中止”并把整个导出打断——而这一步
+        是对全场景顶级物体做的，导出范围之外的实例化资产也会被扫到。
+        这里先把数据临时变成单用户：只影响本次导出（末尾 undo 回滚），
+        另一个用户的数据不会被改动。
+        """
+        data = getattr(ob, "data", None)
+        if data is not None and getattr(data, "users", 1) > 1:
+            try:
+                ob.data = data.copy()
+            except Exception as exc:  # noqa: BLE001 — 库数据/只读数据复制不了就交给下面报错
+                print(
+                    f"[HoTools FBX] 无法为 {ob.name} 复制单用户数据："
+                    f"{type(exc).__name__}: {exc}"
+                )
         bpy.ops.object.select_all(action='DESELECT')
         ob.select_set(True)
+        bpy.context.view_layer.objects.active = ob
         bpy.ops.object.transform_apply(location = False, rotation = True, scale = False)
     @staticmethod
     def fix_object(ob):
@@ -300,10 +318,19 @@ class FBXExporter:
             ob.matrix_local = mathutils.Matrix.Rotation(math.radians(-90.0), 4, 'X')
 
             # Apply the rotation to the object
-            FBXExporter.apply_rotation(ob)
-
-            # Reapply the previous local transform with an X+90 rotation
-            ob.matrix_local = mat_original @ mathutils.Matrix.Rotation(math.radians(90.0), 4, 'X')
+            try:
+                FBXExporter.apply_rotation(ob)
+            except Exception as exc:  # noqa: BLE001
+                # 应用失败（多用户数据、库数据等）时不能留下“矩阵转了、数据没转”的半成品：
+                # 还原矩阵、跳过这个物体，导出照常继续。
+                ob.matrix_local = mat_original
+                print(
+                    f"[HoTools FBX] 矫正物体变换失败 {ob.name}："
+                    f"{type(exc).__name__}: {exc}"
+                )
+            else:
+                # Reapply the previous local transform with an X+90 rotation
+                ob.matrix_local = mat_original @ mathutils.Matrix.Rotation(math.radians(90.0), 4, 'X')
 
         # Recursively fix child objects in current view layer.
         # Children may be in the current view layer even if their parent isn't.
@@ -335,6 +362,33 @@ class FBXExporter:
             active_object = bpy.data.objects.get(active_object_name)
             if active_object and active_object.name in bpy.context.view_layer.objects:
                 bpy.context.view_layer.objects.active = active_object
+
+    @staticmethod
+    def split_shared_mesh_data(mesh_objects):
+        """为共享 Mesh 数据的对象（Alt+D / 资产实例）创建独立数据，返回 (处理数, 失败)。
+
+        必须在“应用修改器”的任何步骤之前做：多用户数据 Blender 拒绝应用修改器
+        （报“无法应用一个多用户…中止”），数据传递、形态键烘焙、骨架姿态都会因此
+        失败或静默跳过。这一步只换数据归属、不改求值结果，所以放在最前面不影响
+        数据传递要求的“先于一切改求值环境的步骤”。
+        属于临时修改，随导出末尾的 undo 一起回滚。
+        """
+        made_single_user = 0
+        failed = []
+        for ob in mesh_objects:
+            if ob is None or ob.type != "MESH":
+                continue
+            if ob.name not in bpy.context.view_layer.objects:
+                continue
+            data = getattr(ob, "data", None)
+            if data is None or getattr(data, "users", 1) <= 1:
+                continue
+            try:
+                ob.data = data.copy()
+                made_single_user += 1
+            except Exception as exc:  # noqa: BLE001
+                failed.append((ob.name, exc))
+        return made_single_user, failed
 
     @staticmethod
     def meshify_selected_objects(selection, active_object):
@@ -2195,6 +2249,26 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             humanoid_mapping_data = HumanoidMappingExporter.build_export_dict(
                 selected_armature_objects
             )
+
+            # 共享网格（Alt+D / 资产实例）先拆成独立数据：多用户数据 Blender 拒绝应用
+            # 修改器（“无法应用一个多用户…中止”），而下面每一步（数据传递、形态键烘焙、
+            # 骨架姿态）都要应用修改器。只换数据归属、不改求值结果，所以可以放在最前面。
+            shared_mesh_split, failed_shared_mesh = FBXExporter.split_shared_mesh_data(
+                selection
+            )
+            if failed_shared_mesh:
+                print("[HoTools FBX] Failed to split shared mesh data:")
+                for ob_name, exc in failed_shared_mesh:
+                    print(f"  {ob_name}: {type(exc).__name__}: {exc}")
+                self.report(
+                    {"WARNING"},
+                    f"{len(failed_shared_mesh)} 个共享网格数据拆分失败，详见控制台",
+                )
+            if shared_mesh_split:
+                print(
+                    f"[HoTools FBX] 共享网格实例：为 {shared_mesh_split} 个物体"
+                    f"创建了独立 Mesh 数据"
+                )
 
             # blender数据传递修改器在fbx导出时应用环境不齐全需要手动应用防止错误效果。
             # 位置必须最靠前：删除隐藏/几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态
