@@ -8,7 +8,10 @@
   3. 视图显示中（show_viewport）的修改器被应用掉，视口隐藏的修改器保留；
   4. 骨架修改器按按钮语义一并烘焙；
   5. 拓扑依赖形态键（各键求值后顶点数不一致）时报错取消且不改动网格；
-  6. 网格数据被多个物体共用时跳过并报错，不做就地替换。
+  6. 网格数据被多个物体共用时跳过并报错，不做就地替换；
+  7. 形变类修改器（骨架/波浪这类只动顶点、不改拓扑的）同样能应用：
+     它们是“修改器面板要不要画出「保持形态键应用」按钮”的依据，
+     Blender 原生应用按钮对带形态键的网格一律禁用，形变修改器也一样。
 """
 
 import sys
@@ -33,6 +36,29 @@ def activate(obj):
         selected.select_set(False)
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
+
+
+def evaluated_positions(obj):
+    """独立参照：求值该物体当前修改器栈，返回世界无关的局部顶点坐标。"""
+    bpy.context.view_layer.update()
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    eval_mesh = bpy.data.meshes.new_from_object(
+        obj.evaluated_get(depsgraph),
+        preserve_all_data_layers=True,
+        depsgraph=depsgraph,
+    )
+    try:
+        return [tuple(vertex.co) for vertex in eval_mesh.vertices]
+    finally:
+        bpy.data.meshes.remove(eval_mesh)
+
+
+def max_position_delta(left, right):
+    return max(
+        abs(a - b)
+        for left_co, right_co in zip(left, right)
+        for a, b in zip(left_co, right_co)
+    )
 
 
 def make_gn_group(name):
@@ -237,6 +263,51 @@ try:
         for i in range(len(ob_drv.data.vertices))
     )
     assert driven_delta > 0.1, f"被驱动器驱动的形态键被抹平了（最大差异 {driven_delta}）"
+
+    # ── 7. 形变类修改器（不改拓扑）：按钮同样可用，且逐个形态键求值 ──────────
+    # 回归：修改器面板曾按“有没有视口可见的非形变修改器”决定是否画出这个按钮，
+    # 于是“形态键 + 波浪/骨架”这类只有形变修改器的物体根本够不到它；
+    # 而 Blender 原生应用按钮对带形态键的网格一律禁用，形变修改器也不例外
+    # （报 “Modifier cannot be applied to a mesh with shape keys”）。
+    _armature_wave, ob_wave = build_object(
+        "wave", with_armature=False, hidden_modifier=False, with_gn=False
+    )
+    wave = ob_wave.modifiers.new("Wave", "WAVE")
+    wave.height = 0.5
+    activate(ob_wave)
+
+    # 独立参照：同一个波浪修改器加在没有形态键的同形状网格上，
+    # 它的求值结果就是“基型被波浪修改器形变后”应有的样子。
+    reference_mesh = bpy.data.meshes.new("MeshData_wave_reference")
+    reference_mesh.from_pydata(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)],
+        [],
+        [(0, 1, 2, 3)],
+    )
+    reference = bpy.data.objects.new("Mesh_wave_reference", reference_mesh)
+    bpy.context.scene.collection.objects.link(reference)
+    reference.modifiers.new("Wave", "WAVE").height = 0.5
+    expected_basis = evaluated_positions(reference)
+    assert max_position_delta(
+        expected_basis, [(0.0, 0.0, 0.0)] * 4
+    ) > 0.01, "参照物体的波浪修改器没有产生位移，测试场景无效"
+
+    assert run_button() == {"FINISHED"}
+
+    assert [modifier.name for modifier in ob_wave.modifiers] == []
+    assert len(ob_wave.data.vertices) == 4, "形变修改器不应改变顶点数"
+    wave_keys = ob_wave.data.shape_keys.key_blocks
+    assert [key.name for key in wave_keys] == [BASIS_NAME, KEY_NAME]
+    baked_basis = [tuple(vertex.co) for vertex in wave_keys[BASIS_NAME].data]
+    assert max_position_delta(baked_basis, expected_basis) < 1e-5, (
+        f"基型没有被波浪修改器形变：{baked_basis} != {expected_basis}"
+    )
+    wave_delta = max(
+        abs(wave_keys[BASIS_NAME].data[i].co[j] - wave_keys[KEY_NAME].data[i].co[j])
+        for i in range(len(ob_wave.data.vertices))
+        for j in range(3)
+    )
+    assert wave_delta > 0.1, f"形变修改器烘焙后形态键形变丢失（最大差异 {wave_delta}）"
 finally:
     bpy.utils.unregister_class(shapekey_operators.OP_applyShowingModifiersKeepShapekeys)
 

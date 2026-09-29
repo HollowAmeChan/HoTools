@@ -37,7 +37,8 @@ _QUICK_MODIFIER_SPECS = {
 }
 
 
-# 这些修改器只改变顶点位置，不改变拓扑；其余可见修改器按非形变修改器提示。
+# 这些修改器只改变顶点位置，不改变拓扑；其余可见修改器按非形变修改器提示，
+# 因为烘焙它们会重建拓扑，可能因“拓扑依赖形态键”而失败，需要更重的告警。
 _DEFORM_ONLY_MODIFIER_TYPES = frozenset({
     "ARMATURE",
     "CAST",
@@ -46,12 +47,12 @@ _DEFORM_ONLY_MODIFIER_TYPES = frozenset({
     "DISPLACE",
     "HOOK",
     "LAPLACIANDEFORM",
+    "LAPLACIANSMOOTH",
     "LATTICE",
     "MESH_DEFORM",
     "SHRINKWRAP",
     "SIMPLE_DEFORM",
     "SMOOTH",
-    "SMOOTH_CORRECTIVE",
     "SURFACE_DEFORM",
     "WARP",
     "WAVE",
@@ -93,17 +94,23 @@ class OP_CopyALL_modifiers_to_selected(Operator):
         return {"FINISHED"}
 
 
-def _has_visible_non_deform_modifier(obj) -> bool:
-    """检查网格是否同时有形态键和显示中的非形变修改器。"""
+def _visible_modifiers(obj) -> tuple:
+    """返回“带形态键的网格上视口显示中”的修改器，不满足共存前提时返回空元组。
+
+    这里只看有没有可见修改器，不按修改器类型过滤：带形态键的网格在 Blender 里
+    无法用原生「应用」按钮应用**任何**修改器，连 Armature、Wave 这类只动顶点的
+    形变修改器也照样报 “Modifier cannot be applied to a mesh with shape keys”。
+    所以形变修改器同样需要「保持形态键应用」这个入口，只是不必按非形变告警。
+    """
     if not check_object_shape_keys_with_modifiers(obj):
-        return False
+        return ()
     shape_keys = getattr(getattr(obj, "data", None), "shape_keys", None)
     if shape_keys is None or len(shape_keys.key_blocks) <= 1:
-        return False
-    return any(
-        bool(getattr(modifier, "show_viewport", True))
-        and modifier.type not in _DEFORM_ONLY_MODIFIER_TYPES
+        return ()
+    return tuple(
+        modifier
         for modifier in obj.modifiers
+        if bool(getattr(modifier, "show_viewport", True))
     )
 
 
@@ -263,11 +270,23 @@ class OP_ToggleAllModifiersExpanded(Operator):
 
 
 def _draw_shape_key_warning(layout, obj):
-    if not _has_visible_non_deform_modifier(obj):
+    """画“形态键与修改器共存”提示行，并给出保持形态键的应用入口。
+
+    只有非形变修改器才按告警（红色）提示；全是形变修改器时仍然画这一行，
+    否则“形态键 + 骨架/波浪”这类物体既点不了原生应用按钮，也找不到本插件的按钮。
+    """
+    modifiers = _visible_modifiers(obj)
+    if not modifiers:
         return
+    rebuilds_topology = any(
+        modifier.type not in _DEFORM_ONLY_MODIFIER_TYPES for modifier in modifiers
+    )
     row = layout.row(align=True)
-    row.alert = True
-    row.label(text="形态键与非形变修改器共存", icon="ERROR")
+    row.alert = rebuilds_topology
+    row.label(
+        text="形态键与非形变修改器共存" if rebuilds_topology else "形态键与形变修改器共存",
+        icon="ERROR" if rebuilds_topology else "INFO",
+    )
     row.alert = False
     row.operator(
         OP_applyShowingModifiersKeepShapekeys.bl_idname,
