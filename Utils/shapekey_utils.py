@@ -285,8 +285,16 @@ def mesh_triangle_indices(mesh) -> np.ndarray:
     return triangles.reshape((-1, 3))
 
 
-def _is_bake_modifier(modifier, *, include_render_only: bool, keep_armature: bool) -> bool:
-    """判断某个修改器是否要被“保持形态键地应用”。"""
+def _is_bake_modifier(
+    modifier, *, include_render_only: bool, keep_armature: bool, modifier_types=None,
+) -> bool:
+    """判断某个修改器是否要被“保持形态键地应用”。
+
+    ``modifier_types`` 不为空时只烘焙这些类型（例如导出前只想把手动的数据传递
+    先烘掉，骨架与其它修改器原样留给导出）。
+    """
+    if modifier_types is not None and modifier.type not in modifier_types:
+        return False
     if keep_armature and modifier.type == 'ARMATURE':
         return False
     if bool(getattr(modifier, "show_viewport", True)):
@@ -338,6 +346,7 @@ def bake_modifiers_keeping_shape_keys(
     *,
     include_render_only: bool = False,
     keep_armature: bool = False,
+    modifier_types=None,
 ) -> tuple[list[str], list[tuple[str, str]], list[tuple[str, Exception]]]:
     """就地应用修改器并保持形态键，返回 (已处理, 已跳过, 失败)。
 
@@ -347,7 +356,9 @@ def bake_modifiers_keeping_shape_keys(
     - ``include_render_only``：False 只烘焙视图显示中的修改器（按钮语义，即“应用视图
       显示中的修改器”）；True 连只在渲染中显示的也一起烘焙（FBX 导出的评估口径）；
     - ``keep_armature``：False 连骨架修改器一起烘焙（按钮语义）；True 保留骨架修改器，
-      交给导出做蒙皮。
+      交给导出做蒙皮；
+    - ``modifier_types``：不为空时只烘焙这些类型（导出前置的数据传递修复用它把
+      DATA_TRANSFER 先烘掉，其它修改器一律不动）。
 
     原理：Blender 不允许给带形态键的网格应用修改器，而求值网格又不带形态键
     （``bpy.data.meshes.new_from_object``，见 Blender 议题 #104714），所以逐个形态键
@@ -387,6 +398,7 @@ def bake_modifiers_keeping_shape_keys(
                 modifier,
                 include_render_only=include_render_only,
                 keep_armature=keep_armature,
+                modifier_types=modifier_types,
             )
         ]
         if not bake_modifiers:
@@ -416,6 +428,18 @@ def bake_modifiers_keeping_shape_keys(
         active_index = getattr(shape_keys, "active_index", None)
         original_mesh = mesh
         base_mesh = None
+
+        # 只在渲染中显示的修改器：求值走的是视口依赖图，它们不会参与求值。
+        # 这里先把它们临时打开，否则会出现“被列进待烘焙名单、结果却没生效，
+        # 最后连修改器一起删掉”的静默丢失（include_render_only=True 的语义就是
+        # 要把它们烘进去）。
+        render_only_modifiers = [
+            modifier
+            for modifier in bake_modifiers
+            if not bool(getattr(modifier, "show_viewport", True))
+        ]
+        for modifier in render_only_modifiers:
+            modifier.show_viewport = True
 
         try:
             depsgraph = bpy.context.evaluated_depsgraph_get()
@@ -514,5 +538,12 @@ def bake_modifiers_keeping_shape_keys(
             except (ReferenceError, TypeError):
                 pass
             failed.append((obj.name, exc))
+        finally:
+            # 视口显示状态是借用出来的，无论成功失败都还原（被烘掉的修改器已失效，跳过）
+            for modifier in render_only_modifiers:
+                try:
+                    modifier.show_viewport = False
+                except ReferenceError:
+                    pass
 
     return baked, skipped, failed

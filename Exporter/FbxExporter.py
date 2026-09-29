@@ -16,9 +16,13 @@
 # 4. 网格化对象（默认开启）：把选中的 CURVE 转成 MESH，并为共享 Mesh 数据的对象
 #    创建独立数据，覆盖 Alt+D 等链接网格实例。
 #    解决 Blender/FBX 对曲线和共享网格实例支持不一致，导致对象漏导或结果互相影响的问题。
-# 5. 数据传递修改器隐式修复：对选中导出网格，在完整视图层上下文中先手动应用
-#    DATA_TRANSFER 修改器，再进入 FBX evaluated mesh 导出。
+# 5. 数据传递修改器隐式修复：对选中导出网格，在**全部预处理最前面**手动应用
+#    DATA_TRANSFER 修改器（带形态键的网格走逐形态键烘焙，只烘 DATA_TRANSFER），
+#    再进入后续预处理与 FBX evaluated mesh 导出。
 #    解决 FBX 导出阶段依赖图环境不完整时，数据传递结果与 Blender 手动应用差异很大的问题。
+#    位置必须最靠前：删除隐藏/几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态都会
+#    改动修改器栈或求值环境，数据传递晚于它们就会和界面里看到的不一致
+#    （实测表现：传递的法线在 FBX 里退回网格自身法线）。
 #    应用失败时保留修改器、继续导出，并在控制台和导出报告中提示。
 # 6. 按材质整理面顺序隐式修复：对所有选中的导出 Mesh 执行
 #    Sort Elements > Material（仅 FACE）。
@@ -307,6 +311,20 @@ class FBXExporter:
             FBXExporter.fix_object(child)
 
     @staticmethod
+    def object_is_alive(ob) -> bool:
+        """物体引用是否还有效。
+
+        预处理里有步骤会“删掉原物体、用副本顶替”（应用骨架姿态对带形态键的网格会走
+        ho.apply_armature_modifiers_keepshapekeys）。导出开头记下的物体名单一旦含这种
+        物体，之后再用就成了失效引用：访问属性直接抛 ReferenceError，整个导出中断。
+        """
+        try:
+            ob.name
+        except (ReferenceError, AttributeError):
+            return False
+        return True
+
+    @staticmethod
     def restore_selection_by_names(object_names, active_object_name=None):
         bpy.ops.object.select_all(action='DESELECT')
         for object_name in object_names:
@@ -380,22 +398,38 @@ class FBXExporter:
 
     @staticmethod
     def apply_data_transfer_modifiers(mesh_objects, selection, active_object):
-        """在完整视图层上下文中手动应用数据传递修改器，规避 FBX 评估差异。"""
+        """在完整视图层上下文中手动应用数据传递修改器，规避 FBX 评估差异。
+
+        必须排在所有预处理的最前面（见 export_fbx 里的调用位置）：后面的每一步
+        ——删除隐藏/几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态——都会改动
+        修改器栈或求值环境。数据传递一旦晚于它们，被传递的法线/权重就与界面里看到的
+        不一致（表现就是“传递的法线丢了”），所以这里在动任何修改器之前先把它烘掉。
+
+        带形态键的网格不能用原生 ``modifier_apply``（Blender 直接拒绝），改走与
+        「保持形态键应用」同一套逐形态键烘焙，并且只烘 DATA_TRANSFER：骨架修改器
+        留给导出做蒙皮，其它修改器一概不动。
+        """
+        from Utils import shapekey_utils
+
         selection_names = [ob.name for ob in selection]
         active_object_name = active_object.name if active_object else None
         applied = 0
         failed = []
+
+        def data_transfer_modifiers(ob):
+            return [
+                mod
+                for mod in ob.modifiers
+                if mod.type == "DATA_TRANSFER"
+                and (mod.show_viewport or mod.show_render)
+            ]
 
         target_names = [
             ob.name
             for ob in mesh_objects
             if ob.type == "MESH"
             and ob.name in bpy.context.view_layer.objects
-            and any(
-                mod.type == "DATA_TRANSFER"
-                and (mod.show_viewport or mod.show_render)
-                for mod in ob.modifiers
-            )
+            and data_transfer_modifiers(ob)
         ]
         if not target_names:
             return 0, [], selection, active_object
@@ -407,12 +441,62 @@ class FBXExporter:
                     continue
 
                 modifier_names = [
-                    mod.name
-                    for mod in ob.modifiers
-                    if mod.type == "DATA_TRANSFER"
-                    and (mod.show_viewport or mod.show_render)
+                    mod.name for mod in data_transfer_modifiers(ob)
                 ]
                 if not modifier_names:
+                    continue
+
+                shape_keys = getattr(ob.data, "shape_keys", None)
+                if shape_keys is not None and len(shape_keys.key_blocks) > 1:
+                    # 逐形态键烘焙会把“整个修改器栈”的求值结果当新基础网格，
+                    # 所以先把数据传递之后的修改器临时藏起来：这样烘出来的就是
+                    # “只应用了数据传递”的结果，后面的修改器（骨架等）原样留在栈上，
+                    # 由导出继续处理，不会出现同一形变被烘一次又再算一次。
+                    stacked = list(ob.modifiers)
+                    transfer_indices = [
+                        index
+                        for index, mod in enumerate(stacked)
+                        if mod.type == "DATA_TRANSFER"
+                        and (mod.show_viewport or mod.show_render)
+                    ]
+                    last_transfer_index = max(transfer_indices, default=-1)
+                    hidden_states = []
+                    for index, mod in enumerate(stacked):
+                        if index <= last_transfer_index:
+                            continue
+                        if not (mod.show_viewport or mod.show_render):
+                            continue
+                        hidden_states.append((mod, mod.show_viewport, mod.show_render))
+                        mod.show_viewport = False
+                        mod.show_render = False
+                    try:
+                        baked, skipped, dt_failed = (
+                            shapekey_utils.bake_modifiers_keeping_shape_keys(
+                                [ob],
+                                include_render_only=True,
+                                keep_armature=True,
+                                modifier_types=frozenset({"DATA_TRANSFER"}),
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        failed.append((object_name, "<逐形态键烘焙>", exc))
+                        baked, skipped, dt_failed = [], [], []
+                    finally:
+                        for mod, show_viewport, show_render in hidden_states:
+                            if not FBXExporter.object_is_alive(mod):
+                                continue
+                            mod.show_viewport = show_viewport
+                            mod.show_render = show_render
+                    if baked:
+                        # 一次烘焙会把该物体上所有 DATA_TRANSFER 一起应用，按修改器数计数
+                        applied += len(modifier_names)
+                    if skipped and not baked:
+                        failed.append(
+                            (object_name, "<逐形态键烘焙>", RuntimeError(skipped[0][1]))
+                        )
+                    for failed_name, exc in dt_failed:
+                        failed.append((failed_name, "<逐形态键烘焙>", exc))
+                    bpy.context.view_layer.update()
                     continue
 
                 try:
@@ -1557,9 +1641,15 @@ class FBXExporter:
     def restore_selection(selection, active_object=None):
         bpy.ops.object.select_all(action='DESELECT')
         for ob in selection:
+            if not FBXExporter.object_is_alive(ob):
+                continue
             if ob.name in bpy.context.view_layer.objects:
                 ob.select_set(True)
-        if active_object and active_object.name in bpy.context.view_layer.objects:
+        if (
+            active_object
+            and FBXExporter.object_is_alive(active_object)
+            and active_object.name in bpy.context.view_layer.objects
+        ):
             bpy.context.view_layer.objects.active = active_object
     @staticmethod
     def set_armatures_pose_position(armature_objects, pose_position):
@@ -1771,7 +1861,7 @@ class FBXExporter:
         cleared_constraints = 0
 
         for ob in objects:
-            if ob is None:
+            if ob is None or not FBXExporter.object_is_alive(ob):
                 continue
 
             object_constraints = getattr(ob, "constraints", None)
@@ -2106,6 +2196,38 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 selected_armature_objects
             )
 
+            # blender数据传递修改器在fbx导出时应用环境不齐全需要手动应用防止错误效果。
+            # 位置必须最靠前：删除隐藏/几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态
+            # 都会改修改器栈或求值环境，数据传递晚于它们就会和界面里看到的不一致
+            # （实测表现：传递的法线在 FBX 里变成网格自身法线，即“传递丢失”）。
+            (
+                data_transfer_applied,
+                failed_data_transfer,
+                selection,
+                active_object,
+            ) = FBXExporter.apply_data_transfer_modifiers(
+                selection,
+                selection,
+                active_object,
+            )
+            failed_data_transfer_count = len(failed_data_transfer)
+            if failed_data_transfer:
+                print("[HoTools FBX] Failed to apply data transfer modifiers:")
+                for ob_name, modifier_name, exc in failed_data_transfer:
+                    print(
+                        f"  {ob_name}.{modifier_name}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                self.report(
+                    {"WARNING"},
+                    f"{len(failed_data_transfer)} 个数据传递修改器隐式修复失败，详见控制台",
+                )
+            if data_transfer_applied:
+                print(
+                    f"[HoTools FBX] 数据传递修改器隐式修复：手动应用了 "
+                    f"{data_transfer_applied} 个修改器"
+                )
+
             if self.removeHiddenModifiers:
                 removed_hidden_modifiers, failed_hidden_modifiers = FBXExporter.remove_hidden_modifiers(bpy.context.scene.objects)
                 if failed_hidden_modifiers:
@@ -2171,36 +2293,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     f"未能烘焙穿过修改器，详见控制台",
                 )
 
-            # blender数据传递修改器在fbx导出时应用环境不齐全需要手动应用防止错误效果
-            (
-                data_transfer_applied,
-                failed_data_transfer,
-                selection,
-                active_object,
-            ) = (
-                FBXExporter.apply_data_transfer_modifiers(
-                    selection,
-                    selection,
-                    active_object,
-                )
-            )
-            failed_data_transfer_count = len(failed_data_transfer)
-            if failed_data_transfer:
-                print("[HoTools FBX] Failed to apply data transfer modifiers:")
-                for ob_name, modifier_name, exc in failed_data_transfer:
-                    print(
-                        f"  {ob_name}.{modifier_name}: "
-                        f"{type(exc).__name__}: {exc}"
-                    )
-                self.report(
-                    {"WARNING"},
-                    f"{len(failed_data_transfer)} 个数据传递修改器隐式修复失败，详见控制台",
-                )
-            if data_transfer_applied:
-                print(
-                    f"[HoTools FBX] 数据传递修改器隐式修复：手动应用了 "
-                    f"{data_transfer_applied} 个修改器"
-                )
+            # 数据传递修改器已在预处理最前面手动应用（见 apply_data_transfer_modifiers
+            # 的调用位置与说明），这里不再重复处理。
             if self.applyArmaturePose:
                 # 约束处理与应用骨架姿态是同一件事的两面：都是“当前求值状态要不要固化”。
                 # ho.apply_rest_pose 会把骨架修改器的求值结果烘进子级网格 + 把姿态应用成静置，
@@ -2428,16 +2522,21 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             # 修复物体旋转（所有顶级父级物体）
             if self.fixObjectTransform:
                 for ob in root_objects:
-                    FBXExporter.fix_object(ob)
+                    if FBXExporter.object_is_alive(ob):
+                        FBXExporter.fix_object(ob)
 
             # 刷新场景防止变换没有应用
             bpy.context.view_layer.update()
 
-            #重置物体与集合的可见可选
+            #重置物体与集合的可见可选。
+            # 名单是导出开头记下的，中间可能有物体被副本顶替（见 object_is_alive），
+            # 失效引用直接跳过：否则这一行会抛 ReferenceError 把整个导出打断。
             for ob in hidden_objects:
-                ob.hide_set(True)
+                if FBXExporter.object_is_alive(ob):
+                    ob.hide_set(True)
             for ob in disabled_objects:
-                ob.hide_viewport = True
+                if FBXExporter.object_is_alive(ob):
+                    ob.hide_viewport = True
             for col in hidden_collections:
                 col.hide_viewport = True
             for col in disabled_collections:
@@ -2703,16 +2802,21 @@ class OP_FinalFBXExport_only_preprocess(Operator):
             # 修复物体旋转（所有顶级父级物体）
             if self.fixObjectTransform:
                 for ob in root_objects:
-                    FBXExporter.fix_object(ob)
+                    if FBXExporter.object_is_alive(ob):
+                        FBXExporter.fix_object(ob)
 
             # 刷新场景防止变换没有应用
             bpy.context.view_layer.update()
 
-            #重置物体与集合的可见可选
+            #重置物体与集合的可见可选。
+            # 名单是导出开头记下的，中间可能有物体被副本顶替（见 object_is_alive），
+            # 失效引用直接跳过：否则这一行会抛 ReferenceError 把整个导出打断。
             for ob in hidden_objects:
-                ob.hide_set(True)
+                if FBXExporter.object_is_alive(ob):
+                    ob.hide_set(True)
             for ob in disabled_objects:
-                ob.hide_viewport = True
+                if FBXExporter.object_is_alive(ob):
+                    ob.hide_viewport = True
             for col in hidden_collections:
                 col.hide_viewport = True
             for col in disabled_collections:
