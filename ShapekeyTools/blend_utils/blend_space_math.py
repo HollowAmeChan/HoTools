@@ -8,13 +8,19 @@
 
 权重语义对齐 Unity 的混合树（Blend Tree）：
 
-- ``CARTESIAN_2D``（2D 自由形式笛卡尔）：坐标点做 Delaunay 剖分，输入点落在某个
-  三角形内时用重心坐标插值（三角形外按最近边界投影），即 Unity 的
-  ``ComputeWeightsFreeformCartesian2D``；
+- ``CARTESIAN_2D``（2D 自由形式笛卡尔）：按「影响值」混合 —— 每个点在每个方向上
+  的影响力线性衰减，遇到第一个其它点就降到 0，取所有方向的最小值作该点的影响值，
+  最后整体归一化。口径来自 Rune Skovbo Johansen 硕士论文 §6.3
+  "Gradient Band Interpolation" 式 (6.6)(6.7)（他本人确认 Unity 的 2D Freeform
+  Cartesian 就是这一节，见 Unity 论坛 discussion 167823 post #4）；**不是** Delaunay
+  剖分 + 重心插值（那是 Godot 的做法）。对照表见
+  ``_research/UNITY_BLEND_TREE_WEIGHT_NOTES.md``；
 - ``SIMPLE_1D``（1D 简单混合）：按第一参数排序后只在相邻两点之间插值；
 - ``DIRECTIONAL_2D``（2D 自由形式方向）：按坐标点相对原点的角度分区，输入角度落在
-  相邻两点之间时按角度比例插值，半径方向做衰减，即 Unity 的
-  ``ComputeWeightsFreeformDirectional2D``。
+  相邻两点之间时按角度比例插值，半径方向做衰减。这是对 Unity
+  ``ComputeWeightsFreeformDirectional2D``（论文 §6.3.1 的极坐标梯度带：把
+  ``(角度 × 2, 归一化幅值差)`` 当成二维点再套同一个影响值公式）的**近似**，
+  尚未按论文口径逐项对齐。
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ __all__ = (
     "blend_weights_directional_2d",
     "blend_weights_simple_1d",
     "find_nearest_edge",
+    "influence_weights",
     "pixel_to_uv",
     "plot_axis_range",
     "point_in_triangle",
@@ -49,9 +56,9 @@ MODE_DIRECTIONAL_2D = 'DIRECTIONAL_2D'
 
 BLEND_MODE_ITEMS = (
     (MODE_CARTESIAN_2D, "2D 笛卡尔",
-     "Delaunay 三角剖分 + 重心插值（Unity 2D Freeform Cartesian）"),
+     "影响值取最小投影后归一化（Unity 2D Freeform Cartesian）"),
     (MODE_DIRECTIONAL_2D, "2D 方向",
-     "按角度分区插值 + 半径衰减（Unity 2D Freeform Directional）"),
+     "按角度分区插值 + 半径衰减（Unity 2D Freeform Directional 的近似）"),
     (MODE_SIMPLE_1D, "1D 简单", "只在第一参数方向上的相邻两点之间插值"),
 )
 
@@ -335,26 +342,67 @@ def _snap_to_hull(u, v, unique, triangles):
     return _normalize(weights)
 
 
-def blend_weights_cartesian_2d(points, u, v):
-    """Unity ``ComputeWeightsFreeformCartesian2D`` 的等价实现。
+def influence_weights(points, u, v):
+    """Unity 自由混合的「影响值」（未归一化），对齐论文 §6.3 的笛卡尔口径。
 
-    输入点落在剖分三角形内 → 重心插值；落在凸包外 → 投影到最近的凸包边。
+    对每个点 ``p_i``，看它在每个方向 ``p_i → p_j`` 上的影响力：输入点 ``p`` 在这个
+    方向上的投影越靠近 ``p_j``，``p_i`` 的影响越小，到 ``p_j`` 处正好降到 0：
+
+    .. code-block:: text
+
+        h_i(p) = min over j != i of clamp01(1 - dot(p - p_i, p_j - p_i) / |p_j - p_i|²)
+
+    取所有方向的最小值，就是「影响力往四周递减、遇到第一个其它点就归零」的半径。
+    只有一个点时没有可比较的方向，影响值取 1。
     """
-    unique, triangles = triangulate2d(points)
-    if not unique:
-        return []
-    if not triangles:
-        return blend_weights_simple_1d(points, u, v)
-
     u = float(u)
     v = float(v)
-    spread = _barycentric_spread(u, v, unique, triangles)
-    if spread is not None:
-        return spread
-    snapped = _snap_to_hull(u, v, unique, triangles)
-    if snapped is not None:
-        return snapped
-    return _normalize([1.0 if index == 0 else 0.0 for index in range(len(unique))])
+    influences = []
+    for index, (px, py) in enumerate(points):
+        influence = 1.0
+        for other_index, (qx, qy) in enumerate(points):
+            if other_index == index:
+                continue
+            dx = qx - px
+            dy = qy - py
+            length_squared = dx * dx + dy * dy
+            if length_squared <= _EDGE_PARALLEL_EPSILON:
+                # 重合的点不构成方向，跳过（重复坐标的权重在 ``blend_weights`` 里分摊）
+                continue
+            value = 1.0 - ((u - px) * dx + (v - py) * dy) / length_squared
+            if value < influence:
+                influence = value
+                if influence <= 0.0:
+                    break
+        influences.append(0.0 if influence < 0.0 else
+                          (1.0 if influence > 1.0 else influence))
+    return influences
+
+
+def blend_weights_cartesian_2d(points, u, v):
+    """Unity ``ComputeWeightsFreeformCartesian2D`` 的等价实现（影响值 + 归一化）。
+
+    与「Delaunay 剖分 + 重心插值」的区别很直观：重心插值下包住输入点的两三个点分掉
+    全部权重、近旁的点直接是 0；影响值口径下，输入点附近的**每一个**点都还有影响，
+    权重是连续铺开的（Unity 混合树面板里一圈大小不一的圆就是这个意思）。
+
+    点云外也**不做最近边投影**：影响力会自然收敛到「正对着输入点的那一个点」拿满权重，
+    这也是 Unity 的行为（旧实现投影到最近边，会把一条长边的两端各分一半 —— 见下方
+    ``blend_weights`` 的回归用例）。
+    """
+    unique, _ = _deduplicate(
+        [(float(point[0]), float(point[1])) for point in points])
+    if not unique:
+        return []
+    if len(unique) == 1:
+        return [1.0]
+    influences = influence_weights(unique, u, v)
+    total = sum(influences)
+    if total <= _EDGE_PARALLEL_EPSILON:
+        # 归一化保护：Unity / Rune 的实现是「和大于 0 才除」，否则保留全 0。
+        # 点互不重合时不会有这种情况（任一配对里总有一个方向的影响值 > 0）。
+        return [0.0] * len(unique)
+    return [value / total for value in influences]
 
 
 def blend_weights_directional_2d(points, u, v):

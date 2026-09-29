@@ -2,7 +2,7 @@
 
 这里放的都是“算与写”，不放界面也不放 GPU：
 
-- 权重求值缓存：UI 每帧重绘、绘件每次重画都要权重，签名不变就不重复做剖分；
+- 权重求值缓存：UI 每帧重绘、绘件每次重画都要权重，签名不变就不重复算影响值；
 - 把权重真正写进操作物体形态键的实现与结果报告；
 - 权重归零。
 
@@ -26,7 +26,7 @@ _WEIGHT_CACHE: dict = {"key": None, "weights": (), "names": ()}
 
 
 def _weight_signature(item):
-    """权重缓存签名：只要这些值没变，就不必重新做三角剖分。"""
+    """权重缓存签名：只要这些值没变，就不必重新算一遍影响值。"""
     return (
         round(item.cursor_u, 4),
         round(item.cursor_v, 4),
@@ -41,7 +41,7 @@ def _weight_signature(item):
 def evaluate_item(item):
     """求当前输入坐标下各坐标点的权重，返回 ``(weights, names)``。
 
-    结果按签名缓存，UI 每帧重绘时不会重复做剖分。
+    结果按签名缓存，UI 每帧重绘时不会重复算影响值。
     """
     if item is None:
         return (), ()

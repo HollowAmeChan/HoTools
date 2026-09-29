@@ -3,7 +3,7 @@
 绘件在 3D 视口左下角绘制一个坐标系（无标题栏，尽量简洁）：
 
 - 横纵两条轴以及轴名（调试项里的参数名）；
-- 混合矩阵的全部坐标点位（按权重着色，禁用点位打叉）；
+- 混合矩阵的全部坐标点位（圆的半径随权重变化，权重 0 是很小的实心点）；
 - 可以用鼠标拖动的中心点（当前输入坐标）。
 
 交互对齐 Unity 混合树的 Preview：拖动中心点就是在改输入坐标，坐标点本身也能拖动
@@ -14,6 +14,8 @@
 """
 
 from __future__ import annotations
+
+import math
 
 import bpy
 from bpy.types import Operator
@@ -42,15 +44,20 @@ _MAX_PLOT_SIZE = 940.0
 # 初始坐标系是“翻倍”尺寸：基准边长 472（原来是 236）。
 _BASE_PLOT_SIZE = 472.0
 
-# 权重 → 半径（像素）：权重 0 是小圆点，权重 1 是最大半径（对齐 Unity 混合树的画法）。
-# 尺寸按屏幕像素走，不随坐标系缩放变化；格点很密时圆会有重叠，属预期。
+# 权重 → 半径（像素）：权重 0 是小圆点，权重 1 是最大半径。
+# 半径按 **sqrt(权重)** 走，和 Unity 混合树面板一致（编辑器源码里就是
+# ``radiusFromWeight = Mathf.Sqrt(weight)``）：中间权重的圆也画得出来，
+# 而不是被压成一个小点。尺寸按屏幕像素走，不随坐标系缩放变化；格点很密时圆会重叠，属预期。
 _HANDLE_RADIUS = 36.0
 _MIN_HANDLE_RADIUS = 3.0
-# 空心圆的线宽：填充半径 = 半径 − 这个值，所以圆越大越"空"（半权重仍然是空的）
-_MIN_FILL_MARGIN = 8.0
+# 空心/填充：权重到 _FILL_START 才开始填，权重满时填到半径的 _FILL_MAX_RATIO，始终留描边。
+# 用**半径的比例**而不是固定像素，换半径映射（线性 → sqrt）时观感语义不变。
+_FILL_START = 0.4
+_FILL_MAX_RATIO = 0.55
 _CENTER_RADIUS = 8.0
-# 圆点画大了，命中半径也跟着放大（Unity 里点的 hit 区域也是跟着尺寸走的）
-_PICK_RADIUS = 20.0
+# 圆点画大了，命中半径就跟着放大（Unity 里点的 hit 区域也是跟着尺寸走的）：
+# 直接由最大半径推出来，改大圆点也不会再出现「点画得挺大、却抓不住」
+_PICK_RADIUS = _HANDLE_RADIUS + 6.0
 _GRID_STEPS = (0.25, 0.5, 0.75)
 
 _FONT_SIZE = _draw.FONT_SIZE
@@ -68,22 +75,27 @@ _COLOR_POINT = _draw.COLOR_POINT
 
 
 def _point_radius(weight) -> float:
-    """权重 → 点位半径：权重越高圆越大（Unity 混合树就是这么画的）。"""
+    """权重 → 点位半径：``半径 = 最小半径 + (最大半径 − 最小半径) · sqrt(权重)``。
+
+    开方而不是线性，是为了跟 Unity 混合树面板的观感一致：权重 0.25 的圆有半半径，
+    而不是只有四分之一 —— 权重铺开之后每个点的影响力都看得清。
+    """
     ratio = max(0.0, min(1.0, float(weight)))
-    return _MIN_HANDLE_RADIUS + (_HANDLE_RADIUS - _MIN_HANDLE_RADIUS) * ratio
+    return _MIN_HANDLE_RADIUS + (_HANDLE_RADIUS - _MIN_HANDLE_RADIUS) * math.sqrt(ratio)
 
 
 def _point_fill_radius(weight) -> float:
     """权重 → 实心填充半径；``<= 0`` 表示这一点画成空心圆。
 
     - 权重 0：非常小的实心点（Unity 里未生效的 motion 就是这个观感）；
-    - 中间权重：细空心圆，**圆越大越空**，让"生效程度"一眼看出来；
-    - 权重接近 1：填实。
+    - 权重 < 0.4：空心细圆；
+    - 权重 0.4 → 1：内心按权重长到半径的 55%，始终留出圆环的描边。
     """
     radius = _point_radius(weight)
     if weight <= 1e-6:
         return max(1.0, radius * 0.55)
-    fill = radius - _MIN_FILL_MARGIN
+    ratio = (max(0.0, min(1.0, float(weight))) - _FILL_START) / (1.0 - _FILL_START)
+    fill = radius * _FILL_MAX_RATIO * max(0.0, ratio)
     return fill if fill >= 1.0 else 0.0
 
 
@@ -160,6 +172,10 @@ class _WidgetState:
         self.last_layout = None
         # 上次绘制用的区域尺寸：事件里的区域坐标是按当前视口算的，尺寸对不上就重算布局
         self.layout_size = None
+        # 布局是为哪个调试矩阵、哪个缩放算的：只按尺寸缓存的话，切换矩阵（视口没变）
+        # 会继续用上一个矩阵的矩形与坐标系范围，映射就跟当前矩阵对不上
+        self.layout_item = None
+        self.layout_scale = None
         self.timer_running = False
         self.status = ""
         # 生成它的那次 invoke 绑定的快捷键（空间级 keymap），收尾时要摘掉
@@ -219,19 +235,37 @@ class _WidgetState:
         self.window = getattr(context, "window", None) or self.window
         current = self.area_size()
         if previous != current:
-            self.layout_size = None
-            self.last_layout = None
+            self.invalidate_layout()
             return True
         return False
 
+    def invalidate_layout(self) -> None:
+        """丢掉布局缓存：下次绘制/命中按当前视口尺寸、当前矩阵重新算一份。"""
+        self.last_layout = None
+        self.layout_size = None
+        self.layout_item = None
+        self.layout_scale = None
+
     def _layout_for_size(self, context, item, region_width, region_height, weights):
-        """按区域尺寸取（必要时重算）布局，绘制与命中测试共用同一份。"""
+        """按区域尺寸取（必要时重算）布局，绘制与命中测试共用同一份。
+
+        缓存键除了区域尺寸，还要带上**调试矩阵身份与缩放**：调试矩阵的坐标系范围是
+        按它自己的点位算的，只按尺寸复用布局的话，切到另一个矩阵后仍在用上一个矩阵的
+        范围去映射坐标 —— 那正是「两个矩阵时点位/中心点飞到角上」的来源。
+        """
         size = (float(region_width), float(region_height))
-        layout = self.last_layout
-        if layout is None or self.layout_size != size:
-            layout = compute_layout(region_width, region_height, item, len(weights))
-            self.last_layout = layout
-            self.layout_size = size
+        pointer = item.as_pointer() if item is not None else None
+        scale = round(float(self.scale), 4)
+        if (self.last_layout is not None
+                and self.layout_size == size
+                and self.layout_item == pointer
+                and self.layout_scale == scale):
+            return self.last_layout
+        layout = compute_layout(region_width, region_height, item, len(weights))
+        self.last_layout = layout
+        self.layout_size = size
+        self.layout_item = pointer
+        self.layout_scale = scale
         return layout
 
     # -- 生命周期 --------------------------------------------------------
@@ -241,8 +275,7 @@ class _WidgetState:
         self.window = getattr(context, "window", None)
         area, _region = resolve_area(context, preferred=area)
         self.area = area
-        self.layout_size = None
-        self.last_layout = None
+        self.invalidate_layout()
         self.is_running = True
         self.tag_redraw()
         return True
@@ -256,8 +289,7 @@ class _WidgetState:
         self.drag_kind = None
         self.drag_index = -1
         self.mouse = None
-        self.last_layout = None
-        self.layout_size = None
+        self.invalidate_layout()
         self.tag_redraw()
 
     def remove_handlers(self) -> None:
@@ -431,41 +463,68 @@ def compute_layout(region_width, region_height, item, point_count=0):
         "anchor": "BOTTOM_LEFT",
         "footer_y": panel_y,
         "plot_size": plot,
-        "axis_range": axis_range_for(item),
+        # 只记身份，不冻结坐标系范围：范围要每次取用时现算（见 ``_layout_axis_range``）
+        "item": item,
     }
 
 
 # 坐标系范围按「点位坐标」缓存，而不是按数量：
 # 只按键位数量缓存时，「重排为矩阵」这类**只改坐标不改数量**的操作会让范围保持旧值，
 # 新坐标落到旧范围之外，uv_to_pixel 就把点映射到坐标系矩形外面（看起来像“飞出去”）。
-# 键里带上坐标后：坐标变了就重新适配；拖动中心点（只改输入不改坐标）范围仍然稳定。
+# 关键是**取用时**才解析（``_layout_axis_range``）：布局字典会被缓存复用，把范围冻在
+# 里面就会出现「画的用旧范围、写值用新范围」，两边一错，拖一下点位就飞到角上、
+# 而且被夹在框边上的值每帧都把范围撑大 15%（几何级数增长，越飞越远）。
 _AXIS_RANGE = {"key": None, "range": None}
+
+# 拖动期间冻结的范围：必须连同**属于哪个矩阵**一起记，否则换了矩阵还在用上一个的
+_DRAG_LOCK = {"pointer": None, "range": None}
+
+
+def _item_pointer(item):
+    return item.as_pointer() if item is not None else None
 
 
 def invalidate_axis_range() -> None:
-    """外部改了点位坐标后清一次缓存（下次绘制重新适配）。"""
+    """外部改了点位坐标后清一次缓存（下次取用重新适配）。"""
     _AXIS_RANGE["key"] = None
     if not _DRAG_ACTIVE["value"]:
         _AXIS_RANGE["range"] = None
 
 
 # 拖动期间锁定坐标系范围：否则每帧按当前点位重新适配，映射会一直变，
-# 表现为“点位追不上鼠标”。松手时清掉，下一次绘制再适配一次。
+# 表现为“点位追不上鼠标”。
 _DRAG_ACTIVE = {"value": False}
 
 
-def set_drag_active(active: bool) -> None:
-    """标记是否正在拖动（拖动中锁定范围，松手后重新适配）。"""
+def set_drag_active(active: bool, item=None) -> None:
+    """标记是否正在拖动（拖动中锁定范围，松手后重新适配）。
+
+    ``item`` 是这次拖动要冻结范围的调试矩阵（``press`` 会传）。不给就沿用缓存里已经
+    算好的那份，测试/脚本直接调用时也说得通。
+    """
     was_active = _DRAG_ACTIVE["value"]
     _DRAG_ACTIVE["value"] = bool(active)
+    if active and not was_active:
+        if item is not None:
+            _DRAG_LOCK["pointer"] = _item_pointer(item)
+            _DRAG_LOCK["range"] = _cached_axis_range(item)
+        else:
+            key = _AXIS_RANGE["key"]
+            _DRAG_LOCK["pointer"] = key[0] if key else None
+            _DRAG_LOCK["range"] = _AXIS_RANGE["range"]
     if was_active and not active:
+        _DRAG_LOCK["pointer"] = None
+        _DRAG_LOCK["range"] = None
         invalidate_axis_range()
 
 
 def axis_range_for(item):
     """取当前应该用的坐标系范围（拖动中锁定，其余时候按点位坐标适配）。"""
-    if _DRAG_ACTIVE["value"] and _AXIS_RANGE["range"] is not None:
-        return _AXIS_RANGE["range"]
+    if _DRAG_ACTIVE["value"] and _DRAG_LOCK["range"] is not None:
+        # 锁是「某个矩阵的范围」：矩阵对得上才用；对不上说明锁属于上一个矩阵（比如
+        # 模态被窗口丢掉、没走 release），这时按当前矩阵现算，绝不跨矩阵混用
+        if _DRAG_LOCK["pointer"] in (None, _item_pointer(item)):
+            return _DRAG_LOCK["range"]
     return _cached_axis_range(item)
 
 
@@ -481,13 +540,28 @@ def _cached_axis_range(item):
     return _AXIS_RANGE["range"]
 
 
-def _plot_to_uv(px, py, layout):
-    return _draw.plot_to_uv(px, py, layout["plot"], layout["axis_range"])
+def _layout_axis_range(layout):
+    """布局当前的坐标系范围：**每次取用现算**，绝不用布局字典里可能过期的副本。"""
+    if not layout:
+        return (-1.0, 1.0, -1.0, 1.0)
+    return axis_range_for(layout.get("item"))
 
 
-def _uv_to_plot(u, v, layout):
-    """混合坐标 → 像素坐标；坐标本身越界时也夹在坐标系内，避免点位飞到面板外。"""
-    x, y = _draw.uv_to_plot(u, v, layout["plot"], layout["axis_range"])
+def _plot_to_uv(px, py, layout, axis_range=None):
+    if axis_range is None:
+        axis_range = _layout_axis_range(layout)
+    return _draw.plot_to_uv(px, py, layout["plot"], axis_range)
+
+
+def _uv_to_plot(u, v, layout, axis_range=None):
+    """混合坐标 → 像素坐标；坐标本身越界时也夹在坐标系内，避免点位飞到面板外。
+
+    ``axis_range`` 可以由调用方一次算好传进来（一帧里映射很多个点时省掉重复解析），
+    不传就现解析 —— 无论哪条路径，用的都是**当前**范围。
+    """
+    if axis_range is None:
+        axis_range = _layout_axis_range(layout)
+    x, y = _draw.uv_to_plot(u, v, layout["plot"], axis_range)
     return _clamp_to_plot(x, y, layout)
 
 
@@ -496,13 +570,17 @@ def _clamp_to_plot(px, py, layout):
 
 
 def _compute_handles(item, layout):
-    """返回 ``(handles, centre)``；手柄为 ``(kind, index, x, y)``。"""
+    """返回 ``(handles, centre)``；手柄为 ``(kind, index, x, y)``。
+
+    一次算好坐标系范围再逐个映射：点位多的时候（16×16 格）逐个解析范围会是平方级开销。
+    """
     handles = []
+    axis_range = _layout_axis_range(layout)
     for index, point in enumerate(item.points):
-        x, y = _uv_to_plot(point.u, point.v, layout)
+        x, y = _uv_to_plot(point.u, point.v, layout, axis_range)
         handles.append(("point", index, x, y))
     if item is not None:
-        centre = _uv_to_plot(item.cursor_u, item.cursor_v, layout)
+        centre = _uv_to_plot(item.cursor_u, item.cursor_v, layout, axis_range)
     else:
         plot_x, plot_y, plot_width, plot_height = layout["plot"]
         centre = (plot_x + plot_width * 0.5, plot_y + plot_height * 0.5)
@@ -549,8 +627,11 @@ def _draw_widget_impl() -> None:
         return
 
     weights, _names = _func.evaluate_item(item)
-    layout = WIDGET._layout_for_size(
-        context, item, region_width, region_height, weights)
+    # 绘制与命中测试走同一个取布局入口：同一块视口、同一时刻，两边拿到的矩形和
+    # 坐标系范围必然一致（各算各的就会出现「看着在中间、一拖跳到角上」）
+    layout = layout_for_area(context, item, area, weights)
+    if layout is None:
+        return
     handles, centre = _compute_handles(item, layout)
 
     _draw_backdrop(layout)
@@ -569,25 +650,26 @@ def _draw_backdrop(layout) -> None:
 
 def _draw_grid(layout) -> None:
     plot_x, plot_y, plot_width, plot_height = layout["plot"]
-    u_min, u_max, v_min, v_max = layout["axis_range"]
+    axis_range = _layout_axis_range(layout)
+    u_min, u_max, v_min, v_max = axis_range
     for step in _GRID_STEPS:
         for value in (step, -step):
             if not u_min < value < u_max:
                 continue
-            x, _ = _uv_to_plot(value, 0.0, layout)
+            x, _ = _uv_to_plot(value, 0.0, layout, axis_range)
             _draw.draw_line_strip(
                 ((x, plot_y), (x, plot_y + plot_height)), _COLOR_GRID, 1.0)
         for value in (step, -step):
             if not v_min < value < v_max:
                 continue
-            _, y = _uv_to_plot(0.0, value, layout)
+            _, y = _uv_to_plot(0.0, value, layout, axis_range)
             _draw.draw_line_strip(
                 ((plot_x, y), (plot_x + plot_width, y)), _COLOR_GRID, 1.0)
 
 
 def _draw_axes(layout, item) -> None:
     plot_x, plot_y, plot_width, plot_height = layout["plot"]
-    origin_x, origin_y = _uv_to_plot(0.0, 0.0, layout)
+    origin_x, origin_y = _uv_to_plot(0.0, 0.0, layout, _layout_axis_range(layout))
     _draw.draw_line_strip(
         ((origin_x, plot_y), (origin_x, plot_y + plot_height)), _COLOR_AXIS, 1.4)
     _draw.draw_line_strip(
@@ -681,29 +763,10 @@ def _draw_placeholder(region_width, region_height) -> None:
 # region 命中测试与输入处理（绘制/交互共用）
 
 
-def pick_in_area(context, region_x, region_y, area=None):
-    """在指定视口里做命中测试，返回 ``(kind, index)``。
-
-    ``region_x/region_y`` 必须是**该视口**的区域坐标（左上角为原点），布局也按该视口
-    的实际尺寸取 —— 这正是切换工作区/最大化之后“点不动”的根因：布局与鼠标坐标必须
-    来自同一块区域、同一时刻的尺寸。
-    """
-    item = _store.active_item(context.scene)
-    area = area or getattr(context, "area", None)
-    if area is None or getattr(area, "type", None) != 'VIEW_3D':
-        area = WIDGET.area or resolve_area(context)[0]
-    if item is None or area is None:
+def hit_test(item, region_x, region_y, layout):
+    """纯命中测试：布局已经算好时用这个（拖动会话与新的事件路径共用）。"""
+    if layout is None:
         return None, -1
-    try:
-        region_width = float(area.width or 0.0)
-        region_height = float(area.height or 0.0)
-    except (AttributeError, ReferenceError, RuntimeError):
-        return None, -1
-    if not region_width or not region_height:
-        return None, -1
-    weights, _names = _func.evaluate_item(item)
-    layout = WIDGET._layout_for_size(
-        context, item, region_width, region_height, weights)
     handles, centre = _compute_handles(item, layout)
     if (region_x - centre[0]) ** 2 + (region_y - centre[1]) ** 2 <= _PICK_RADIUS ** 2:
         return "centre", -1
@@ -715,6 +778,46 @@ def pick_in_area(context, region_x, region_y, area=None):
             best_distance = distance
             best = (kind, index)
     return (best if best is not None else (None, -1))
+
+
+def pick_in_area(context, region_x, region_y, area=None):
+    """在指定视口里做命中测试，返回 ``(kind, index)``。
+
+    ``region_x/region_y`` 必须是**该视口**的区域坐标（左上角为原点），布局按该视口的
+    **实际尺寸现算** —— 这正是切换工作区/最大化、或者来回切换调试矩阵之后“点不动/
+    点飞”的根因：布局与鼠标坐标必须来自同一块区域、同一时刻的尺寸。
+    """
+    item = _store.active_item(context.scene)
+    if item is None:
+        return None, -1
+    layout = layout_for_area(context, item, area)
+    if layout is None:
+        return None, -1
+    return hit_test(item, region_x, region_y, layout)
+
+
+def layout_for_area(context, item, area=None, weights=None):
+    """按 ``area`` 的实际尺寸取（必要时重算）该调试矩阵的布局。
+
+    ``area`` 缺省时用绘件当前挂着的视口；尺寸拿不到就退回上一次绘制的快照。
+    绘制与命中测试都走这里，保证「同一块视口、同一矩阵」只有一份布局。
+    """
+    if item is None:
+        return None
+    area = area or getattr(context, "area", None)
+    if area is None or getattr(area, "type", None) != 'VIEW_3D':
+        area = WIDGET.area
+    try:
+        region_width = float(area.width or 0.0) if area is not None else 0.0
+        region_height = float(area.height or 0.0) if area is not None else 0.0
+    except (AttributeError, ReferenceError, RuntimeError):
+        region_width = region_height = 0.0
+    if not region_width or not region_height:
+        return WIDGET.last_layout
+    if weights is None:
+        weights, _names = _func.evaluate_item(item)
+    return WIDGET._layout_for_size(
+        context, item, region_width, region_height, weights)
 
 
 def pointer_to_uv(region_x, region_y, layout):
@@ -756,7 +859,7 @@ def reset_cursor(context):
     item.cursor_v = 0.0
     if context.scene.ho_bs_apply_on_cursor:
         _func.apply_weights(context, item)
-    WIDGET.layout_size = None
+    WIDGET.invalidate_layout()
     WIDGET.tag_redraw()
     redraw_all_areas()
     return True
@@ -774,7 +877,7 @@ def clear_all_keys(context):
 
 def scale_widget(context, step):
     WIDGET.scale = max(0.5, min(2.0, WIDGET.scale + step))
-    WIDGET.layout_size = None
+    WIDGET.invalidate_layout()
     WIDGET.tag_redraw()
     redraw_all_areas()
     return True
@@ -898,6 +1001,86 @@ class OP_ShapekeyTools_BlendWidget(Operator):
         return {'FINISHED'}
 
 
+class WidgetDragSession:
+    """一次「按下 → 拖动 → 松手」的会话。
+
+    把拖拽计算从模态算子里抽出来，好处有两个：
+
+    - 无头环境也能复现/回归拖拽行为（脚本构造不了模态算子）；
+    - 鼠标坐标与布局的对应关系集中在一处，方便盯住“点位飞出去”这类问题。
+    """
+
+    def __init__(self, context, *, on_redraw=None):
+        self.context = context
+        self.on_redraw = on_redraw
+        self.kind = None
+        self.index = -1
+        self.item_pointer = None
+        # 按下时所在视口：整段拖动都按**这一块**视口的尺寸换算鼠标坐标。
+        # 中途改尺寸（Ctrl+Space）也照样按同一块视口的最新尺寸重算，不换视口。
+        self.area = None
+
+    # -- 生命周期 --------------------------------------------------------
+    def press(self, context, region_x, region_y, area=None) -> bool:
+        """在 ``(region_x, region_y)`` 按下；命中控件返回 ``True``。"""
+        if not WIDGET.is_running:
+            return False
+        item = _store.active_item(context.scene)
+        if item is None:
+            return False
+        self.area = area or getattr(context, "area", None)
+        kind, index = pick_in_area(context, region_x, region_y, self.area)
+        if kind is None:
+            WIDGET.set_hover("", -1)
+            return False
+        self.kind = kind
+        self.index = index
+        self.item_pointer = item.as_pointer()
+        if kind == "point":
+            item.point_index = index
+        # 拖动期间锁定坐标系范围，保证点位跟得上鼠标；松手后重新适配
+        set_drag_active(True, item)
+        self._redraw()
+        return True
+
+    def move(self, context, region_x, region_y) -> bool:
+        """拖动中移动鼠标；写入了值返回 ``True``。"""
+        if self.kind not in {"centre", "point"}:
+            return False
+        item = _store.active_item(context.scene)
+        if item is None:
+            return False
+        # 换过调试矩阵就停止这次拖动，避免把坐标写进另一个矩阵
+        if self.item_pointer is not None and item.as_pointer() != self.item_pointer:
+            self.kind = None
+            self.index = -1
+            return False
+        layout = layout_for_area(context, item, self.area)
+        if layout is None:
+            return False
+        if self.kind == "centre":
+            changed = set_cursor(context, region_x, region_y, layout)
+        else:
+            changed = set_point(context, self.index, region_x, region_y, layout)
+        self._redraw()
+        return changed
+
+    def release(self) -> None:
+        self.kind = None
+        self.index = -1
+        self.item_pointer = None
+        self.area = None
+        set_drag_active(False)
+        WIDGET.invalidate_layout()
+        self._redraw()
+
+    def _redraw(self) -> None:
+        if self.on_redraw is not None:
+            self.on_redraw()
+        else:
+            WIDGET.tag_redraw()
+
+
 class OP_ShapekeyTools_BlendWidgetPick(Operator):
     """控件交互：由 3D 视口的左键快捷键触发，命中控件时才进入模态拖动。
 
@@ -926,21 +1109,13 @@ class OP_ShapekeyTools_BlendWidgetPick(Operator):
         area = getattr(context, "area", None)
         if area is not None and getattr(area, "type", None) == 'VIEW_3D':
             WIDGET.area = area
-        kind, index = pick_in_area(
-            context, event.mouse_region_x, event.mouse_region_y, area)
-        if kind is None:
+        session = WidgetDragSession(context)
+        if not session.press(context, event.mouse_region_x, event.mouse_region_y,
+                             area):
             # 没点到控件：原样放行，选择 / 框选 / 导航都不受影响
-            WIDGET.set_hover("", -1)
             return {'PASS_THROUGH'}
-        WIDGET.drag_kind = kind
-        WIDGET.drag_index = index
-        item = _store.active_item(context.scene)
-        if kind == "point" and item is not None:
-            item.point_index = index
-        # 拖动期间锁定坐标系范围，保证点位跟得上鼠标；松手后重新适配
-        set_drag_active(True)
+        self._session = session
         context.window_manager.modal_handler_add(self)
-        WIDGET.tag_redraw()
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
@@ -959,16 +1134,12 @@ class OP_ShapekeyTools_BlendWidgetPick(Operator):
     def modal(self, context, event):
         if not WIDGET.is_running:
             return {'CANCELLED'}
+        session = getattr(self, "_session", None)
+        if session is None:
+            return {'CANCELLED'}
         if event.type == 'MOUSEMOVE':
-            if WIDGET.drag_kind in {"centre", "point"}:
-                layout = WIDGET.last_layout
-                if WIDGET.drag_kind == "centre":
-                    set_cursor(context, event.mouse_region_x, event.mouse_region_y,
-                               layout)
-                else:
-                    set_point(context, WIDGET.drag_index,
-                              event.mouse_region_x, event.mouse_region_y, layout)
-                WIDGET.tag_redraw()
+            if session.kind in {"centre", "point"}:
+                session.move(context, event.mouse_region_x, event.mouse_region_y)
             else:
                 kind, index = pick_in_area(
                     context, event.mouse_region_x, event.mouse_region_y,
@@ -976,18 +1147,10 @@ class OP_ShapekeyTools_BlendWidgetPick(Operator):
                 WIDGET.set_hover(kind or "", index)
             return {'PASS_THROUGH'}
         if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
-            WIDGET.drag_kind = None
-            WIDGET.drag_index = -1
-            set_drag_active(False)
-            WIDGET.layout_size = None
-            WIDGET.tag_redraw()
+            session.release()
             return {'FINISHED'}
         if event.type == 'ESC':
-            WIDGET.drag_kind = None
-            WIDGET.drag_index = -1
-            set_drag_active(False)
-            WIDGET.layout_size = None
-            WIDGET.tag_redraw()
+            session.release()
             return {'FINISHED'}
         return {'PASS_THROUGH'}
 

@@ -833,6 +833,16 @@ assert radius_full == overlay._HANDLE_RADIUS, "权重 1 就是最大半径"
 assert radius_full >= 15.0, "最大半径要够显眼（对齐 Unity 的观感）"
 assert radius_zero <= 4.0, "权重 0 应该是小圆点"
 assert overlay._point_radius(0.5) > radius_zero + 3.0, "中间权重要有可见差异"
+# 半径按 sqrt(权重) 插值（Unity 编辑器源码：radiusFromWeight = Mathf.Sqrt(weight)）：
+# 四分之一权重就有半个半径，而不是四分之一 —— 权重铺开后每个点的影响力都看得清
+radius_span = overlay._HANDLE_RADIUS - overlay._MIN_HANDLE_RADIUS
+assert abs(overlay._point_radius(0.25)
+           - (overlay._MIN_HANDLE_RADIUS + radius_span * 0.5)) < 1e-9, (
+    overlay._point_radius(0.25))
+assert abs(radius_half
+           - (overlay._MIN_HANDLE_RADIUS + radius_span * 0.5 ** 0.5)) < 1e-9, radius_half
+assert abs(overlay._point_radius(0.1)
+           - (overlay._MIN_HANDLE_RADIUS + radius_span * 0.1 ** 0.5)) < 1e-9
 assert overlay._PICK_RADIUS >= radius_full, "命中半径不能比最大圆还小"
 # 越界权重被夹住，不会画出负半径/超大圆
 assert overlay._point_radius(-1.0) == radius_zero

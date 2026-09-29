@@ -162,7 +162,11 @@ else:
             return area.tag_redraw()
 
     resized = _ResizedArea((int(area.width * 0.62), int(area.height * 0.7)))
+    # 先按当前尺寸画一帧再取快照：中间的命令算子（R 回原点等）本来就会让布局失效，
+    # 拿一份已经作废的布局当参照物，「尺寸变了有没有丢掉旧布局」就验不出来了
+    overlay.draw_widget()
     stale = overlay.WIDGET.last_layout
+    assert stale is not None, "绘制没有产生布局，无法验证尺寸变化"
     changed = overlay.WIDGET.refresh(bpy.context, area=resized)
     print("SMOKE resized ->", resized.width, resized.height,
           "changed:", changed, flush=True)

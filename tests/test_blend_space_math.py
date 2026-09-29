@@ -92,21 +92,84 @@ for size in (3, 4, 5):
             assert all(value >= -1e-12 for value in weights), weights
 
 
-# ── 2D 笛卡尔权重（Unity 2D Freeform Cartesian 口径） ──────────────────────
-# 正方形的对角线被剖分选中，中心点必然落在对角线边上，因此只由该边两端点决定。
+# ── 2D 笛卡尔权重（Unity 2D Freeform Cartesian 口径：影响值 + 归一化）────────
+# Unity 的自由笛卡尔**不是** Delaunay + 重心插值：每个点在每个方向上的影响力线性衰减，
+# 遇到第一个其它点就降到 0，取所有方向的最小值作为该点的影响值，最后整体归一化。
+# 于是「被几个点包住」的输入点会让四周的点**都有**影响，而不是只有包住它的两三个点。
 assert_weights(
     blend.blend_weights(SQUARE, 0.0, 0.0, blend.MODE_CARTESIAN_2D),
-    (0.0, 0.5, 0.0, 0.5),
-    message="正方形对角线边界上的权重",
+    (0.25, 0.25, 0.25, 0.25),
+    message="正方形中心四点影响值相同，各占四分之一",
 )
-# 五个点的十字布局：中心点落在剖分三角形的内部，四个外围点才可能同时有权重。
+# 影响值原始值：从中心看向四个角，投影都落在半边，所以每个角的影响值都是 0.5
+assert_weights(
+    blend.influence_weights(SQUARE, 0.0, 0.0),
+    (0.5, 0.5, 0.5, 0.5),
+    message="影响值原始值",
+)
+# 与重心插值的区别：单三角形时两者并不相等（重心插值会给 0.5/0.25/0.25）
+triangle_points = ((0.0, 0.0), (2.0, 0.0), (0.0, 2.0))
+assert_weights(
+    blend.blend_weights(triangle_points, 0.5, 0.5, blend.MODE_CARTESIAN_2D),
+    (0.6, 0.2, 0.2),
+    message="单三角形按影响值混合（不是重心插值）",
+)
+# 实际截图量出来的点位（手工拖动过、不是规则格点）：上排中间那个点比「上排两端连线」
+# 低 0.012，输入点又在点云外面一点点。旧的「剖分 + 凸包外投影到最近边」实现会把这条
+# 长边 9→11 当最近边，给出 9:0.505 / 11:0.495，而紧挨着输入点的 10 号点是 0 —— 正是
+# 用户截图里的 0.51 / 0.49。影响值口径下由最近的点主导，远端自然归零。
+SNAPSHOT_POINTS = (
+    (-0.859, -0.751), (-0.288, -0.723), (0.515, -0.718), (0.963, -0.753),
+    (-0.837, 0.016), (-0.265, 0.034), (0.463, 0.007), (0.967, -0.021),
+    (-0.864, 0.595), (-0.284, 0.569), (0.910, 0.553),
+)
+snapshot = blend.blend_weights(SNAPSHOT_POINTS, 0.015, 0.633,
+                               blend.MODE_CARTESIAN_2D)
+assert_weights(
+    snapshot,
+    (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.176572, 0.0, 0.0, 0.617854, 0.205573),
+    tolerance=1e-4,
+    message="输入点在点云外的实测点位：该由最近的 10 号点主导",
+)
+assert snapshot[9] > snapshot[10] > snapshot[6] > 0.0, snapshot
+assert snapshot[8] == 0.0, "离得最远的 9 号点不该还有权重"
+
+# Unity 口径的对照表（论文式 6.6/6.7，另见 _research/UNITY_BLEND_TREE_WEIGHT_NOTES.md）：
+# 3x3 格点在 (0.5,0.5) 处四个"包住它"的点各 1/4；在 (2,2) 处（点云外）塌缩成角点满权重。
+REFERENCE_GRID = ((-1.0, 1.0), (0.0, 1.0), (1.0, 1.0),
+                  (-1.0, 0.0), (0.0, 0.0), (1.0, 0.0),
+                  (-1.0, -1.0), (0.0, -1.0), (1.0, -1.0))
+assert_weights(
+    blend.blend_weights(REFERENCE_GRID, 0.5, 0.5, blend.MODE_CARTESIAN_2D),
+    (0.0, 0.25, 0.25, 0.0, 0.25, 0.25, 0.0, 0.0, 0.0),
+    message="格点中心处四个点各四分之一",
+)
+assert_weights(
+    blend.blend_weights(REFERENCE_GRID, 2.0, 2.0, blend.MODE_CARTESIAN_2D),
+    (0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    message="点云外塌缩到正对输入点的那个点",
+)
+
+# 五个点的十字布局：中心点自己是一个点位
 cross = ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0), (0.0, 0.0))
-centre = blend.blend_weights(cross, 0.0, 0.0, blend.MODE_CARTESIAN_2D)
-assert_weights(centre, (0.0, 0.0, 0.0, 0.0, 1.0), message="与坐标点重合时应完全取该点")
-# 中心点一定落在某个剖分三角形内部，所以它的权重由该三角形的三个顶点决定。
+assert_weights(
+    blend.blend_weights(cross, 0.0, 0.0, blend.MODE_CARTESIAN_2D),
+    (0.0, 0.0, 0.0, 0.0, 1.0),
+    message="与坐标点重合时应完全取该点",
+)
+# 关键回归：输入点靠近中心点 (0.2,0.2) 时，中心点必须拿到最大权重，两个正方向点分掉
+# 剩下的权重；旧的「重心插值」实现会把中心点和另外两个点直接算成 0。
 inside_blend = blend.blend_weights(cross, 0.2, 0.2, blend.MODE_CARTESIAN_2D)
 assert_close(sum(inside_blend), 1.0, message="中心点附近权重和")
-assert inside_blend[0] > 0.0 and inside_blend[1] > 0.0, inside_blend
+assert_weights(inside_blend, (1 / 6, 1 / 6, 0.0, 0.0, 2 / 3),
+               message="输入点附近的点都要分到影响值")
+# 全共线时退化成相邻两点之间的线性插值（中间点不会被跳过）
+assert_weights(
+    blend.blend_weights(((-1.0, 0.0), (0.0, 0.0), (1.0, 0.0)), 0.25, 0.0,
+                        blend.MODE_CARTESIAN_2D),
+    (0.0, 0.75, 0.25),
+    message="共线点按相邻两点线性插值",
+)
 assert_weights(
     blend.blend_weights(SQUARE, 1.0, 1.0, blend.MODE_CARTESIAN_2D),
     (1.0, 0.0, 0.0, 0.0),
@@ -117,10 +180,10 @@ assert_weights(
     (0.5, 0.5, 0.0, 0.0),
     message="上边界中点应均分上方两点",
 )
-# 凸包外：投影到最近边，权重仍归一化且只落在该边两端
+# 点云外：影响力落在正对着输入点的那条边两端，背面的两点为 0
 outside = blend.blend_weights(SQUARE, 3.0, 0.0, blend.MODE_CARTESIAN_2D)
-assert_weights(outside, (0.5, 0.0, 0.0, 0.5), message="凸包外应投影到最近边")
-assert_close(sum(outside), 1.0, message="凸包外权重必须归一化")
+assert_weights(outside, (0.5, 0.0, 0.0, 0.5), message="点云外应由最近的边决定")
+assert_close(sum(outside), 1.0, message="点云外权重必须归一化")
 
 # 权重永远归一化、永远非负
 for u, v in ((0.3, -0.4), (-0.9, 0.2), (1.4, -1.3), (0.0, 0.0), (-2.0, 2.0)):
@@ -128,13 +191,15 @@ for u, v in ((0.3, -0.4), (-0.9, 0.2), (1.4, -1.3), (0.0, 0.0), (-2.0, 2.0)):
     assert_close(sum(weights), 1.0, message=f"({u},{v}) 权重和")
     assert all(value >= -1e-12 for value in weights), weights
 
-# 三角形内部重心插值：单三角形输入时权重就是重心坐标
-triangle_points = ((0.0, 0.0), (2.0, 0.0), (0.0, 2.0))
-assert_weights(
-    blend.blend_weights(triangle_points, 0.5, 0.5, blend.MODE_CARTESIAN_2D),
-    (0.5, 0.25, 0.25),
-    message="单三角形重心插值",
-)
+# 影响值是连续的：扫过整个空间时权重不能跳变（剖分+重心插值在三角形边界上会跳）
+previous = None
+for step in range(201):
+    u = -2.4 + 0.024 * step
+    weights = blend.blend_weights(SQUARE, u, 0.35, blend.MODE_CARTESIAN_2D)
+    if previous is not None:
+        jump = max(abs(a - b) for a, b in zip(weights, previous))
+        assert jump < 0.05, f"u={u:.3f} 处权重跳变 {jump}"
+    previous = weights
 
 
 # ── 1D 简单混合 ────────────────────────────────────────────────────────────
