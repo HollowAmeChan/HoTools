@@ -203,6 +203,11 @@ def _draw_view_options(layout: LayoutBuilder, context):
         row.prop(obj,"show_in_front",text="最前",icon="XRAY")
         row.item().popover(panel="OBJECT_PT_display", text="")
 
+    if obj and obj.type == "EMPTY":
+            row = layout.row(align=True)
+            row.label(text="",icon="OUTLINER_DATA_EMPTY")
+            row.prop(obj,"show_in_front",text="最前",icon="XRAY")
+
     if obj and obj.type == "CURVE":
         curve :bpy.types.Curve = getattr(obj, "data", None)
         row = layout.row(align=True)

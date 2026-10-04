@@ -136,6 +136,7 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             op.face_align = False
             op.slide_coords = []
             op.draw_end_align = False
+            op.limit_to_edge_segment = True
 
             bmesh.ops.rotate(
                 bm,

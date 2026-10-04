@@ -144,9 +144,9 @@ axis_color_mapping = {'X': red,
                       'Z': blue}
 
 def create_rotation_matrix_from_vector(vector, mx=None):
-    normal = mx.to_3x3() @ vector if mx else vector
-    binormal = normal.orthogonal()
-    tangent = normal.cross(binormal)
+    normal = (mx.to_3x3() @ vector if mx else vector).normalized()
+    binormal = normal.orthogonal().normalized()
+    tangent = normal.cross(binormal).normalized()
 
     rot = Matrix()
     rot.col[0].xyz = tangent
@@ -297,9 +297,6 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
         if event.type in shift:
             self.update_transform_plane(context, init=True)
 
-        self.is_direction_locking = event.alt and self.transform_mode == 'SCALE' and not self.is_zero_scaling and not self.is_axis_locking
-        self.update_scale_direction_lock()
-
         events = ['MOUSEMOVE', *ctrl, *shift, *alt, 'ONE', 'TWO', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'E', 'R', 'S', 'X', 'Y', 'Z', 'C', 'V', 'MIDDLEMOUSE', 'F', 'Q']
 
         if event.type in events:
@@ -339,6 +336,8 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
             elif len(self.data) > 1 and event.type in ['Q'] and event.value == 'PRESS':
                 self.individual_origins = not self.individual_origins
 
+            self.is_direction_locking = event.alt and self.transform_mode == 'SCALE' and not self.is_zero_scaling and not self.is_axis_locking
+            self.update_scale_direction_lock()
             self.transform(context)
 
         if event.type in {'LEFTMOUSE', 'SPACE'} and event.value == 'PRESS':
@@ -451,9 +450,12 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def update_scale_direction_lock(self):
-        if self.is_direction_locking and not self.locked_intersection:
-            self.locked_intersection = self.intersection
-        elif not self.is_direction_locking and self.locked_intersection:
+        if self.is_direction_locking and self.locked_intersection is None:
+            if (self.intersection - self.origin).length > 1e-8:
+                self.locked_intersection = self.intersection.copy()
+            elif (self.init_intersection - self.origin).length > 1e-8:
+                self.locked_intersection = self.init_intersection.copy()
+        elif not self.is_direction_locking:
             self.locked_intersection = None
 
     def get_data(self, bm, sequences):
@@ -809,7 +811,7 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
 
             elif self.transform_mode == 'SCALE' or self.is_zero_scaling:
                 axis = self.transform_axis
-                axis_vector = self.mx.col[axis_mapping_dict[axis]].xyz
+                axis_vector = self.mx.col[axis_mapping_dict[axis]].xyz.normalized()
                 cross_vector = axis_vector.cross(view_dir)
 
                 origin_dir = axis_vector.cross(cross_vector)
@@ -818,7 +820,7 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
                 axis = self.transform_axis[-1]
                 origin_dir = self.mx.col[axis_mapping_dict[axis]].xyz
 
-            return origin_dir
+            return origin_dir.normalized()
 
         view_origin = region_2d_to_origin_3d(context.region, context.region_data, self.mousepos)
         view_dir = region_2d_to_vector_3d(context.region, context.region_data, self.mousepos)
@@ -840,6 +842,7 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
 
         if init:
             self.init_intersection = i
+            self.locked_intersection = None
 
         self.intersection = i
 
@@ -866,56 +869,40 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
             return rotation
 
         def get_scale(per_sequence_origin=None):
-            def lock_scale_direction():
-                i = intersect_point_line(self.intersection, self.origin, self.locked_intersection)
-
-                if i:
-                    current_scale = i[0] - self.origin
-
-                    dot = current_scale.normalized().dot((self.locked_intersection - self.origin).normalized())
-
-                    if dot < 0:
-                        amount = 0
-                        current_scale = current_scale * 0.001
-
-                    else:
-                        amount = current_scale.length / init_scale.length
-
-                return amount, current_scale
-
-            def lock_scale_axis():
-                axis = self.transform_axis
-                axis_vector = self.mx.col[axis_mapping_dict[axis]].xyz
-
-                i = intersect_point_line(self.intersection, self.origin, self.origin + axis_vector)
-
-                if i:
-                    current_scale = i[0] - self.origin
-
-                    init_i = intersect_point_line(self.init_intersection, self.origin, self.origin + axis_vector)
-                    init_scale = init_i[0] - self.origin
-
-                    amount = current_scale.length / init_scale.length
-                return amount, current_scale
-
             init_scale = self.init_intersection - self.origin
             current_scale = self.intersection - self.origin
-            amount = current_scale.length / init_scale.length
+            locked_direction = None
 
             if self.is_axis_locking:
-                amount, current_scale = lock_scale_axis()
+                locked_direction = self.mx.col[axis_mapping_dict[self.transform_axis]].xyz.normalized()
+                init_scale = locked_direction * init_scale.dot(locked_direction)
+                current_scale = locked_direction * current_scale.dot(locked_direction)
 
-            elif self.is_direction_locking:
-                amount, current_scale = lock_scale_direction()
+            elif self.is_direction_locking and self.locked_intersection is not None:
+                locked_direction = (self.locked_intersection - self.origin).normalized()
+                current_scale = locked_direction * current_scale.dot(locked_direction)
 
-            if per_sequence_origin:
-                origin_local = self.mx.inverted_safe() @ per_sequence_origin
-            else:
-                origin_local = self.mx.inverted_safe() @ self.origin
+            # Starting at the pivot (or perpendicular to a locked axis) has no
+            # scale reference. Establish one on the first nonzero movement.
+            if init_scale.length <= 1e-8:
+                self.init_intersection = self.intersection.copy()
+                init_scale = current_scale.copy()
+            amount = current_scale.length / init_scale.length if init_scale.length > 1e-8 else 1.0
 
-            rmx = create_rotation_matrix_from_vector(current_scale.normalized(), mx=self.mx.inverted_safe())
+            if self.is_direction_locking and locked_direction is not None and current_scale.dot(locked_direction) < 0:
+                amount = 0
 
-            space = rmx.inverted_safe() @ get_loc_matrix(origin_local).inverted_safe()
+            # Keep a valid plane normal when the mouse reaches the pivot.
+            if current_scale.length <= 1e-8:
+                current_scale = locked_direction.copy() if locked_direction is not None else init_scale.copy()
+            if current_scale.length <= 1e-8:
+                current_scale = locked_direction.copy() if locked_direction is not None else Vector((1, 0, 0))
+
+            origin = per_sequence_origin if per_sequence_origin is not None else self.origin
+            rmx = create_rotation_matrix_from_vector(current_scale)
+            # BMesh space maps local coordinates into the world-space scale
+            # frame. Conjugating by matrix_world also handles scale and shear.
+            space = rmx.inverted_safe() @ get_loc_matrix(origin).inverted_safe() @ self.mx
 
             if self.is_zero_scaling:
                 amount = 0
@@ -1008,6 +995,12 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
                             )
                         v.co = candidate
                         break
+                else:
+                    if self.transform_mode == 'SCALE' or self.is_zero_scaling:
+                        # A parallel slide rail cannot reach the scale plane.
+                        # Keep this vertex on its original topology instead of
+                        # leaving the unconstrained scaled position behind.
+                        v.co = tvdata['init_co']
 
     def get_transformed_data(self):
         def check_if_flat():
@@ -1200,6 +1193,8 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
                 print("failed scale plane intersection", v.index)
 
         def get_scale_plane_intersection_co(debug=False):
+            if abs(edge_dir.dot(current_scale_local)) <= 1e-6:
+                return
             i = intersect_line_plane(init_co, init_co + edge_dir, co, current_scale_local)
 
             if i:
@@ -1214,7 +1209,9 @@ class OP_TransformEdgeConstrained(bpy.types.Operator):
         origin_local = self.mx.inverted_safe() @ self.origin
         origin_dir_local = self.mx.inverted_safe().to_quaternion() @ self.origin_dir
 
-        current_scale_local = self.mx.inverted_safe().to_quaternion() @ self.scale
+        # A plane normal is a covector: world -> local uses M^T, not M^-1
+        # (direction vectors) or only the object's rotation quaternion.
+        current_scale_local = (self.mx.to_3x3().transposed() @ self.scale.normalized()).normalized()
 
         init_mousedir_local = self.mx.to_quaternion() @ (self.origin - self.init_intersection)
 
