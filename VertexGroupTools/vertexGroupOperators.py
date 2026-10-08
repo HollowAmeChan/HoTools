@@ -1251,6 +1251,10 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
     bl_options = {'REGISTER', 'UNDO'}
     _MAX_PICK_DISTANCE_PX = 64.0
     _TIE_BREAK_MARGIN_PX = 6.0
+    # 骨骼与网格错位的判定参数：骨架的物体变换没应用、或解析到了错误的骨架时，
+    # 用来给出明确提示，避免"只剩一根候选棍"被误当成功能缺陷。
+    _MISALIGNMENT_SAMPLE_LIMIT = 4096
+    _MISALIGNMENT_TOLERANCE = 0.35
 
     @classmethod
     def poll(cls, context):
@@ -1265,8 +1269,83 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
     def _find_rig(obj):
         return bone_utils.find_armature_for_object(obj)
 
+    @classmethod
+    def _vertex_group_name_mismatch(cls, obj, rig):
+        """网格上有顶点组，但没有一个与该骨架的骨骼同名。"""
+        group_names = {group.name for group in obj.vertex_groups}
+        if not group_names:
+            return False
+        return group_names.isdisjoint({bone.name for bone in rig.data.bones})
+
+    @classmethod
+    def _mesh_armature_misalignment(cls, obj, rig):
+        """网格顶点在骨架空间里是否远离它们有权重的骨骼。
+
+        整条拾取逻辑依赖"骨骼落在网格上"这一前提：正常资产里顶点都贴在对应骨骼
+        附近，骨架的物体变换一旦没有应用（或解析到了错误的骨架），顶点会在骨架空间
+        里整体偏移/缩放，骨骼就跑到网格外面去，候选棍挤成一团甚至全部超出距离阈值。
+        这里用静止姿态比较（未形变的网格数据 + data bones），与当前姿势无关。
+        """
+        mesh = obj.data
+        vertex_count = len(mesh.vertices)
+        if vertex_count == 0:
+            return False
+
+        segments = {
+            bone.name: (bone.head_local.copy(), bone.tail_local.copy())
+            for bone in rig.data.bones
+        }
+        if not segments:
+            return False
+
+        group_names = [group.name for group in obj.vertex_groups]
+        to_armature = rig.matrix_world.inverted_safe() @ obj.matrix_world
+        corners = [to_armature @ Vector(corner) for corner in obj.bound_box]
+        center = sum(corners, Vector()) / len(corners)
+        diagonal = max((corner - center).length for corner in corners)
+        if diagonal <= 1e-8:
+            return False
+
+        stride = max(1, vertex_count // cls._MISALIGNMENT_SAMPLE_LIMIT)
+        distances = []
+        for index in range(0, vertex_count, stride):
+            vertex = mesh.vertices[index]
+            best_weight = 0.0
+            best_name = None
+            for group_ref in vertex.groups:
+                if group_ref.weight <= best_weight:
+                    continue
+                name = group_names[group_ref.group]
+                if name not in segments:
+                    continue
+                best_weight = group_ref.weight
+                best_name = name
+            if best_name is None:
+                continue
+            head, tail = segments[best_name]
+            point = to_armature @ vertex.co
+            distances.append(cls._distance_point_to_segment(point, head, tail))
+
+        # 采样太少时不下结论，避免小网格误报。
+        if len(distances) < 8:
+            return False
+
+        distances.sort()
+        median = distances[len(distances) // 2]
+        return median > diagonal * cls._MISALIGNMENT_TOLERANCE
+
+    @classmethod
+    def _data_problem_hint(cls, obj, rig):
+        """候选不可用时给出数据层面的原因；数据正常时返回 None。"""
+        if cls._vertex_group_name_mismatch(obj, rig):
+            return "网格上没有与该骨架骨骼同名的顶点组，可能解析到了错误的骨架"
+        if cls._mesh_armature_misalignment(obj, rig):
+            return "骨骼与网格位置严重错位，骨架的变换可能没有应用（选中骨架后 Ctrl+A 应用变换）"
+        return None
+
     @staticmethod
-    def _distance_point_to_segment_2d(point, start, end):
+    def _distance_point_to_segment(point, start, end):
+        """点到线段的最短距离；与维度无关，2D 屏幕空间和 3D 骨架空间共用。"""
         segment = end - start
         length_sq = segment.length_squared
         if length_sq <= 1e-8:
@@ -1329,7 +1408,7 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
             if head_2d is None or tail_2d is None:
                 continue
 
-            distance = self._distance_point_to_segment_2d(
+            distance = self._distance_point_to_segment(
                 mouse_coord,
                 head_2d,
                 tail_2d
@@ -1367,6 +1446,12 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
             self.report({'WARNING'}, "未找到绑定骨架")
             return {'CANCELLED'}
 
+        # 数据本身有问题时先把原因说出来：否则"候选棍挤成一根"或"点哪都没反应"
+        # 会被当成插件缺陷，而这其实是骨架没应用变换 / 解析到了错误骨架。
+        problem_hint = self._data_problem_hint(obj, rig)
+        if problem_hint:
+            self.report({'WARNING'}, problem_hint)
+
         view_context = self._find_view3d_region(context)
         if view_context is None:
             self.report({'WARNING'}, "找不到鼠标所在的 3D 视图区域")
@@ -1382,7 +1467,10 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
         )
 
         if not active_bone:
-            self.report({'WARNING'}, "鼠标附近没有可切换的骨骼顶点组")
+            message = "鼠标附近没有可切换的骨骼顶点组"
+            if problem_hint:
+                message = f"{message}（{problem_hint}）"
+            self.report({'WARNING'}, message)
             return {'CANCELLED'}
 
         obj.vertex_groups.active = obj.vertex_groups[active_bone]
