@@ -17,6 +17,23 @@ def bounds_center(points):
     return tuple((min(p[a] for p in points) + max(p[a] for p in points)) * .5 for a in (0, 1))
 
 
+def fit_points_to_tile(points, tile=(0, 0), margin=0.0):
+    """Center the selection AABB, then maximize uniform scale inside a UV tile.
+
+    Keep aspect and orientation. A zero-width/height line is valid; a single
+    collapsed point is simply placed at the tile center without division by zero.
+    """
+    points = checked_points(points)
+    if len(tile) != 2 or not all(isfinite(v) for v in tile) or not isfinite(margin) or not 0 <= margin < .5:
+        raise ValueError('目标象限或边距无效')
+    low = tuple(min(p[a] for p in points) for a in (0, 1))
+    high = tuple(max(p[a] for p in points) for a in (0, 1))
+    center = tuple((low[a]+high[a])*.5 for a in (0, 1))
+    extent = max(high[a]-low[a] for a in (0, 1))
+    scale = (1-2*margin)/extent if extent > 0 else 1.0
+    return tuple(tuple(tile[a]+.5+(p[a]-center[a])*scale for a in (0, 1)) for p in points)
+
+
 def mirror_points(points, axis, center):
     points = checked_points(points)
     if axis not in (0, 1) or len(center) != 2 or not all(isfinite(v) for v in center):

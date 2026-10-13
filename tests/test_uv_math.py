@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from Utils.uv_math import align_points, bounds_center, mirror_in_tile, mirror_points, translate_points
+from Utils.uv_math import align_points, bounds_center, fit_points_to_tile, mirror_in_tile, mirror_points, translate_points
 
 
 class UVMathTests(unittest.TestCase):
@@ -63,6 +63,28 @@ class UVMathTests(unittest.TestCase):
     def test_crossing_tiles_are_rejected(self):
         with self.assertRaises(ValueError):
             mirror_in_tile(((.75, .25), (1.25, .75)), 0)
+
+    def test_fit_centers_aabb_and_maximizes_uniform_scale(self):
+        points = ((2, 5), (6, 5), (6, 7), (2, 7))
+        self.assertEqual(fit_points_to_tile(points), ((0, .25), (1, .25), (1, .75), (0, .75)))
+
+    def test_fit_upscales_small_selection_and_is_idempotent(self):
+        points = ((.125, .125), (.375, .625))
+        result = fit_points_to_tile(points)
+        self.assertEqual(result, ((.25, 0), (.75, 1)))
+        self.assertEqual(fit_points_to_tile(result), result)
+
+    def test_fit_line_point_and_margin(self):
+        self.assertEqual(fit_points_to_tile(((3, 4), (3, 8))), ((.5, 0), (.5, 1)))
+        self.assertEqual(fit_points_to_tile(((3, 4),)), ((.5, .5),))
+        self.assertEqual(fit_points_to_tile(((2, 5), (6, 7)), margin=.125), ((.125, .3125), (.875, .6875)))
+
+    def test_fit_rejects_invalid_margin_or_points(self):
+        for margin in (-.1, .5, float('nan')):
+            with self.assertRaises(ValueError):
+                fit_points_to_tile(((0, 0), (1, 1)), margin=margin)
+        with self.assertRaises(ValueError):
+            fit_points_to_tile(())
 
 
 if __name__ == '__main__':

@@ -11,6 +11,8 @@ from bpy.app.handlers import persistent
 from .stack import OP_UVTools_TopologyStack
 from .transform import TRANSFORM_CLASSES, OP_UVTools_Mirror, OP_UVTools_MirrorInTile, OP_UVTools_Translate
 from .straighten import STRAIGHTEN_CLASSES, OP_UVTools_LineUnwrap, OP_UVTools_StraightenIsland
+from Utils.mesh_uv import selected_uv_point_groups, uv_edit_poll, write_uv_points
+from Utils.uv_math import fit_points_to_tile
 
 UV_LISTENER_CACHE = {
     "active_uv": None,
@@ -334,93 +336,27 @@ class OP_UVTools_MoveActiveUV(Operator):
 class OP_UVTools_FitToFirstQuadrant(Operator):
     bl_idname = "ho.uvtools_fit_to_first_quadrant"
     bl_label = "选中UV适配到第一象限"
-    bl_description = "将选中的UV整体移动并等比缩放到0~1第一象限"
+    bl_description = "将所选UV整体AABB中心移到(0.5, 0.5)，保持比例并尽量填满0~1第一象限；支持UV同步模式"
     bl_options = {'REGISTER', 'UNDO'}
+
+    margin: FloatProperty(
+        name="边距", description="第一象限四边留白的UV距离；默认无边距，按最长边尽量填满",
+        default=0.0, min=0.0, max=0.499, soft_max=0.1,
+    ) # type: ignore
 
     @classmethod
     def poll(cls, context):
-        area = context.area
-        if not area or area.type != 'IMAGE_EDITOR':
-            return False
-
-        tool_settings = context.scene.tool_settings
-        if not tool_settings or tool_settings.use_uv_select_sync:
-            return False
-
-        obj = context.active_object
-        if not obj or obj.type != 'MESH' or obj.mode != 'EDIT':
-            return False
-
-        return True
+        return uv_edit_poll(context)
 
     def execute(self, context):
 
-        objects = context.objects_in_mode_unique_data
-
-        collected = []
-        object_map = {}
-
-        for obj in objects:
-
-            if obj.type != 'MESH':
-                continue
-
-            bm = bmesh.from_edit_mesh(obj.data)
-            bm.faces.ensure_lookup_table()  # 刷新索引表
-            bm.edges.ensure_lookup_table()
-            bm.verts.ensure_lookup_table() 
-            uv_layer = bm.loops.layers.uv.active
-            if not uv_layer:
-                continue
-
-            object_map[obj] = bm
-
-            for face in bm.faces:
-                for loop in face.loops:
-                    if loop[uv_layer].select:
-                        collected.append((obj, uv_layer, loop))
-
-        if not collected:
-            self.report({'WARNING'}, "没有选中的UV")
+        try:
+            points = selected_uv_point_groups(context)[0]
+            result = fit_points_to_tile([point.coordinate for point in points], margin=self.margin)
+            write_uv_points(zip(points, result))
+        except (ValueError, RuntimeError) as exc:
+            self.report({'WARNING'}, str(exc))
             return {'CANCELLED'}
-
-        # ----------------------------
-        # 计算整体包围盒
-        # ----------------------------
-        min_x = min_y = float("inf")
-        max_x = max_y = float("-inf")
-
-        for obj, uv_layer, loop in collected:
-            uv = loop[uv_layer].uv
-            min_x = min(min_x, uv.x)
-            min_y = min(min_y, uv.y)
-            max_x = max(max_x, uv.x)
-            max_y = max(max_y, uv.y)
-
-        width = max_x - min_x
-        height = max_y - min_y
-
-        if width == 0 or height == 0:
-            self.report({'WARNING'}, "选中UV尺寸为0，无法缩放")
-            return {'CANCELLED'}
-
-        # 等比缩放
-        scale = 1.0 / max(width, height)
-
-        # ----------------------------
-        # 平移 + 缩放
-        # ----------------------------
-        for obj, uv_layer, loop in collected:
-            uv = loop[uv_layer].uv
-            uv.x -= min_x
-            uv.y -= min_y
-            uv *= scale
-            loop[uv_layer].uv = uv
-
-        # 更新
-        for obj in object_map.keys():
-            bmesh.update_edit_mesh(obj.data)
-
         return {'FINISHED'}
 
 class OP_UVTools_UV2SK(Operator):

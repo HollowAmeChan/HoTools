@@ -190,7 +190,8 @@ class UVTransformTests(unittest.TestCase):
     def test_empty_selection_and_missing_uv_do_not_create_layers(self):
         obj = create_object('NoUV', [(POINTS, FACES)], with_uv=False)
         edit([obj], True)
-        for operation in (bpy.ops.ho.align_uv, bpy.ops.ho.uvtools_mirror, bpy.ops.ho.uvtools_translate):
+        for operation in (bpy.ops.ho.align_uv, bpy.ops.ho.uvtools_mirror, bpy.ops.ho.uvtools_translate,
+                          bpy.ops.ho.uvtools_fit_to_first_quadrant):
             self.assertEqual(operation(), {'CANCELLED'})
         self.assertIsNone(bmesh.from_edit_mesh(obj.data).loops.layers.uv.active)
 
@@ -337,6 +338,85 @@ class UVTransformTests(unittest.TestCase):
         else:
             first[uv].select_edge = True
         self.assertEqual(selected_uv_edge_loops(bm, uv, settings), {first})
+
+    def test_fit_quadrant_sync_and_selection_modes_center_rectangle(self):
+        points = ((2, 5), (6, 5), (6, 7), (2, 7))
+        expected = ((0, .25), (1, .25), (1, .75), (0, .75))
+        for sync in (False, True):
+            for mode in ('VERTEX', 'EDGE', 'FACE', 'ISLAND'):
+                if sync and mode == 'ISLAND':
+                    continue
+                with self.subTest(sync=sync, mode=mode):
+                    clear_scene()
+                    obj = create_object('FitRect', [(points, ((0, 1, 2, 3),))])
+                    edit([obj], sync, mode)
+                    before = state(obj), coords(obj, 'OtherUV')
+                    self.assertTrue(bpy.ops.ho.uvtools_fit_to_first_quadrant.poll())
+                    self.assertEqual(bpy.ops.ho.uvtools_fit_to_first_quadrant(), {'FINISHED'})
+                    self.assertEqual(coords(obj), expected)
+                    self.assertEqual((state(obj), coords(obj, 'OtherUV')), before)
+
+    def test_fit_multiobjects_uses_global_aabb(self):
+        objects = self.pair(True)
+        before_state = [state(obj) for obj in objects]
+        self.assertEqual(bpy.ops.ho.uvtools_fit_to_first_quadrant(), {'FINISHED'})
+        result = [point for obj in objects for point in coords(obj)]
+        width = max(p[0] for p in result)-min(p[0] for p in result)
+        height = max(p[1] for p in result)-min(p[1] for p in result)
+        self.assertAlmostEqual(max(width, height), 1, places=6)
+        for axis in (0, 1):
+            self.assertAlmostEqual((min(p[axis] for p in result)+max(p[axis] for p in result))*.5, .5, places=6)
+        self.assertEqual([state(obj) for obj in objects], before_state)
+
+    def test_fit_partial_face_selection_ignores_unshown_uv(self):
+        points = ((2, 5), (6, 5), (6, 7), (2, 7))
+        faces = ((0, 1, 2, 3),)
+        obj = create_object('FitVisible', [(points, faces), ([(x+30, y+30) for x, y in points], faces)])
+        edit([obj])
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces[1].select_set(False)
+        before = coords(obj), state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_fit_to_first_quadrant(), {'FINISHED'})
+        self.assertEqual(coords(obj)[:4], ((0, .25), (1, .25), (1, .75), (0, .75)))
+        self.assertEqual(coords(obj)[4:], before[0][4:])
+        self.assertEqual(state(obj), before[1])
+
+    def test_fit_precise_synced_selection_and_empty_selection(self):
+        obj = create_object('FitPrecise', [(POINTS, FACES)])
+        edit([obj], True)
+        bm = bmesh.from_edit_mesh(obj.data)
+        if hasattr(bm, 'uv_select_sync_valid'):
+            select_uv_faces(bm, set())
+            bm.faces[0].loops[1].uv_select_vert_set(True)
+            bm.uv_select_sync_to_mesh()
+            before = coords(obj), state(obj)
+            self.assertEqual(bpy.ops.ho.uvtools_fit_to_first_quadrant(), {'FINISHED'})
+            after = coords(obj)
+            self.assertEqual([i for i, (a, b) in enumerate(zip(before[0], after)) if a != b], [1])
+            self.assertEqual(after[1], (.5, .5))
+            self.assertEqual(state(obj), before[1])
+        bpy.ops.object.mode_set(mode='OBJECT')
+        edit([obj], False)
+        bm = bmesh.from_edit_mesh(obj.data)
+        select_uv_faces(bm, set())
+        before = coords(obj), state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_fit_to_first_quadrant(), {'CANCELLED'})
+        self.assertEqual((coords(obj), state(obj)), before)
+
+    def test_fit_margin_and_undo_redo(self):
+        obj = create_object('FitUndo', [(((2, 5), (6, 5), (6, 7), (2, 7)), ((0, 1, 2, 3),))])
+        edit([obj], True)
+        before = coords(obj)
+        name = obj.name
+        bpy.ops.ed.undo_push(message='Before quadrant fit')
+        self.assertEqual(bpy.ops.ho.uvtools_fit_to_first_quadrant(margin=.125), {'FINISHED'})
+        after = coords(obj)
+        self.assertEqual(after, ((.125, .3125), (.875, .3125), (.875, .6875), (.125, .6875)))
+        bpy.ops.ed.undo_push(message='After quadrant fit')
+        self.assertEqual(bpy.ops.ed.undo(), {'FINISHED'})
+        self.assertEqual(coords(bpy.data.objects[name]), before)
+        self.assertEqual(bpy.ops.ed.redo(), {'FINISHED'})
+        self.assertEqual(coords(bpy.data.objects[name]), after)
 
 
 if __name__ == '__main__':
