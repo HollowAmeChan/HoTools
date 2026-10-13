@@ -8,6 +8,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
 from collections import defaultdict
 from bpy.app.handlers import persistent
+from .stack import OP_UVTools_TopologyStack
 
 UV_LISTENER_CACHE = {
     "active_uv": None,
@@ -535,6 +536,7 @@ class IMAGE_MT_uvs_context_hotools(Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator(OP_UVTools_FitToFirstQuadrant.bl_idname, text="适配到象限", icon="FULLSCREEN_ENTER")
+        layout.operator(OP_UVTools_TopologyStack.bl_idname, text="拓扑堆叠", icon="UV")
 
 def draw_in_IMAGE_MT_uvs_context_menu(self,context: bpy.types.Context):
     """UV编辑器右键菜单"""
@@ -544,7 +546,7 @@ def draw_in_IMAGE_MT_uvs_context_menu(self,context: bpy.types.Context):
 
 cls = [OP_UVTools_ReplaceFromLayer,OP_UVTools_MoveActiveUV,
        IMAGE_MT_uvs_context_hotools,OP_UVTools_FitToFirstQuadrant,
-       OP_UVTools_UV2SK]
+       OP_UVTools_UV2SK,OP_UVTools_TopologyStack]
 
 
 
