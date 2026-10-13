@@ -453,6 +453,35 @@ def _draw_mesh_down_tools(layout: LayoutBuilder, context):
     row = col.row(align=True)
     return
 
+def _draw_mesh_UV_tools(layout: LayoutBuilder, context):
+    """绘制网格子饼的UV工具面板。"""
+    col = layout.column(align=True)
+    col.scale_y = 1.25
+
+    row = col.row(align=True)
+    row.operator("uv.unwrap",text="展开",)
+    # bpy.ops.transform.mirror(orient_type='GLOBAL', orient_matrix=((1, 0, 0), (0, 1, 0), (0, 0, 1)), orient_matrix_type='GLOBAL', constraint_axis=(True, False, False))
+    
+    row = col.row(align=True)
+    row.operator_context = "EXEC_DEFAULT"
+    row.operator("transform.mirror",text="X镜像",props={"orient_type": "GLOBAL","constraint_axis": (True, False, False),},)
+    row.operator("transform.mirror",text="Y镜像",props={"orient_type": "GLOBAL","constraint_axis": (False, True, False),},)
+    # bpy.ops.transform.translate(value=(1, 0, 0), orient_type='GLOBAL', orient_matrix=((1, 0, 0), (0, 1, 0), (0, 0, 1)), orient_matrix_type='GLOBAL', constraint_axis=(True, False, False), mirror=False, use_proportional_edit=False, proportional_edit_falloff='LINEAR', proportional_size=0.148644, use_proportional_connected=False, use_proportional_projected=False, snap=False, snap_elements={'VERTEX'}, use_snap_project=False, snap_target='CENTER', use_snap_self=True, use_snap_edit=True, use_snap_nonedit=True, use_snap_selectable=False)
+    
+    row = col.row(align=True)
+    row.operator_context = "EXEC_DEFAULT"
+    row.operator("transform.translate",text="→",props={"value": (1, 0, 0),"orient_type": "GLOBAL","constraint_axis": (True, False, False),},)
+    row.operator("transform.translate",text="←",props={"value": (-1, 0, 0),"orient_type": "GLOBAL","constraint_axis": (True, False, False),},)
+    row.operator("transform.translate",text="↑",props={"value": (0, 1, 0),"orient_type": "GLOBAL","constraint_axis": (False, True, False),},)
+    row.operator("transform.translate",text="↓",props={"value": (0, -1, 0),"orient_type": "GLOBAL","constraint_axis": (False, True, False),},)
+
+    row = col.row(align=True)
+    row.operator_context = "EXEC_DEFAULT"
+    # bpy.ops.uv.toolkit_straighten(gridify=False)
+    if hasattr(bpy.ops, "uv") and hasattr(bpy.ops.uv, "toolkit_straighten"):
+        row.operator("uv.toolkit_straighten",text="拉直",props={"gridify": False},)
+
+
 class HO_MT_HoMainPieMesh(Menu):
     """PME 中的网格工具子饼。"""
 
@@ -466,6 +495,7 @@ class HO_MT_HoMainPieMesh(Menu):
         pie.top.expand(_draw_edge_display,height=1.5)
         pie.top_right.expand(_draw_quick_modifier_buttons,height_offset=15.0)
         pie.bottom.expand(_draw_mesh_down_tools,height=1.5)
+        pie.bottom_right.expand(_draw_mesh_UV_tools,height=1.0,height_offset=-15.0)
         pie.finish()
 
 
