@@ -91,15 +91,32 @@ def selected_uv_loops(bm, uv_layer, settings):
     return result
 
 
-def collect_uv_islands(obj, bm, uv_layer, settings, epsilon=1e-7):
+def selected_uv_edge_loops(bm, uv_layer, settings):
+    """Real selected edge starts; do not infer edges from selected endpoints."""
+    sync = settings.use_uv_select_sync
+    precise = hasattr(bm, 'uv_select_sync_valid') and (not sync or bm.uv_select_sync_valid)
+    result = set()
+    for face in bm.faces:
+        if face.hide or (not sync and not face.select):
+            continue
+        for loop in face.loops:
+            selected = loop.uv_select_edge if precise else loop.edge.select if sync else loop[uv_layer].select_edge
+            if selected and not loop.edge.hide:
+                result.add(loop)
+    return result
+
+
+def collect_uv_islands(obj, bm, uv_layer, settings, epsilon=1e-7, visible_only=False):
     """Find actual UV-contiguous face components, including invisible faces.
 
-    Invisible faces participate in topology so an incomplete island is detected
-    and skipped, instead of silently treating its visible part as a full island.
+    By default invisible faces participate so whole-topology tools can detect
+    incomplete islands. visible_only=True follows the editor's displayed scope,
+    for everyday UV transforms that must work with partial mesh selections.
     Equal coordinates on unrelated geometry never join islands or UV vertices.
     """
     bm.faces.index_update()
-    faces = list(bm.faces)
+    faces = [face for face in bm.faces if not visible_only or (
+        not face.hide and (settings.use_uv_select_sync or face.select))]
     loops = [loop for face in faces for loop in face.loops]
     corner_parent = {loop: loop for loop in loops}
     face_parent = {face: face for face in faces}

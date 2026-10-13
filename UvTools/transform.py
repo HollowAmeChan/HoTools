@@ -94,7 +94,7 @@ class OP_UVTools_MirrorInTile(bpy.types.Operator):
     bl_idname = 'ho.uvtools_mirror_in_tile'
     bl_label = 'UV 岛本象限中线翻转'
     bl_description = ('将所选 UV 所在的完整岛，沿本象限 U/V 中线翻到另一半并保持对称；'
-                      '第一象限中线为 0.5，各 UDIM 分别处理，跨象限或未完整显示的岛跳过')
+                      '按编辑器可见岛处理，第一象限中线为 0.5，各 UDIM 分别处理，未显示 UV 保持原位')
     bl_options = {'REGISTER', 'UNDO'}
 
     axis: EnumProperty(name='翻转方向', items=AXES, default='U')  # type: ignore
@@ -107,13 +107,10 @@ class OP_UVTools_MirrorInTile(bpy.types.Operator):
         self.layout.prop(self, 'axis', expand=True)
 
     def execute(self, context):
-        plans, count, incomplete, crossing = [], 0, 0, 0
+        plans, count, crossing = [], 0, 0
         for obj, bm, uv in iter_edit_uv_meshes(context):
-            for island in collect_uv_islands(obj, bm, uv, context.scene.tool_settings):
+            for island in collect_uv_islands(obj, bm, uv, context.scene.tool_settings, visible_only=True):
                 if not island.selected:
-                    continue
-                if not island.complete:
-                    incomplete += 1
                     continue
                 try:
                     result = mirror_in_tile(island.coordinates, 0 if self.axis == 'U' else 1)
@@ -124,14 +121,14 @@ class OP_UVTools_MirrorInTile(bpy.types.Operator):
                     plans.append((UVPoint(obj, bm, uv, loops, old), new))
                 count += 1
         if not plans:
-            self.report({'WARNING'}, f'没有可翻转的完整岛；跨象限 {crossing} 岛，未完整显示 {incomplete} 岛')
+            self.report({'WARNING'}, f'没有选中的可见 UV 岛，或岛跨越多个象限（{crossing} 岛）')
             return {'CANCELLED'}
         try:
             write_uv_points(plans)
         except (ValueError, RuntimeError) as exc:
             self.report({'WARNING'}, str(exc))
             return {'CANCELLED'}
-        self.report({'INFO'}, f'已沿本象限中线翻转 {count} 岛；跳过跨象限 {crossing} 岛、未完整显示 {incomplete} 岛')
+        self.report({'INFO'}, f'已沿本象限中线翻转 {count} 岛；跳过跨象限 {crossing} 岛')
         return {'FINISHED'}
 
 

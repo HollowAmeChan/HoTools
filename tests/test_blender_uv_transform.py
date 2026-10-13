@@ -15,7 +15,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 from test_blender_uv_topology_stack import (
     POINTS, FACES, clear_scene, coords, create_object, edit, operators, select_uv_faces, state, transformed,
 )
-from Utils.mesh_uv import selected_uv_point_groups, write_uv_points
+from Utils.mesh_uv import selected_uv_edge_loops, selected_uv_point_groups, write_uv_points
 
 package = types.ModuleType('hotools_uv_transform_pie')
 package.__path__ = [str(ROOT / 'HoPie')]
@@ -299,6 +299,44 @@ class UVTransformTests(unittest.TestCase):
         self.assertEqual(bpy.ops.ho.uvtools_mirror_in_tile(), {'FINISHED'})
         self.assertEqual(coords(obj)[:4], tuple((1-x, y) for x, y in before[:4]))
         self.assertEqual(coords(obj)[4:], before[4:])
+
+    def test_tile_mirror_partial_mesh_face_selection_is_allowed(self):
+        points = ((.125, .125), (.375, .125), (.375, .375), (.125, .375), (.25, .25))
+        for axis in ('U', 'V'):
+            with self.subTest(axis=axis):
+                clear_scene()
+                obj = create_object('VisiblePart', [(points, FACES)])
+                edit([obj])
+                bm = bmesh.from_edit_mesh(obj.data)
+                for face in bm.faces:
+                    face.select_set(face.index == 0)
+                before_state, before = state(obj), coords(obj)
+                self.assertEqual(bpy.ops.ho.uvtools_mirror_in_tile(axis=axis), {'FINISHED'})
+                expected = tuple((1-x, y) if axis == 'U' else (x, 1-y) for x, y in before[:3])
+                self.assertEqual(coords(obj)[:3], expected)
+                self.assertEqual(coords(obj)[3:], before[3:])
+                self.assertEqual(state(obj), before_state)
+
+    def test_edge_reader_does_not_invent_edges_between_selected_uv_points(self):
+        obj = create_object('EdgeFlags', [(POINTS, FACES)])
+        edit([obj], mode='EDGE')
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        select_uv_faces(bm, set())
+        for face in bm.faces:
+            for loop in face.loops:
+                if hasattr(loop, 'uv_select_vert_set'):
+                    loop.uv_select_vert_set(True)
+                else:
+                    loop[uv].select = True
+        settings = bpy.context.scene.tool_settings
+        self.assertEqual(selected_uv_edge_loops(bm, uv, settings), set())
+        first = bm.faces[0].loops[0]
+        if hasattr(first, 'uv_select_edge_set'):
+            first.uv_select_edge_set(True)
+        else:
+            first[uv].select_edge = True
+        self.assertEqual(selected_uv_edge_loops(bm, uv, settings), {first})
 
 
 if __name__ == '__main__':
