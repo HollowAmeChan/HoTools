@@ -5,6 +5,7 @@ from mathutils import Matrix, Vector
 from mathutils.geometry import intersect_point_line
 
 from Utils.mesh_utils import edit_bmesh, selected_verts
+from Utils.mesh_uv import align_uv_selection, uv_edit_poll
 from Utils.ui_utils import popup_error
 
 from ._Core import HoPie
@@ -420,35 +421,18 @@ class AlignUV(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
     type: EnumProperty(items=ALIGN_TYPE_ITEMS, default='MIN') # type: ignore
     axis: EnumProperty(items=(('U', 'U', ''), ('V', 'V', '')), default='U') # type: ignore
+    per_island: BoolProperty(name='各岛分别对齐', default=False) # type: ignore
 
     @classmethod
     def poll(cls, context):
-        return context.mode == 'EDIT_MESH' and getattr(context.space_data, 'type', None) == 'IMAGE_EDITOR'
+        return uv_edit_poll(context)
 
     def execute(self, context):
-        bm = bmesh.from_edit_mesh(context.active_object.data)
-        uv_layer = bm.loops.layers.uv.verify()
-        if context.scene.tool_settings.use_uv_select_sync:
-            loops = [loop for vert in bm.verts if vert.select for loop in vert.link_loops]
-        else:
-            loops = [loop for face in bm.faces if face.select for loop in face.loops if loop[uv_layer].select]
-        if not loops:
+        try:
+            align_uv_selection(context, self.axis, self.type, self.per_island)
+        except (ValueError, RuntimeError) as exc:
+            self.report({'WARNING'}, str(exc))
             return {'CANCELLED'}
-        axis = 0 if self.axis == 'U' else 1
-        values = [loop[uv_layer].uv[axis] for loop in loops]
-        if self.type == 'MIN':
-            target = min(values)
-        elif self.type == 'MAX':
-            target = max(values)
-        elif self.type == 'AVERAGE':
-            target = sum(values) / len(values)
-        elif self.type == 'ZERO':
-            target = 0.0
-        else:
-            target = context.space_data.cursor_location[axis]
-        for loop in loops:
-            loop[uv_layer].uv[axis] = target
-        bmesh.update_edit_mesh(context.active_object.data)
         return {'FINISHED'}
 
 
@@ -592,7 +576,7 @@ class HO_MT_uv_align_pie(bpy.types.Menu):
             row = column.split(factor=0.2)
             row.label(icon='PIVOT_CURSOR')
             right = row.row(align=True)
-            for text, axis in (('水平', 'U'), ('垂直', 'V')):
+            for text, axis in (('水平', 'V'), ('垂直', 'U')):
                 op = right.operator(AlignUV.bl_idname, text=text)
                 op.axis = axis
                 op.type = 'CURSOR'

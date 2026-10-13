@@ -6,8 +6,11 @@ to the current edit BMesh and must be discarded after mode or layer changes.
 
 from collections import defaultdict
 from dataclasses import dataclass
+from math import isfinite
 
 import bmesh
+
+from .uv_math import align_points
 
 
 @dataclass
@@ -63,19 +66,22 @@ def selected_uv_loops(bm, uv_layer, settings):
     for face in bm.faces:
         if face.hide or (not sync and not face.select):
             continue
+        if precise:
+            selected_face = face.uv_select
+        elif sync:
+            selected_face = face.select
+        else:
+            selected_face = 'FACE' in modes and all(item[uv_layer].select for item in face.loops)
         for loop in face.loops:
             if precise:
                 vertex = loop.uv_select_vert
                 edge = loop.uv_select_edge
-                selected_face = face.uv_select
             elif sync:
                 vertex = loop.vert.select and not loop.vert.hide
                 edge = loop.edge.select and not loop.edge.hide
-                selected_face = face.select
             else:
                 vertex = loop[uv_layer].select
                 edge = loop[uv_layer].select_edge
-                selected_face = all(item[uv_layer].select for item in face.loops)
             if ('VERTEX' in modes or 'ISLAND' in modes) and vertex:
                 result.add(loop)
             if 'EDGE' in modes and edge:
@@ -156,3 +162,88 @@ def collect_uv_islands(obj, bm, uv_layer, settings, epsilon=1e-7):
             all(not face.hide and (settings.use_uv_select_sync or face.select) for face in component),
         ))
     return sorted(result, key=lambda island: island.key)
+
+
+@dataclass
+class UVPoint:
+    obj: object
+    bm: object  # keep the Python BMesh owner alive while corner wrappers are used
+    uv_layer: object
+    loops: tuple
+    coordinate: tuple
+
+
+def uv_edit_poll(context):
+    return (context.mode == 'EDIT_MESH'
+            and getattr(context.area, 'type', None) == 'IMAGE_EDITOR'
+            and getattr(context.area, 'ui_type', None) == 'UV'
+            and context.active_object is not None
+            and context.active_object.type == 'MESH')
+
+
+def selected_uv_point_groups(context, per_island=False):
+    """Unique topological UV points, writing only the selected visible corners.
+
+    Statistics give each UV vertex one vote, irrespective of face valence. Unlike
+    whole-island tools, point transforms can operate on partially visible islands.
+    """
+    groups = []
+    settings = context.scene.tool_settings
+    for obj, bm, uv in iter_edit_uv_meshes(context):
+        selected = selected_uv_loops(bm, uv, settings)
+        if not selected:
+            continue
+        for island in collect_uv_islands(obj, bm, uv, settings):
+            points = []
+            for loops in island.vertex_loops:
+                visible = tuple(loop for loop in loops if loop in selected)
+                if visible:
+                    points.append(UVPoint(obj, bm, uv, visible, tuple(visible[0][uv].uv)))
+            if points:
+                groups.append(points)
+    if not groups:
+        raise ValueError('没有选中的可见 UV，或编辑网格缺少活动 UV 层')
+    return groups if per_island else [[point for group in groups for point in group]]
+
+
+def write_uv_points(plans):
+    """Validate a list of (UVPoint, coordinate), then write/update atomically.
+
+    Leaves selection, pin, seam and topology untouched. Returns changed corners.
+    Saves every actual corner for exact rollback, including near-equal UV points.
+    """
+    plans = list(plans)
+    for _, coordinate in plans:
+        if len(coordinate) != 2 or not all(isfinite(value) for value in coordinate):
+            raise ValueError('UV 计算结果包含无效坐标')
+        if any(abs(value) > 3.4028234663852886e38 for value in coordinate):
+            raise ValueError('UV 计算结果超出 Blender 浮点坐标范围')
+    original, meshes = [], {}
+    try:
+        for point, coordinate in plans:
+            for loop in point.loops:
+                old = tuple(loop[point.uv_layer].uv)
+                if old == tuple(coordinate):
+                    continue
+                original.append((loop, point.uv_layer, old))
+                meshes[point.obj.data.as_pointer()] = point.obj.data
+                loop[point.uv_layer].uv = coordinate
+        for mesh in meshes.values():
+            bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=False)
+    except Exception:
+        for loop, uv, coordinate in original:
+            loop[uv].uv = coordinate
+        for mesh in meshes.values():
+            bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=False)
+        raise
+    return len(original)
+
+
+def align_uv_selection(context, axis, method, per_island=False):
+    axis_index = {'U': 0, 'V': 1}[axis]
+    cursor = context.space_data.cursor_location[axis_index] if method == 'CURSOR' else None
+    plans = []
+    for group in selected_uv_point_groups(context, per_island):
+        result = align_points([point.coordinate for point in group], axis_index, method, cursor)
+        plans.extend(zip(group, result))
+    return write_uv_points(plans)

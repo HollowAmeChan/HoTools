@@ -1,4 +1,6 @@
 import sys
+import importlib
+import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,7 +14,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import MeshTools  # noqa: E402
-import HoPie  # noqa: E402
+# HoPie now uses parent-relative imports for modifier controls. Load it in an
+# isolated addon namespace without running the full addon's heavy __init__.
+_package = types.ModuleType('hotools_pie_registration_tests')
+_package.__path__ = [str(ROOT)]
+sys.modules[_package.__name__] = _package
+HoPie = importlib.import_module(_package.__name__ + '.HoPie')
+for _name, _module in list(sys.modules.items()):
+    if _name == _package.__name__ + '.HoPie' or _name.startswith(_package.__name__ + '.HoPie.'):
+        sys.modules[_name.replace(_package.__name__ + '.', '', 1)] = _module
 
 
 class PieRegistrationTests(unittest.TestCase):

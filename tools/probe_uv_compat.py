@@ -4,8 +4,9 @@ Run in an isolated factory-startup Blender process, never in a user's scene:
   blender --background --factory-startup --python-exit-code 1 \
       --python tools/probe_uv_compat.py
 
-This is a diagnostic baseline, NOT acceptance tests for the planned UV tools.
-The observations intentionally record existing defects without fixing them.
+This is a diagnostic probe, NOT the UV tools' acceptance suite. Its observations
+record current alignment behavior; the original baseline exposed defects that
+the later shared UV selection/transform implementation fixes.
 """
 
 import importlib.util
