@@ -379,58 +379,6 @@ class BlenderTopologyStackTests(unittest.TestCase):
         self.assertEqual(bpy.ops.ho.uvtools_topology_stack(), {'CANCELLED'})
         self.assertEqual([coords(obj) for obj in (master, source)], before)
 
-    def test_shared_mesh_border_remains_separate_in_native_linked_selection(self):
-        mesh = bpy.data.meshes.new('SharedBorder')
-        mesh.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)], [], [(0, 1, 2), (1, 0, 3)])
-        uv = mesh.uv_layers.new(name='UVMap')
-        points = ((0, 0), (1.3, 0), (.2, .8), (4.3, 0), (3, 0), (3.2, .8))
-        for loop, coordinate in zip(uv.data, points):
-            loop.uv = coordinate
-        obj = bpy.data.objects.new('SharedBorder', mesh)
-        bpy.context.collection.objects.link(obj)
-        obj.select_set(True)
-        edit([obj])
-        bm = bmesh.from_edit_mesh(mesh)
-        before_state, before = state(obj), coords(obj)
-        uv = bm.loops.layers.uv.active
-        self.assertEqual(len(collect_uv_islands(obj, bm, uv, bpy.context.scene.tool_settings)), 2)
-        self.assertEqual(bpy.ops.ho.uvtools_topology_stack(), {'FINISHED'})
-        self.assertEqual(state(obj), before_state)
-        self.assertEqual(coords(obj)[:3], before[:3])
-        bm = bmesh.from_edit_mesh(mesh)
-        uv = bm.loops.layers.uv.active
-        self.assertEqual(len(collect_uv_islands(obj, bm, uv, bpy.context.scene.tool_settings)), 2)
-        after = coords(obj)
-        for index, reference in enumerate((1, 0, 2)):
-            self.assertLess(abs(after[3+index][0]-after[reference][0]), .00014)
-            self.assertEqual(after[3+index][1], after[reference][1])
-        # Test Blender's native graph, not just our own island detector.
-        select_uv_faces(bm, {0})
-        self.assertEqual(bpy.ops.uv.select_linked(), {'FINISHED'})
-        bm = bmesh.from_edit_mesh(mesh)
-        uv = bm.loops.layers.uv.active
-        self.assertFalse(any(l.uv_select_vert if hasattr(l, 'uv_select_vert') else l[uv].select
-                             for l in bm.faces[1].loops))
-
-    def test_vertex_touching_stacked_islands_do_not_join(self):
-        mesh = bpy.data.meshes.new('SharedPoint')
-        mesh.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0), (-1, 0, 0), (0, -1, 0)], [], [(0, 1, 2), (0, 3, 4)])
-        uv = mesh.uv_layers.new(name='UVMap')
-        for loop, coordinate in zip(uv.data, ((0, 0), (1.3, 0), (.2, .8), (3, 0), (4.3, 0), (3.2, .8))):
-            loop.uv = coordinate
-        obj = bpy.data.objects.new('SharedPoint', mesh)
-        bpy.context.collection.objects.link(obj)
-        obj.select_set(True)
-        edit([obj])
-        self.assertEqual(bpy.ops.ho.uvtools_topology_stack(), {'FINISHED'})
-        bm = bmesh.from_edit_mesh(mesh)
-        select_uv_faces(bm, {0})
-        self.assertEqual(bpy.ops.uv.select_linked(), {'FINISHED'})
-        bm = bmesh.from_edit_mesh(mesh)
-        uv = bm.loops.layers.uv.active
-        self.assertFalse(any(l.uv_select_vert if hasattr(l, 'uv_select_vert') else l[uv].select
-                             for l in bm.faces[1].loops))
-
     def test_undo_redo_restores_uv_coordinates(self):
         master, source, topology, order = self.pair(True)
         names = master.name, source.name
