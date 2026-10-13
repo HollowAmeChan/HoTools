@@ -3,8 +3,9 @@
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty
 
-from Utils.mesh_uv import align_uv_selection, selected_uv_point_groups, uv_edit_poll, write_uv_points
-from Utils.uv_math import bounds_center, mirror_points, translate_points
+from Utils.mesh_uv import (UVPoint, align_uv_selection, collect_uv_islands, iter_edit_uv_meshes,
+                          selected_uv_point_groups, uv_edit_poll, write_uv_points)
+from Utils.uv_math import bounds_center, mirror_in_tile, mirror_points, translate_points
 
 
 AXES = (('U', 'X / U', '左右方向'), ('V', 'Y / V', '上下方向'))
@@ -89,6 +90,51 @@ class OP_UVTools_Translate(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class OP_UVTools_MirrorInTile(bpy.types.Operator):
+    bl_idname = 'ho.uvtools_mirror_in_tile'
+    bl_label = 'UV 岛本象限中线翻转'
+    bl_description = ('将所选 UV 所在的完整岛，沿本象限 U/V 中线翻到另一半并保持对称；'
+                      '第一象限中线为 0.5，各 UDIM 分别处理，跨象限或未完整显示的岛跳过')
+    bl_options = {'REGISTER', 'UNDO'}
+
+    axis: EnumProperty(name='翻转方向', items=AXES, default='U')  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return uv_edit_poll(context)
+
+    def draw(self, context):
+        self.layout.prop(self, 'axis', expand=True)
+
+    def execute(self, context):
+        plans, count, incomplete, crossing = [], 0, 0, 0
+        for obj, bm, uv in iter_edit_uv_meshes(context):
+            for island in collect_uv_islands(obj, bm, uv, context.scene.tool_settings):
+                if not island.selected:
+                    continue
+                if not island.complete:
+                    incomplete += 1
+                    continue
+                try:
+                    result = mirror_in_tile(island.coordinates, 0 if self.axis == 'U' else 1)
+                except ValueError:
+                    crossing += 1
+                    continue
+                for loops, old, new in zip(island.vertex_loops, island.coordinates, result):
+                    plans.append((UVPoint(obj, bm, uv, loops, old), new))
+                count += 1
+        if not plans:
+            self.report({'WARNING'}, f'没有可翻转的完整岛；跨象限 {crossing} 岛，未完整显示 {incomplete} 岛')
+            return {'CANCELLED'}
+        try:
+            write_uv_points(plans)
+        except (ValueError, RuntimeError) as exc:
+            self.report({'WARNING'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f'已沿本象限中线翻转 {count} 岛；跳过跨象限 {crossing} 岛、未完整显示 {incomplete} 岛')
+        return {'FINISHED'}
+
+
 class OP_UVTools_Align(bpy.types.Operator):
     bl_idname = 'ho.uvtools_align'
     bl_label = '沿轴对齐所选 UV'
@@ -125,4 +171,5 @@ class IMAGE_MT_hotools_uv_align(bpy.types.Menu):
             op.axis, op.type = axis, method
 
 
-TRANSFORM_CLASSES = (OP_UVTools_Mirror, OP_UVTools_Translate, OP_UVTools_Align, IMAGE_MT_hotools_uv_align)
+TRANSFORM_CLASSES = (OP_UVTools_Mirror, OP_UVTools_MirrorInTile, OP_UVTools_Translate,
+                     OP_UVTools_Align, IMAGE_MT_hotools_uv_align)

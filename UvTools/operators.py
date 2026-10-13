@@ -9,7 +9,7 @@ from mathutils import Vector
 from collections import defaultdict
 from bpy.app.handlers import persistent
 from .stack import OP_UVTools_TopologyStack
-from .transform import TRANSFORM_CLASSES, OP_UVTools_Mirror, OP_UVTools_Translate
+from .transform import TRANSFORM_CLASSES, OP_UVTools_Mirror, OP_UVTools_MirrorInTile, OP_UVTools_Translate
 
 UV_LISTENER_CACHE = {
     "active_uv": None,
@@ -538,6 +538,9 @@ class IMAGE_MT_uvs_context_hotools(Menu):
         layout = self.layout
         layout.operator(OP_UVTools_FitToFirstQuadrant.bl_idname, text="适配到象限", icon="FULLSCREEN_ENTER")
         layout.operator(OP_UVTools_TopologyStack.bl_idname, text="拓扑堆叠", icon="UV")
+        layout.separator()
+        layout.operator(OP_UVTools_MirrorInTile.bl_idname, text="本象限左右翻转").axis = 'U'
+        layout.operator(OP_UVTools_MirrorInTile.bl_idname, text="本象限上下翻转").axis = 'V'
         layout.separator()
         layout.operator(OP_UVTools_Mirror.bl_idname, text="左右镜像 UV").axis = 'U'
         layout.operator(OP_UVTools_Mirror.bl_idname, text="上下镜像 UV").axis = 'V'

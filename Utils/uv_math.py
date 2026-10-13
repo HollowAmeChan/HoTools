@@ -1,6 +1,6 @@
 """Deterministic 2D UV math, independent of Blender transform state."""
 
-from math import isfinite
+from math import floor, isfinite
 
 
 def checked_points(points):
@@ -22,6 +22,21 @@ def mirror_points(points, axis, center):
     if axis not in (0, 1) or len(center) != 2 or not all(isfinite(v) for v in center):
         raise ValueError('镜像轴或中心无效')
     return tuple(tuple(2 * center[a] - p[a] if a == axis else p[a] for a in (0, 1)) for p in points)
+
+
+def mirror_in_tile(points, axis):
+    """Mirror an entire island about the middle of its own integer UV tile.
+
+    Boundary coordinates are allowed; islands crossing tiles are rejected rather
+    than being assigned to a guessed tile. Negative UV tiles work identically.
+    """
+    points = checked_points(points)
+    center = bounds_center(points)
+    tile = tuple(floor(value) for value in center)
+    if any(min(p[a] for p in points) < tile[a]-1e-6 or
+           max(p[a] for p in points) > tile[a]+1+1e-6 for a in (0, 1)):
+        raise ValueError('岛跨越多个 UV 象限')
+    return mirror_points(points, axis, tuple(value+.5 for value in tile))
 
 
 def translate_points(points, direction, distance, image_size=None):

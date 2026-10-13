@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from Utils.uv_math import align_points, bounds_center, mirror_points, translate_points
+from Utils.uv_math import align_points, bounds_center, mirror_in_tile, mirror_points, translate_points
 
 
 class UVMathTests(unittest.TestCase):
@@ -48,6 +48,21 @@ class UVMathTests(unittest.TestCase):
         for call in calls:
             with self.assertRaises(ValueError):
                 call()
+
+    def test_tile_center_reflection_stays_symmetric_in_each_tile(self):
+        for offset in (0, 2, -1):
+            points = ((offset+.125, .25), (offset+.375, .5))
+            result = mirror_in_tile(points, 0)
+            self.assertEqual(result, ((offset+.875, .25), (offset+.625, .5)))
+            self.assertEqual(mirror_in_tile(result, 0), points)
+        self.assertEqual(mirror_in_tile(((.25, .125), (.5, .375)), 1), ((.25, .875), (.5, .625)))
+
+    def test_tile_boundaries_are_allowed(self):
+        self.assertEqual(mirror_in_tile(((0, 0), (1, 1)), 0), ((1, 0), (0, 1)))
+
+    def test_crossing_tiles_are_rejected(self):
+        with self.assertRaises(ValueError):
+            mirror_in_tile(((.75, .25), (1.25, .75)), 0)
 
 
 if __name__ == '__main__':

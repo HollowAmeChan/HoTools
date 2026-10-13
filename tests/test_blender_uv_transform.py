@@ -257,6 +257,49 @@ class UVTransformTests(unittest.TestCase):
             align_module.HO_MT_uv_align_pie.draw(menu, context)
         self.assertEqual({r.text: r.axis for r in records if r.text in {'水平', '垂直'}}, {'水平': 'V', '垂直': 'U'})
 
+    def test_tile_mirror_both_axes_multiobjects_and_sync_modes(self):
+        tile_points = ((.125, .125), (.375, .125), (.375, .375), (.125, .375))
+        faces = ((0, 1, 2, 3),)
+        for sync in (False, True):
+            for axis in ('U', 'V'):
+                with self.subTest(sync=sync, axis=axis):
+                    clear_scene()
+                    objects = [create_object(str(i), [([(x+u, y+v) for x, y in tile_points], faces)])
+                               for i, (u, v) in enumerate(((0, 0), (2, 1), (-1, -1)))]
+                    edit(objects, sync)
+                    before = [coords(obj) for obj in objects]
+                    before_state = [state(obj) for obj in objects]
+                    self.assertEqual(bpy.ops.ho.uvtools_mirror_in_tile(axis=axis), {'FINISHED'})
+                    for obj, original, (u, v) in zip(objects, before, ((0, 0), (2, 1), (-1, -1))):
+                        expected = tuple((2*u+1-x, y) if axis == 'U' else (x, 2*v+1-y) for x, y in original)
+                        self.assertEqual(coords(obj), expected)
+                    self.assertEqual([state(obj) for obj in objects], before_state)
+
+    def test_tile_mirror_expands_partial_uv_selection_to_whole_island(self):
+        points = ((.125, .125), (.375, .125), (.375, .375), (.125, .375), (.25, .25))
+        obj = create_object('WholeIsland', [(points, FACES)])
+        edit([obj])
+        bm = bmesh.from_edit_mesh(obj.data)
+        select_uv_faces(bm, {0})
+        before = coords(obj)
+        before_state = state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_mirror_in_tile(), {'FINISHED'})
+        self.assertEqual(coords(obj), tuple((1-x, y) for x, y in before))
+        self.assertEqual(state(obj), before_state)
+
+    def test_tile_mirror_skips_crossing_and_hidden_islands(self):
+        square = ((.125, .125), (.375, .125), (.375, .375), (.125, .375))
+        faces = ((0, 1, 2, 3),)
+        obj = create_object('Mixed', [(square, faces), ([(x+.75, y) for x, y in square], faces),
+                                     ([(x+2, y) for x, y in square], faces)])
+        edit([obj])
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces[2].hide_set(True)
+        before = coords(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_mirror_in_tile(), {'FINISHED'})
+        self.assertEqual(coords(obj)[:4], tuple((1-x, y) for x, y in before[:4]))
+        self.assertEqual(coords(obj)[4:], before[4:])
+
 
 if __name__ == '__main__':
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(UVTransformTests))
