@@ -77,18 +77,25 @@ class PieRegistrationTests(unittest.TestCase):
         self.assertFalse(HoPie._cursor_pie_enabled)
         self.assertIsNone(getattr(bpy.types, 'HO_MT_align_pie', None))
         self.assertIsNone(getattr(bpy.types, 'HO_MT_cursor_pie', None))
+        self.assertIsNone(getattr(bpy.types, 'HO_MT_uv_cursor_pie', None))
         self.assertEqual(bpy.context.scene.ho_align_pie_mode, 'VIEW')
 
     def test_cursor_pie_is_independently_toggleable(self):
         HoPie.set_pie_enabled('cursor', True)
         self.assertIsNotNone(getattr(bpy.types, 'HO_MT_cursor_pie', None))
-        self.assertEqual(len(HoPie.cursor_pie_keymaps), 1)
+        self.assertIsNotNone(getattr(bpy.types, 'HO_MT_uv_cursor_pie', None))
+        self.assertEqual(len(HoPie.cursor_pie_keymaps), 2)
         keymap, item = HoPie.cursor_pie_keymaps[0]
         self.assertEqual(keymap.name, '3D View Generic')
         self.assertEqual((item.type, item.shift, item.properties.name), ('S', True, 'HO_MT_cursor_pie'))
         self.assertEqual(keymap.keymap_items[0].id, item.id)
+        uv_keymap, uv_item = HoPie.cursor_pie_keymaps[1]
+        self.assertEqual((uv_keymap.name, uv_keymap.space_type, uv_keymap.region_type), ('UV Editor', 'EMPTY', 'WINDOW'))
+        self.assertEqual((uv_item.type, uv_item.shift, uv_item.properties.name), ('S', True, 'HO_MT_uv_cursor_pie'))
+        self.assertEqual(uv_keymap.keymap_items[0].id, uv_item.id)
         HoPie.set_pie_enabled('cursor', False)
         self.assertIsNone(getattr(bpy.types, 'HO_MT_cursor_pie', None))
+        self.assertIsNone(getattr(bpy.types, 'HO_MT_uv_cursor_pie', None))
         self.assertEqual(HoPie.cursor_pie_keymaps, [])
 
     def test_mesh_alignment_and_cursor_operations_execute(self):

@@ -17,6 +17,7 @@ from Utils.transform_utils import (
     set_obj_origin,
 )
 from Utils.ui_utils import popup_error
+from Utils.mesh_uv import uv_edit_poll
 
 from ._Core import HoPie
 
@@ -412,6 +413,29 @@ class HO_MT_cursor_pie(bpy.types.Menu):
         pie.operator(CursorRotationReset.bl_idname, icon='FILE_REFRESH')
 
 
+class HO_MT_uv_cursor_pie(bpy.types.Menu):
+    bl_label = '饼: UV游标与吸附'
+    bl_idname = 'HO_MT_uv_cursor_pie'
+
+    @classmethod
+    def poll(cls, context):
+        return uv_edit_poll(context)
+
+    def draw(self, context):
+        pie = HoPie.from_pie_layout(self.layout.menu_pie(), context)
+        pie.operator_context = 'EXEC_REGION_WIN'
+        pie.operator('uv.snap_cursor', text='游标->选中 UV', icon='PIVOT_CURSOR').target = 'SELECTED'
+        pie.operator('uv.snap_selected', text='选中 UV->游标', icon='RESTRICT_SELECT_OFF').target = 'CURSOR'
+        column = pie.split().column(align=True)
+        column.label(text='UV 游标位置')
+        column.prop(context.space_data, 'cursor_location', text='')
+        pie.operator('uv.snap_selected', text='选中 UV->像素', icon='RESTRICT_SELECT_OFF').target = 'PIXELS'
+        pie.operator('uv.snap_cursor', text='UV 游标归零', icon='PIVOT_CURSOR').target = 'ORIGIN'
+        pie.operator('uv.snap_selected', text='UV->游标（偏移）', icon='RESTRICT_SELECT_OFF').target = 'CURSOR_OFFSET'
+        pie.operator('uv.snap_selected', text='UV->相邻未选 UV', icon='RESTRICT_SELECT_OFF').target = 'ADJACENT_UNSELECTED'
+        pie.operator('uv.snap_cursor', text='游标->像素', icon='PIVOT_CURSOR').target = 'PIXELS'
+
+
 CURSOR_PIE_CLASSES = (
     CursorToOrigin,
     CursorRotationReset,
@@ -421,4 +445,5 @@ CURSOR_PIE_CLASSES = (
     OriginToCursor,
     OriginToBottomBounds,
     HO_MT_cursor_pie,
+    HO_MT_uv_cursor_pie,
 )

@@ -17,6 +17,7 @@
 | 紧急：本象限中线翻转到另一半 | 每个可见岛按其整数 UV 象限中线反射 | 第一象限、其他 UDIM、负象限、U/V、部分网格面选择可用、未显示 UV 不变 |
 | 象限适配支持同步，按 AABB 中心居中后尽量填满 | 公共选区读取 + AABB 居中等比适配，默认第一象限 | 两版选择模式、长方形短边留白对称、多物体整体 AABB、未显示点保护、单点/直线、边距与 Undo/Redo |
 | 取消堆叠，横向/纵向/跨象限排列 | 可见岛 AABB 间距排列；跨象限保留首岛，其余统一 +1U | 模式/同步/选择组合、不同 AABB 尺寸、首岛、+1U 后其他岛保持重叠、实际角点精确平移、回滚与 Undo/Redo |
+| UV 独立 Shift+S 游标饼 | `HO_MT_uv_cursor_pie` 与独立 UV Editor 键位，共享原游标饼开关 | 八槽 UV-only、原生吸附、同步开关、二维游标与 3D 游标隔离、开关清理及原 3D 饼回归 |
 | 公共层仔细处理两版 UV 同步 API，自带测试 | `mesh_uv.py`、`uv_state.py`，能力检测与层级恢复顺序 | 同步开关、5.2 有效/失效状态、点/边/面/岛、多物体、pin/seam、其他 UV 层、失败回滚与 Undo/Redo |
 
 堆叠保持精确对应。此前尝试的微量偏移已按用户纠正撤回，不作为当前实现的一部分。
@@ -34,8 +35,9 @@
 | `test_blender_uv_straighten.py` | 18 通过 | 18 通过 |
 | `test_blender_pies.py` | 10 通过 | 10 通过 |
 | `test_blender_uv_unstack.py` | 11 通过 | 11 通过 |
+| `test_blender_uv_cursor_pie.py` | 8 通过，1 项新版选择测试跳过 | 9 通过 |
 
-每版有 85 项原生集成测试；4.5 的两项跳过仅针对它不具备的 5.x 精细 UV 同步状态。
+每版有 94 项原生集成测试；4.5 的三项跳过仅针对它不具备的 5.x 精细 UV 同步状态。
 测试的 `injected ... failure` 报告来自故意注入失败，以验证坐标/用户状态回滚。
 
 复现命令：
@@ -49,6 +51,7 @@
 & 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/test_blender_uv_straighten.py
 & 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/test_blender_pies.py
 & 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/test_blender_uv_unstack.py
+& 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/test_blender_uv_cursor_pie.py
 ```
 
 5.2 的集成测试使用同样命令，将 Blender 可执行文件路径换为

@@ -154,6 +154,10 @@ def _register_cursor_keymaps(store):
         '3D View Generic', 'VIEW_3D', 'S', shift=True,
         menu_name='HO_MT_cursor_pie', keymap_store=store,
     )
+    register_keymap(
+        'UV Editor', 'EMPTY', 'S', shift=True,
+        menu_name='HO_MT_uv_cursor_pie', keymap_store=store,
+    )
 
 
 def _register_selection_mode_keymaps(store):
@@ -208,7 +212,7 @@ _PIE_SPECS = {
         '_cursor_pie_enabled',
         CursorPie.CURSOR_PIE_CLASSES,
         cursor_pie_keymaps,
-        ('HO_MT_cursor_pie',),
+        ('HO_MT_cursor_pie', 'HO_MT_uv_cursor_pie'),
         _register_cursor_keymaps,
     ),
     'selection_mode': _PieSpec(
