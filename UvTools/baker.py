@@ -1588,7 +1588,7 @@ class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
                                )  # type: ignore
 
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+        name="膨胀像素数", default=0, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -1710,7 +1710,7 @@ class OT_UVTools_BakeMeshIslandImage(Operator, ExportHelper):
                                default='PNG'
                                )  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+        name="膨胀像素数", default=0, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -1813,7 +1813,7 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
     background_alpha: FloatProperty(
         name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度")  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+        name="膨胀像素数", default=0, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     image_format: EnumProperty(name="图像格式",
                                items=[
@@ -1981,7 +1981,7 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
     )  # type: ignore
 
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+        name="膨胀像素数", default=0, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -2067,7 +2067,7 @@ class OT_UVTools_BakeMaterialIDImage(Operator, ExportHelper):
         default='PNG'
     )  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+        name="膨胀像素数", default=0, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -2183,7 +2183,7 @@ class OT_UVTools_BakeIslandUVMapImage(Operator, ExportHelper):
                                default='PNG'
                                )  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+        name="膨胀像素数", default=0, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -2318,7 +2318,7 @@ class OT_UVTools_BakeWorldSpaceTBFlowMapImage(Operator, ExportHelper):
         name="坐标迭代次数", default=32, min=4, max=256,
         description="弯曲坐标轴场的NumPy迭代次数,越高越贴合TB流向但越慢")  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+        name="膨胀像素数", default=0, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -2573,7 +2573,7 @@ class OT_UVTools_BakeGravityFieldMapImage(Operator, ExportHelper):
     flip_r: BoolProperty(name="翻转R", default=False)  # type: ignore
     flip_g: BoolProperty(name="翻转G", default=False)  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0,
+        name="膨胀像素数", default=0, min=0,
         description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
@@ -2755,7 +2755,7 @@ class OT_UVTools_BakeSixDirectionVisibilityImage(Operator, ExportHelper):
         name="模糊半径", default=2, min=0.0, max=64.0,
         description="导出前对可见度图做高斯模糊")  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0,
+        name="膨胀像素数", default=0, min=0,
         description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
@@ -2881,7 +2881,7 @@ class OT_UVTools_BakeLightCastImage(Operator, ExportHelper):
         name="模糊半径", default=2, min=0.0, max=64.0,
         description="导出前对光照图做高斯模糊")  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0,
+        name="膨胀像素数", default=0, min=0,
         description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
@@ -2995,7 +2995,7 @@ class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
                                default='PNG'
                                )  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+        name="膨胀像素数", default=0, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
     max_distance: IntProperty(
         name="最大距离像素", default=64, min=1, description="达到此岛内距离后输出纯白")  # type: ignore
     temp_subdivide: BoolProperty(
@@ -3180,7 +3180,7 @@ class OT_UVTools_BakeUVChiralityImage(Operator, ExportHelper):
         items=[('PNG', "PNG", ""), ('JPEG', "JPEG", "")],
         default='PNG')  # type: ignore
     invert: BoolProperty(name="反转", default=False)  # type: ignore
-    dilate_radius: IntProperty(name="膨胀像素数", default=1, min=0)  # type: ignore
+    dilate_radius: IntProperty(name="膨胀像素数", default=0, min=0)  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -3358,7 +3358,7 @@ class OT_UVTools_BakeTangentImage(Operator, ExportHelper):
                               default='TANGENT'
                               )  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+        name="膨胀像素数", default=0, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -3528,7 +3528,7 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
     image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
     background_alpha: FloatProperty(
         name="背景透明度", default=0.0, min=0.0, max=1.0)  # type: ignore
-    dilate_radius: IntProperty(name="膨胀像素数", default=2, min=0)  # type: ignore
+    dilate_radius: IntProperty(name="膨胀像素数", default=0, min=0)  # type: ignore
     image_format: EnumProperty(name="图像格式",
                                items=[
                                    ('PNG', "PNG", ""),
@@ -3640,7 +3640,7 @@ class OT_UVTools_BakeActiveVertexGroupImage(Operator, ExportHelper):
     image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
     background_alpha: FloatProperty(
         name="背景透明度", default=0.0, min=0.0, max=1.0)  # type: ignore
-    dilate_radius: IntProperty(name="膨胀像素数", default=2, min=0)  # type: ignore
+    dilate_radius: IntProperty(name="膨胀像素数", default=0, min=0)  # type: ignore
     image_format: EnumProperty(name="图像格式",
                                items=[
                                    ('PNG', "PNG", ""),
@@ -3750,7 +3750,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
     background_alpha: FloatProperty(
         name="背景透明度", description="空白区域的透明度", default=0.0, min=0.0, max=1.0)  # type: ignore
     dilate_radius: IntProperty(
-        name="膨胀像素数", description="向外扩张的像素数,用于消除UV边缘缝隙", default=2, min=0)  # type: ignore
+        name="膨胀像素数", description="向外扩张的像素数,用于消除UV边缘缝隙", default=0, min=0)  # type: ignore
 
     export_UVIslandImage: BoolProperty(
         name="UV岛", default=True)  # type: ignore
