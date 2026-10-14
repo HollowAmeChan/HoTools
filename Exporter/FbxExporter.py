@@ -16,14 +16,25 @@
 # 4. 网格化对象（默认开启）：把选中的 CURVE 转成 MESH，并为共享 Mesh 数据的对象
 #    创建独立数据，覆盖 Alt+D 等链接网格实例。
 #    解决 Blender/FBX 对曲线和共享网格实例支持不一致，导致对象漏导或结果互相影响的问题。
-# 5. 数据传递修改器隐式修复：对选中导出网格，在**全部预处理最前面**手动应用
-#    DATA_TRANSFER 修改器（带形态键的网格走逐形态键烘焙，只烘 DATA_TRANSFER），
-#    再进入后续预处理与 FBX evaluated mesh 导出。
-#    解决 FBX 导出阶段依赖图环境不完整时，数据传递结果与 Blender 手动应用差异很大的问题。
-#    位置必须最靠前：删除隐藏/几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态都会
-#    改动修改器栈或求值环境，数据传递晚于它们就会和界面里看到的不一致
-#    （实测表现：传递的法线在 FBX 里退回网格自身法线）。
-#    应用失败时保留修改器、继续导出，并在控制台和导出报告中提示。
+# 5. 数据传递修改器整层接管：对选中导出网格，在**全部预处理最前面**把「数据传递链」
+#    做对（见 apply_data_transfer_modifiers）。数据传递能传四个域——顶点（顶点组权重/
+#    倒角权重/顶点色）、边（锐边/缝合/折痕/倒角/Freestyle）、面拐（自定义法线/角点色/UV）、
+#    面（平滑/Freestyle）；它评估的是“自己所在位置的网格”。
+#    做法分三步：
+#      ① 先取好每个目标“数据传递那一刻”的求值网格（源优先、缓存去重，此时不动任何修改器）；
+#      ② 按栈顺序原生应用整条链（每个修改器在它自己那一层的网格上生效；**顶点组权重只能
+#         靠这条路径落地**，依赖图求值不会把 DATA_TRANSFER 的权重组写出来）；
+#      ③ 用①取下来的那一层网格接管基础网格，把链上的修改器摘掉（保证 UV/角点色/自定义
+#         法线/锐边/缝合/折痕/面平滑与界面逐项一致）。
+#    解决三类问题：
+#      - 只应用 DATA_TRANSFER 时它作用在基础网格上，源/目标面拐数对不上（Blender 直接报
+#        “源网格与目标网格面拐数量不一致，此类情形无法使用 '拓扑' 映射”并丢弃自定义法线）；
+#      - 数据传递之间互为源时，边应用边求值让结果依赖处理顺序（实测同一文件三次导出三个值）；
+#      - 数据传递之后还有改拓扑的修改器时，面拐数只能按“数据传递那一刻”记录。
+#    位置的先后同样关键：删除隐藏/几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态都会
+#    改动修改器栈或求值环境，数据传递晚于它们就会和界面里看到的不一致。
+#    应用失败时保留原状、继续导出，并在控制台和导出报告中提示。带形态键的网格不替换网格
+#    数据（会丢形态键），走逐形态键烘焙。
 # 6. 按材质整理面顺序隐式修复：对所有选中的导出 Mesh 执行
 #    Sort Elements > Material（仅 FACE）。
 #    解决多物体 FBX 导入 Unity 后，Unity 根据面/子网格顺序重建材质列表，
@@ -451,17 +462,591 @@ class FBXExporter:
         return converted_objects, made_single_user, failed, selection, active_object
 
     @staticmethod
+    def data_transfer_chain(ob):
+        """返回“数据传递链”：从栈顶到最后一个可见 DATA_TRANSFER 为止的修改器。
+
+        数据传递评估的是“它所在位置的网格”，也就是前置修改器（镜像/缩裹/几何节点…）
+        已经生效后的网格。只应用 DATA_TRANSFER 会让它作用在基础网格上：源/目标面拐数
+        对不上（Blender 直接报“源网格与目标网格面拐数量不一致，此类情形无法使用 '拓扑'
+        映射”并丢弃自定义法线），或者按错误的源求值结果传递 —— 两种都表现为
+        “界面里传递是好的，导出后传递的法线没了/变了”。
+        所以整条链按顺序一起应用。
+        """
+        active = [
+            (index, mod)
+            for index, mod in enumerate(ob.modifiers)
+            if mod.type == "DATA_TRANSFER"
+            and (mod.show_viewport or mod.show_render)
+        ]
+        if not active:
+            return []
+        last_index = max(index for index, _ in active)
+        return [
+            mod
+            for index, mod in enumerate(ob.modifiers)
+            if index <= last_index and (mod.show_viewport or mod.show_render)
+        ]
+
+    @staticmethod
+    def _upstream_first(names):
+        """把名字列表按“数据传递的源排在下游之前”重排（拓扑序，环安全）。
+
+        数据传递可以拿另一个也会被处理的对象当源。记录结果时若下游排在前，它读到的
+        源可能已经被应用过修改器，结果就随顺序变化；反过来（源在前）则每个下游读到的
+        都是原始源。存在互相引用（环）时保底用原顺序，不做死循环。
+        """
+        remaining = []
+        for name in names:
+            ob = bpy.data.objects.get(name)
+            if ob is not None:
+                remaining.append(ob)
+
+        ordered = []
+        emitted = set()
+
+        def emit(ob, stack):
+            if ob.name in emitted or ob.name in stack:
+                return
+            stack.add(ob.name)
+            for mod in ob.modifiers:
+                if mod.type != "DATA_TRANSFER":
+                    continue
+                source = getattr(mod, "object", None)
+                if source is None or source.name not in name_set:
+                    continue
+                emit(source, stack)
+            stack.discard(ob.name)
+            if ob.name not in emitted:
+                emitted.add(ob.name)
+                ordered.append(ob.name)
+
+        name_set = {ob.name for ob in remaining}
+        for ob in remaining:
+            emit(ob, set())
+        # 补齐（一般不会走到：环里的对象已经在上面的逻辑里被跳过）
+        for ob in remaining:
+            if ob.name not in emitted:
+                ordered.append(ob.name)
+        return ordered
+
+    @staticmethod
+    def read_vertex_weights(ob):
+        """读出物体上的顶点组权重，返回 ``{组名: [(顶点索引, 权重), ...]}``。
+
+        顶点组是**物体级**数据，不跟着 ``bpy.data.meshes.new_from_object`` 走；
+        0 权重的顶点不记录（等价于不参与该组）。
+        """
+        if ob is None:
+            return {}
+        try:
+            group_names = [group.name for group in ob.vertex_groups]
+            vertices = ob.data.vertices
+        except (ReferenceError, AttributeError):
+            return {}
+        if not group_names:
+            return {}
+        weights = {}
+        for vertex in vertices:
+            for element in vertex.groups:
+                if element.group >= len(group_names):
+                    continue
+                if element.weight <= 0.0:
+                    continue
+                weights.setdefault(group_names[element.group], []).append(
+                    (vertex.index, element.weight)
+                )
+        return weights
+
+    @staticmethod
+    def write_vertex_weights(ob, weights, *, vertex_count=None) -> int:
+        """把 :meth:`read_vertex_weights` 读出来的权重写到物体上（按组名对齐，返回组数）。"""
+        if not weights or not FBXExporter.object_is_alive(ob):
+            return 0
+        if vertex_count is not None and len(ob.data.vertices) != vertex_count:
+            print(
+                f"[HoTools FBX] {ob.name}：接管数据传递层后顶点数"
+                f"（{len(ob.data.vertices)}）与记录时（{vertex_count}）不一致，"
+                f"跳过顶点组权重接管"
+            )
+            return 0
+        written = 0
+        for name, entries in weights.items():
+            group = ob.vertex_groups.get(name)
+            if group is None:
+                group = ob.vertex_groups.new(name=name)
+            try:
+                for vertex_index, weight in entries:
+                    group.add([vertex_index], weight, "REPLACE")
+            except (RuntimeError, ReferenceError):
+                continue
+            written += 1
+        return written
+
+    @staticmethod
+    def _suspend_around_transfer(ob, chain_names):
+        """临时摆好求值环境，返回 (被临时打开的链内修改器, 被临时关掉的修改器状态)。
+
+        ① 只在渲染中显示的链内修改器：求值走的是视口依赖图，必须临时打开才看得到
+           （导出用的是 ``use_mesh_modifiers_render=True``，即渲染口径）；
+        ② 数据传递之后的修改器：临时关掉，让求值停在“数据传递已生效”的那一层。
+        """
+        chain_states = []
+        for mod in ob.modifiers:
+            if mod.name not in chain_names:
+                continue
+            if bool(getattr(mod, "show_viewport", True)):
+                continue
+            if not bool(getattr(mod, "show_render", False)):
+                continue
+            chain_states.append(mod)
+            mod.show_viewport = True
+        hidden_states = []
+        for mod in ob.modifiers:
+            if mod.name in chain_names:
+                continue
+            if not (mod.show_viewport or mod.show_render):
+                continue
+            hidden_states.append((mod, mod.show_viewport, mod.show_render))
+            mod.show_viewport = False
+            mod.show_render = False
+        return chain_states, hidden_states
+
+    @staticmethod
+    def _resume_after_transfer(hidden_states, chain_states):
+        """还原 :meth:`_suspend_around_transfer` 动过的显示开关。"""
+        for mod, show_viewport, show_render in hidden_states:
+            if not FBXExporter.object_is_alive(mod):
+                continue
+            mod.show_viewport = show_viewport
+            mod.show_render = show_render
+        for mod in chain_states:
+            if not FBXExporter.object_is_alive(mod):
+                continue
+            mod.show_viewport = False
+
+    @staticmethod
+    def transfer_stage_mesh(ob):
+        """按“数据传递那一刻”的口径求值一次，返回 ``(网格数据, 顶点组权重)``。
+
+        得到的正是“前置修改器 + 数据传递”都已生效、后续修改器还没生效的那一层，
+        也就是用户在界面里看到的数据传递结果。
+
+        * 网格数据带 ``preserve_all_data_layers=True``：UV、角点色、自定义法线、
+          锐边/缝合/折痕、面平滑等数据层都跟过来；
+        * 顶点组权重这里读到的是“原样带过来”的兜底值：依赖图求值未必会算 DATA_TRANSFER
+          的权重组，真正落地靠 :meth:`apply_transfer_chain_by_ops`。
+
+        只求值、不读网格数据：读数据会触发依赖图更新，把其它物体的数据传递也求值一遍，
+        多个目标互为源时结果就随顺序变化（实测：睫毛下取完之后 Body 的结果就变了）。
+        """
+        chain = FBXExporter.data_transfer_chain(ob)
+        if not chain:
+            return None
+        chain_names = {mod.name for mod in chain}
+        chain_states, hidden_states = FBXExporter._suspend_around_transfer(
+            ob, chain_names
+        )
+        try:
+            bpy.context.view_layer.update()
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            evaluated_object = ob.evaluated_get(depsgraph)
+            stage_mesh = bpy.data.meshes.new_from_object(
+                evaluated_object,
+                preserve_all_data_layers=True,
+                depsgraph=depsgraph,
+            )
+            weights = FBXExporter.read_vertex_weights(evaluated_object)
+            return stage_mesh, weights
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[HoTools FBX] {ob.name}：求值“数据传递那一刻”的网格失败："
+                f"{type(exc).__name__}: {exc}"
+            )
+            return None
+        finally:
+            FBXExporter._resume_after_transfer(hidden_states, chain_states)
+
+    @staticmethod
+    def _merge_material_names(ob, stage_mesh):
+        """让接管后的网格保留原物体的材质（按槽顺序重挂一次）。"""
+        materials = [slot.material for slot in ob.material_slots]
+        if not materials:
+            return
+        try:
+            stage_mesh.materials.clear()
+            for material in materials:
+                stage_mesh.materials.append(material)
+        except Exception:  # noqa: BLE001
+            pass
+
+    @staticmethod
+    def adopt_transfer_stage(ob, stage, chain_names=()):
+        """把取下来的那一层装回物体，并把链上的修改器摘掉。
+
+        只换网格数据、不动顶点组：顶点组应该由 :meth:`apply_transfer_chain_by_ops`
+        逐个应用时算出来（它在“前置修改器已应用 + 源保持原始求值”的状态下算，与界面
+        一致）；这里再写一次反而会覆盖成依赖图口径的错误权重。
+        """
+        if stage is None or not FBXExporter.object_is_alive(ob):
+            return False
+        stage_mesh = stage[0]
+        old_mesh = ob.data
+        FBXExporter._merge_material_names(ob, stage_mesh)
+        ob.data = stage_mesh
+        if old_mesh is not None and old_mesh.users == 0:
+            try:
+                bpy.data.meshes.remove(old_mesh)
+            except (ReferenceError, RuntimeError):
+                pass
+        for name in chain_names:
+            modifier = ob.modifiers.get(name)
+            if modifier is None:
+                continue
+            try:
+                ob.modifiers.remove(modifier)
+            except (ReferenceError, RuntimeError):
+                continue
+        bpy.context.view_layer.update()
+        return True
+
+    @staticmethod
+    def drop_transfer_stage(stage):
+        """丢弃没被用上的那一层数据（失败路径），避免导出过程里堆垃圾数据块。"""
+        if stage is None:
+            return
+        stage_mesh = stage[0]
+        try:
+            if stage_mesh is not None and stage_mesh.users == 0:
+                bpy.data.meshes.remove(stage_mesh)
+        except (ReferenceError, RuntimeError):
+            pass
+
+    @staticmethod
+    def apply_transfer_chain_by_ops(ob, chain_names):
+        """按栈顺序逐个原生应用链上的修改器，返回 (应用的 DATA_TRANSFER 数, 是否有失败)。
+
+        为什么必须走原生 ``modifier_apply``：DATA_TRANSFER 的**顶点组权重**只在这条路径上
+        写进网格，依赖图求值根本不会把权重组写出来。其余数据域这条路径同样正确，因为每个
+        修改器都是在它自己那一层的网格上被应用的，前置修改器已经先烘进基础网格。
+        """
+        applied_transfers = 0
+        had_failure = False
+        for current_name in chain_names:
+            current = ob.modifiers.get(current_name)
+            if current is None:
+                continue
+            if current.type == "ARMATURE":
+                # 数据传递之前不该有骨架，真遇到就跳过，交给导出做蒙皮
+                continue
+            if not (current.show_viewport or current.show_render):
+                continue
+            is_transfer = current.type == "DATA_TRANSFER"
+            try:
+                result = bpy.ops.object.modifier_apply(
+                    modifier=current_name,
+                    merge_customdata=True,
+                )
+                if "FINISHED" not in result:
+                    raise RuntimeError(f"modifier_apply returned {result}")
+                if is_transfer:
+                    applied_transfers += 1
+                bpy.context.view_layer.update()
+            except Exception as exc:  # noqa: BLE001
+                had_failure = True
+                print(
+                    f"[HoTools FBX] {ob.name}.{current_name}：应用失败"
+                    f"（{type(exc).__name__}: {exc}）"
+                )
+                if is_transfer:
+                    break
+                continue
+        return applied_transfers, had_failure
+
+    @staticmethod
+    def data_transfer_sources(ob):
+        """返回该物体数据传递链上引用到的、也在导出范围内的源物体（去重）。"""
+        sources = []
+        seen = set()
+        for modifier in FBXExporter.data_transfer_chain(ob):
+            if modifier.type != "DATA_TRANSFER":
+                continue
+            source = getattr(modifier, "object", None)
+            if source is None or source.name in seen:
+                continue
+            seen.add(source.name)
+            sources.append(source)
+        return sources
+
+    @staticmethod
+    def sources_need_evaluated_proxy(ob):
+        """数据传递的源是否“自己也有前置修改器”（顶点组权重因此需要隔离副本兜底）。
+
+        判据：源整条栈求值后的顶点数与基础网格不同 —— 说明原生 ``modifier_apply``
+        在算顶点组时看到的基础网格不是界面里的那个源。
+        """
+        for source in FBXExporter.data_transfer_sources(ob):
+            try:
+                bpy.context.view_layer.update()
+                depsgraph = bpy.context.evaluated_depsgraph_get()
+                evaluated = source.evaluated_get(depsgraph)
+                if len(evaluated.data.vertices) != len(source.data.vertices):
+                    return True
+                if len(evaluated.data.loops) != len(source.data.loops):
+                    return True
+            except Exception:  # noqa: BLE001
+                return True
+        return False
+
+    @staticmethod
+    def transfer_stage_of_mesh(mesh):
+        """不带修改器的网格：直接返回它自己的副本（与 :meth:`stage_of` 同构的返回值）。"""
+        if mesh is None:
+            return None
+        return mesh.copy(), {}
+
+    @staticmethod
+    def stage_of(ob, cache, keep=True):
+        """取（并缓存）“数据传递那一刻”的整层数据。
+
+        * 物体带数据传递：取“前置修改器 + 数据传递”生效后的那一层；
+        * 物体只是普通的传递源（没有数据传递）：取它整条栈求值后的网格 —— 数据传递
+          在界面里看到的源就是这个求值结果，所以替身必须用它。
+
+        ``cache`` 形如 ``{名称: [stage, keep]}``，``keep=False`` 的条目在接管完成后释放。
+        """
+        entry = cache.get(ob.name)
+        if entry is not None:
+            if keep:
+                entry[1] = True
+            return entry[0]
+        if not FBXExporter.data_transfer_chain(ob):
+            stage = FBXExporter.transfer_stage_of_mesh(
+                FBXExporter.evaluated_mesh_copy(ob)
+            )
+        else:
+            stage = FBXExporter.transfer_stage_mesh(ob)
+        cache[ob.name] = [stage, keep]
+        return stage
+
+    @staticmethod
+    def evaluated_mesh_copy(ob):
+        """物体整条修改器栈求值后的网格副本（带齐全部数据层）。"""
+        if ob is None:
+            return None
+        try:
+            bpy.context.view_layer.update()
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            return bpy.data.meshes.new_from_object(
+                ob.evaluated_get(depsgraph),
+                preserve_all_data_layers=True,
+                depsgraph=depsgraph,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[HoTools FBX] {ob.name}：求值源网格失败："
+                f"{type(exc).__name__}: {exc}"
+            )
+            return None
+
+    @staticmethod
+    def run_transfer_on_isolated_copy(ob, chain_names, cache):
+        """在隔离副本上跑一遍数据传递链，返回结果网格（顶点组权重一并算出）。
+
+        用途：数据传递的源自己也有前置修改器（镜像/几何节点…）时，原生
+        ``modifier_apply`` 看到的是源的**基础网格**，源/目标拓扑对不上，顶点组权重会
+        整块传不过去（实测源带镜像时权重保持旧值）。这里把目标和源都换成“各自求值后
+        的那一层”做一次隔离求值，拿到与界面一致的结果；原始物体一个字节都不动。
+
+        返回 ``(网格, {组名: [(顶点索引, 权重)]})``；失败返回 None。
+        """
+        if not chain_names:
+            return None
+        clone = ob.copy()
+        clone.name = f"__dtproxy_{ob.name}"
+        bpy.context.scene.collection.objects.link(clone)
+        stand_ins = []
+        try:
+            # 目标：换成“数据传递那一刻”的网格（前置修改器已生效、后续修改器未生效）
+            own_stage = FBXExporter.stage_of(ob, cache, keep=True)
+            if own_stage is None:
+                return None
+            clone.data = own_stage[0].copy()
+            # 链上的前置修改器已经体现在 own_stage 里，摘掉；数据传递留着算
+            for name in chain_names:
+                modifier = clone.modifiers.get(name)
+                if modifier is None or modifier.type == "DATA_TRANSFER":
+                    continue
+                clone.modifiers.remove(modifier)
+            # 源：换成各自求值后的那一层
+            for modifier in clone.modifiers:
+                if modifier.type != "DATA_TRANSFER":
+                    continue
+                source = getattr(modifier, "object", None)
+                if source is None:
+                    continue
+                stage = FBXExporter.stage_of(source, cache, keep=True)
+                if stage is None:
+                    continue
+                stand_in = bpy.data.objects.new(
+                    f"__dtproxy_src_{source.name}", stage[0].copy()
+                )
+                bpy.context.scene.collection.objects.link(stand_in)
+                stand_ins.append(stand_in)
+                modifier.object = stand_in
+            bpy.context.view_layer.update()
+            if not clone.modifiers:
+                return None
+            bpy.ops.object.select_all(action="DESELECT")
+            clone.select_set(True)
+            bpy.context.view_layer.objects.active = clone
+            for modifier in list(clone.modifiers):
+                if not (modifier.show_viewport or modifier.show_render):
+                    continue
+                bpy.ops.object.modifier_apply(
+                    modifier=modifier.name, merge_customdata=True
+                )
+            weights = FBXExporter.read_vertex_weights(clone)
+            result = clone.data.copy()
+            return result, weights
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[HoTools FBX] {ob.name}：隔离求值数据传递链失败："
+                f"{type(exc).__name__}: {exc}"
+            )
+            return None
+        finally:
+            result_mesh = clone.data
+            bpy.data.objects.remove(clone, do_unlink=True)
+            if result_mesh is not None and result_mesh.users == 0:
+                try:
+                    bpy.data.meshes.remove(result_mesh)
+                except (ReferenceError, RuntimeError):
+                    pass
+            for stand_in in stand_ins:
+                mesh = stand_in.data
+                bpy.data.objects.remove(stand_in, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    try:
+                        bpy.data.meshes.remove(mesh)
+                    except (ReferenceError, RuntimeError):
+                        pass
+
+    @staticmethod
+    def release_transfer_stages(cache):
+        """释放缓存里没被接管掉的那些整层数据。"""
+        for stage, kept in cache.values():
+            if not kept:
+                FBXExporter.drop_transfer_stage(stage)
+
+    @staticmethod
+    def viewport_reference_object(ob, cache):
+        """复制一套临时结构，得到“传递源都没被动过”时的求值结果（原始物体零改动）。
+
+        做法：把目标和它链上引用到的源都换成“取下来的那一层”网格：
+        * 目标：链（含前置修改器）的求值结果就是“数据传递那一刻”的网格 —— 正好是
+          数据传递应该作用的输入；
+        * 源：换成它们各自的“那一刻”，于是这次求值看到的是界面里的源，而不是稍后被
+          本步骤改过的源；
+        * 数据传递本身留在副本的栈上，负责算出这次传递的结果。
+        副本的求值结果于是等于“数据传递之后整条栈”的结果，可以直接当基准用。
+
+        返回临时物体；调用方用 :meth:`clear_viewport_references` 清理，并把用过的
+        ``cache`` 交给 :meth:`release_transfer_stages`。
+        """
+        clone = ob.copy()
+        clone.data = ob.data.copy()
+        clone.name = f"__dtref_{ob.name}"
+        bpy.context.scene.collection.objects.link(clone)
+        # 只在渲染中显示的链内修改器：导出按渲染口径评估，所以算基准时也要临时打开，
+        # 否则副本上的传递会被视口开关按住，基准退回“没传递”的状态。
+        chain_names_original = {
+            mod.name for mod in FBXExporter.data_transfer_chain(ob)
+        }
+        enabled_states = []
+        for modifier in clone.modifiers:
+            if modifier.name not in chain_names_original:
+                continue
+            if bool(getattr(modifier, "show_viewport", True)):
+                continue
+            if not bool(getattr(modifier, "show_render", False)):
+                continue
+            enabled_states.append(modifier)
+            modifier.show_viewport = True
+        try:
+            # 目标自己的链：用“数据传递那一刻”的网格顶替（副本的 DT 继续在后面算）
+            own_stage = FBXExporter.stage_of(ob, cache, keep=True)
+            if own_stage is not None:
+                clone.data = own_stage[0].copy()
+            # 每个数据传递的源：换成各自的“那一刻”
+            for modifier in clone.modifiers:
+                if modifier.type != "DATA_TRANSFER":
+                    continue
+                source = getattr(modifier, "object", None)
+                if source is None:
+                    continue
+                stage = FBXExporter.stage_of(source, cache, keep=True)
+                if stage is None:
+                    continue
+                substitute = bpy.data.objects.new(
+                    f"__dtref_src_{source.name}", stage[0].copy()
+                )
+                bpy.context.scene.collection.objects.link(substitute)
+                modifier.object = substitute
+            # 链上的其它修改器已经体现在 own_stage 里了，摘掉免得重复计算
+            for name in [mod.name for mod in FBXExporter.data_transfer_chain(ob)]:
+                modifier = clone.modifiers.get(name)
+                if modifier is None:
+                    continue
+                if modifier.type == "DATA_TRANSFER":
+                    continue
+                clone.modifiers.remove(modifier)
+            bpy.context.view_layer.update()
+            return clone
+        except Exception:  # noqa: BLE001
+            bpy.data.objects.remove(clone, do_unlink=True)
+            return None
+        finally:
+            for modifier in enabled_states:
+                if FBXExporter.object_is_alive(modifier):
+                    modifier.show_viewport = False
+
+    @staticmethod
+    def clear_viewport_references():
+        """清掉 :meth:`viewport_reference_object` 建的临时物体与网格。"""
+        for ob in list(bpy.data.objects):
+            if ob.name.startswith("__dtref"):
+                mesh = ob.data
+                bpy.data.objects.remove(ob, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    try:
+                        bpy.data.meshes.remove(mesh)
+                    except (ReferenceError, RuntimeError):
+                        pass
+
+    @staticmethod
     def apply_data_transfer_modifiers(mesh_objects, selection, active_object):
-        """在完整视图层上下文中手动应用数据传递修改器，规避 FBX 评估差异。
+        """把「数据传递链」整层做对，规避 FBX 评估差异。
 
         必须排在所有预处理的最前面（见 export_fbx 里的调用位置）：后面的每一步
         ——删除隐藏/几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态——都会改动
-        修改器栈或求值环境。数据传递一旦晚于它们，被传递的法线/权重就与界面里看到的
-        不一致（表现就是“传递的法线丢了”），所以这里在动任何修改器之前先把它烘掉。
+        修改器栈或求值环境，数据传递一旦晚于它们就与界面里看到的不一致。
 
-        带形态键的网格不能用原生 ``modifier_apply``（Blender 直接拒绝），改走与
-        「保持形态键应用」同一套逐形态键烘焙，并且只烘 DATA_TRANSFER：骨架修改器
-        留给导出做蒙皮，其它修改器一概不动。
+        数据传递评估的是“自己所在位置的网格”，能传的东西覆盖四个域（顶点组权重/顶点色、
+        锐边/缝合/折痕、自定义法线/角点色/UV、面平滑）。所以对每个目标做两件事：
+
+        1. **按栈顺序原生应用整条链**（见 :meth:`apply_transfer_chain_by_ops`）：每个
+           修改器都在自己那一层的网格上生效，前置修改器（镜像/缩裹/几何节点）先烘进
+           基础网格。这一步是**顶点组权重唯一能落地的路径**——依赖图求值不会把
+           DATA_TRANSFER 的权重组写出来。
+        2. **再用“数据传递那一刻”的求值网格接管一次**（见 :meth:`adopt_transfer_stage`）：
+           保证拓扑相关的域（UV/角点色/自定义法线/锐边/缝合/折痕/面平滑）与界面逐项一致，
+           同时把前置修改器按求值口径定型（镜像的焊接、几何节点的拓扑都与视口一致）。
+
+        顺序无关性：第 2 步的数据在动任何修改器之前就全部取好（源优先、递归取），
+        之后怎么应用都不会互相影响；同一个源被多个目标引用也只求值一次。
+
+        带形态键的网格不能替换网格数据（会丢形态键），走与「保持形态键应用」同一套
+        逐形态键烘焙：逐键评估时整条链都在，传出来的结果本身就是对的。
         """
         from Utils import shapekey_utils
 
@@ -470,53 +1055,55 @@ class FBXExporter:
         applied = 0
         failed = []
 
-        def data_transfer_modifiers(ob):
-            return [
-                mod
-                for mod in ob.modifiers
-                if mod.type == "DATA_TRANSFER"
-                and (mod.show_viewport or mod.show_render)
-            ]
-
-        target_names = [
-            ob.name
-            for ob in mesh_objects
-            if ob.type == "MESH"
-            and ob.name in bpy.context.view_layer.objects
-            and data_transfer_modifiers(ob)
-        ]
-        if not target_names:
+        # 快照链与目标的对应关系：后面会改修改器栈，快照保证循环中判断一致。
+        targets = []
+        for ob in mesh_objects:
+            if ob.type != "MESH" or ob.name not in bpy.context.view_layer.objects:
+                continue
+            chain = FBXExporter.data_transfer_chain(ob)
+            if not chain:
+                continue
+            targets.append((
+                ob.name,
+                [mod.name for mod in chain],
+                {mod.type for mod in chain},
+            ))
+        if not targets:
+            return 0, [], selection, active_object
+        if not any("DATA_TRANSFER" in types for _n, _m, types in targets):
             return 0, [], selection, active_object
 
+        # 第 1 步：先取“数据传递那一刻”的求值网格（此时什么修改器都还没动）。
+        # 递归取源、源优先，缓存保证同一物体只求值一次。
+        stage_cache: dict = {}
+        for name, _names, types in targets:
+            if "DATA_TRANSFER" not in types:
+                continue
+            ob = bpy.data.objects.get(name)
+            if ob is None:
+                continue
+            for source in FBXExporter.data_transfer_sources(ob):
+                FBXExporter.stage_of(source, stage_cache, keep=True)
+            FBXExporter.stage_of(ob, stage_cache, keep=True)
+
+        # 第 2 步：逐个“原生应用 + 接管定型”。
         try:
-            for object_name in target_names:
+            for object_name, chain_names, chain_types in targets:
                 ob = bpy.data.objects.get(object_name)
                 if ob is None or ob.name not in bpy.context.view_layer.objects:
                     continue
-
-                modifier_names = [
-                    mod.name for mod in data_transfer_modifiers(ob)
-                ]
-                if not modifier_names:
+                if "DATA_TRANSFER" not in chain_types:
                     continue
 
                 shape_keys = getattr(ob.data, "shape_keys", None)
                 if shape_keys is not None and len(shape_keys.key_blocks) > 1:
-                    # 逐形态键烘焙会把“整个修改器栈”的求值结果当新基础网格，
-                    # 所以先把数据传递之后的修改器临时藏起来：这样烘出来的就是
-                    # “只应用了数据传递”的结果，后面的修改器（骨架等）原样留在栈上，
-                    # 由导出继续处理，不会出现同一形变被烘一次又再算一次。
-                    stacked = list(ob.modifiers)
-                    transfer_indices = [
-                        index
-                        for index, mod in enumerate(stacked)
-                        if mod.type == "DATA_TRANSFER"
-                        and (mod.show_viewport or mod.show_render)
-                    ]
-                    last_transfer_index = max(transfer_indices, default=-1)
+                    # 逐形态键烘焙会把整个修改器栈的求值结果按每个形态键各烘一遍，
+                    # 所以先把数据传递之后的修改器临时关掉：烘出来的就是“整条链”的结果，
+                    # 后面的修改器（骨架等）原样留在栈上，不会同一形变烘一次又再算一次。
+                    chain_name_set = set(chain_names)
                     hidden_states = []
-                    for index, mod in enumerate(stacked):
-                        if index <= last_transfer_index:
+                    for mod in ob.modifiers:
+                        if mod.name in chain_name_set:
                             continue
                         if not (mod.show_viewport or mod.show_render):
                             continue
@@ -529,7 +1116,7 @@ class FBXExporter:
                                 [ob],
                                 include_render_only=True,
                                 keep_armature=True,
-                                modifier_types=frozenset({"DATA_TRANSFER"}),
+                                modifier_types=frozenset(chain_types),
                             )
                         )
                     except Exception as exc:  # noqa: BLE001
@@ -542,8 +1129,7 @@ class FBXExporter:
                             mod.show_viewport = show_viewport
                             mod.show_render = show_render
                     if baked:
-                        # 一次烘焙会把该物体上所有 DATA_TRANSFER 一起应用，按修改器数计数
-                        applied += len(modifier_names)
+                        applied += 1
                     if skipped and not baked:
                         failed.append(
                             (object_name, "<逐形态键烘焙>", RuntimeError(skipped[0][1]))
@@ -558,32 +1144,50 @@ class FBXExporter:
                     ob.select_set(True)
                     bpy.context.view_layer.objects.active = ob
                     bpy.context.view_layer.update()
-
-                    # 隐式修复：FBX 通过 evaluated mesh 自动应用 DATA_TRANSFER
-                    # 时，结果可能与界面中手动应用不同；先在完整视图层中
-                    # 走标准 modifier_apply，避免导出阶段的隔离评估差异。
-                    for modifier_name in modifier_names:
-                        mod = ob.modifiers.get(modifier_name)
-                        if mod is None or mod.type != "DATA_TRANSFER":
-                            continue
-                        if not (mod.show_viewport or mod.show_render):
-                            continue
-                        try:
-                            result = bpy.ops.object.modifier_apply(
-                                modifier=modifier_name,
-                                merge_customdata=True,
-                            )
-                            if "FINISHED" not in result:
-                                raise RuntimeError(
-                                    f"modifier_apply returned {result}"
-                                )
-                            applied += 1
-                            bpy.context.view_layer.update()
-                        except Exception as exc:
-                            failed.append((object_name, modifier_name, exc))
-                except Exception as exc:
-                    failed.append((object_name, "<准备应用>", exc))
+                    # 1) 原生应用整条链：顶点组权重只能靠这条路径落地，
+                    #    其余域在这里也已经正确（每个修改器在它自己那一层上生效）。
+                    applied_transfers, _had_failure = (
+                        FBXExporter.apply_transfer_chain_by_ops(ob, chain_names)
+                    )
+                    # 2) 用“数据传递那一刻”的求值网格接管：保证与界面逐项一致。
+                    stage = FBXExporter.stage_of(ob, stage_cache, keep=False)
+                    if stage is not None:
+                        if not FBXExporter.adopt_transfer_stage(
+                            ob, stage, chain_names
+                        ):
+                            FBXExporter.drop_transfer_stage(stage)
+                    else:
+                        failed.append((
+                            object_name,
+                            "<求值数据传递层>",
+                            RuntimeError(
+                                "取“数据传递那一刻”的求值网格失败，详见控制台"
+                            ),
+                        ))
+                    # 3) 顶点组权重兜底：源自己也有前置修改器时，原生 modifier_apply 看到的是
+                    #    源的**基础网格**，源/目标拓扑对不上，权重会整块传不过去。这时用隔离
+                    #    副本（目标换成“那一刻”、源换成各自求值结果）再算一遍权重。
+                    if FBXExporter.sources_need_evaluated_proxy(ob):
+                        proxy = FBXExporter.run_transfer_on_isolated_copy(
+                            ob, chain_names, stage_cache
+                        )
+                        if proxy is not None:
+                            proxy_mesh, proxy_weights = proxy
+                            try:
+                                if len(proxy_mesh.vertices) == len(ob.data.vertices):
+                                    FBXExporter.write_vertex_weights(
+                                        ob, proxy_weights,
+                                        vertex_count=len(proxy_mesh.vertices),
+                                    )
+                                bpy.data.meshes.remove(proxy_mesh)
+                            except (ReferenceError, RuntimeError):
+                                pass
+                    applied += applied_transfers
+                    bpy.context.view_layer.update()
+                except Exception as exc:  # noqa: BLE001
+                    failed.append((object_name, "<应用数据传递链>", exc))
         finally:
+            FBXExporter.release_transfer_stages(stage_cache)
             FBXExporter.restore_selection_by_names(selection_names, active_object_name)
 
         selection = [
