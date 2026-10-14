@@ -37,7 +37,7 @@ class OP_UVTools_TopologyStack(bpy.types.Operator):
         preferred = None
         for obj, bm, uv in iter_edit_uv_meshes(context):
             active_face = bm.faces.active
-            for island in collect_uv_islands(obj, bm, uv, settings):
+            for island in collect_uv_islands(obj, bm, uv, settings, split_overlaps=True):
                 if not island.selected:
                     continue
                 if not island.complete:

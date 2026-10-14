@@ -40,7 +40,8 @@ class OP_UVTools_Unstack(bpy.types.Operator):
         islands, preferred = [], None
         for obj, bm, uv in iter_edit_uv_meshes(context):
             active_face = bm.faces.active
-            for island in collect_uv_islands(obj, bm, uv, context.scene.tool_settings, visible_only=True):
+            for island in collect_uv_islands(obj, bm, uv, context.scene.tool_settings,
+                                             visible_only=True, split_overlaps=True):
                 if not island.selected:
                     continue
                 islands.append(island)

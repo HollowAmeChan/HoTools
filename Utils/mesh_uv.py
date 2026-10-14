@@ -106,17 +106,28 @@ def selected_uv_edge_loops(bm, uv_layer, settings):
     return result
 
 
-def collect_uv_islands(obj, bm, uv_layer, settings, epsilon=1e-7, visible_only=False):
+def collect_uv_islands(obj, bm, uv_layer, settings, epsilon=1e-7, visible_only=False, split_overlaps=False):
     """Find actual UV-contiguous face components, including invisible faces.
 
     By default invisible faces participate so whole-topology tools can detect
     incomplete islands. visible_only=True follows the editor's displayed scope,
     for everyday UV transforms that must work with partial mesh selections.
     Equal coordinates on unrelated geometry never join islands or UV vertices.
+    split_overlaps=True cuts coincident shared edges whose faces fold onto the
+    same UV side. It recovers stacked charts that Blender's linked selection
+    intentionally joins without a winding delimiter, without moving coordinates.
     """
     bm.faces.index_update()
     faces = [face for face in bm.faces if not visible_only or (
         not face.hide and (settings.use_uv_select_sync or face.select))]
+    orientations = {}
+    if split_overlaps:
+        for face in faces:
+            coordinates = [tuple(loop[uv_layer].uv) for loop in face.loops]
+            origin = coordinates[0]
+            orientations[face] = sum(
+                (a[0]-origin[0])*(b[1]-origin[1])-(a[1]-origin[1])*(b[0]-origin[0])
+                for a, b in zip(coordinates[1:], coordinates[2:]))
     loops = [loop for face in faces for loop in face.loops]
     corner_parent = {loop: loop for loop in loops}
     face_parent = {face: face for face in faces}
@@ -148,6 +159,13 @@ def collect_uv_islands(obj, bm, uv_layer, settings, epsilon=1e-7, visible_only=F
                     first, second = b_next, b
                 if ((a[uv_layer].uv - first[uv_layer].uv).length_squared <= limit_squared
                         and (a_next[uv_layer].uv - second[uv_layer].uv).length_squared <= limit_squared):
+                    if split_overlaps:
+                        # Compare polygon orientation in the SAME directed edge
+                        # frame, handling even inconsistent mesh face winding.
+                        product = orientations[a.face]*orientations[b.face]
+                        same_side = product > 0 if a.vert == b.vert else product < 0
+                        if same_side:
+                            continue
                     union(face_parent, a.face, b.face)
                     union(corner_parent, a, first)
                     union(corner_parent, a_next, second)

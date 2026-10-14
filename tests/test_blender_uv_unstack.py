@@ -13,6 +13,7 @@ import bpy
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 from test_blender_uv_topology_stack import clear_scene, coords, create_object, edit, operators, select_uv_faces, state
+from Utils.mesh_uv import collect_uv_islands
 unstack = importlib.import_module(operators.__package__ + '.unstack')
 
 SQUARE = ((.125, .125), (.625, .125), (.625, .625), (.125, .625))
@@ -190,6 +191,105 @@ class UnstackTests(unittest.TestCase):
         self.assertEqual(bpy.ops.ho.uvtools_unstack(mode='TILE'), {'FINISHED'})
         self.assertEqual(coords(obj)[:12], before[:12])
         self.assertEqual(coords(obj)[12:], tuple(tuple(Vector((x+1, y))) for x, y in before[12:]))
+
+    def test_ctrl_l_overlapping_shared_border_can_be_unstacked_in_both_sync_modes(self):
+        for sync in (False, True):
+            with self.subTest(sync=sync):
+                clear_scene()
+                mesh = bpy.data.meshes.new('FoldedStack')
+                mesh.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (2, 0, 0), (2, 1, 0)],
+                                 [], [(0, 1, 2, 3), (1, 4, 5, 2)])
+                uv = mesh.uv_layers.new(name='UVMap')
+                points = SQUARE + (SQUARE[1], SQUARE[0], SQUARE[3], SQUARE[2])
+                for loop, coordinate in zip(uv.data, points):
+                    loop.uv = coordinate
+                obj = bpy.data.objects.new('FoldedStack', mesh)
+                bpy.context.collection.objects.link(obj)
+                obj.select_set(True)
+                edit([obj], sync, 'FACE')
+                bm = bmesh.from_edit_mesh(mesh)
+                select_uv_faces(bm, {0})
+                if sync:
+                    if hasattr(bm, 'uv_select_sync_to_mesh'):
+                        bm.uv_select_sync_to_mesh()
+                    else:
+                        bm.faces[1].select_set(False)
+                        bm.faces[0].select_set(True)
+                self.assertEqual(bpy.ops.uv.select_linked(), {'FINISHED'})
+                bm = bmesh.from_edit_mesh(mesh)
+                self.assertTrue(bm.faces[1].uv_select if hasattr(bm.faces[1], 'uv_select') else
+                                bm.faces[1].select if sync else all(l[bm.loops.layers.uv.active].select for l in bm.faces[1].loops))
+                before = coords(obj), state(obj)
+                self.assertEqual(bpy.ops.ho.uvtools_unstack(mode='TILE'), {'FINISHED'})
+                self.assertEqual(coords(obj)[:4], before[0][:4])
+                self.assertEqual(coords(obj)[4:], tuple((x+1, y) for x, y in before[0][4:]))
+                self.assertEqual(state(obj), before[1])
+
+    def test_multiple_face_stacks_recover_after_native_ctrl_l_for_all_layouts(self):
+        vertices = [(x, y, 0) for y in range(3) for x in range(3)]
+        faces = ((0, 1, 4, 3), (3, 4, 7, 6), (1, 2, 5, 4), (4, 5, 8, 7))
+        for sync in (False, True):
+            for selection in ('VERTEX', 'FACE'):
+                for layout in ('HORIZONTAL', 'VERTICAL', 'TILE'):
+                    with self.subTest(sync=sync, selection=selection, layout=layout):
+                        clear_scene()
+                        mesh = bpy.data.meshes.new('MultiFaceStack')
+                        mesh.from_pydata(vertices, [], faces)
+                        uv = mesh.uv_layers.new(name='UVMap')
+                        for polygon in mesh.polygons:
+                            for index in polygon.loop_indices:
+                                v = mesh.loops[index].vertex_index
+                                x, y, z = vertices[v]
+                                uv.data[index].uv = .125+(x if polygon.index < 2 else 2-x)*.5, .125+y*.25
+                        obj = bpy.data.objects.new('MultiFaceStack', mesh)
+                        bpy.context.collection.objects.link(obj)
+                        obj.select_set(True)
+                        edit([obj], sync, selection)
+                        bm = bmesh.from_edit_mesh(mesh)
+                        select_uv_faces(bm, {0, 1})
+                        if sync:
+                            if hasattr(bm, 'uv_select_sync_to_mesh'):
+                                bm.uv_select_sync_to_mesh()
+                            else:
+                                bm.faces[2].select_set(False)
+                                bm.faces[3].select_set(False)
+                                bm.faces[0].select_set(True)
+                                bm.faces[1].select_set(True)
+                        self.assertEqual(bpy.ops.uv.select_linked(), {'FINISHED'})
+                        bm = bmesh.from_edit_mesh(mesh)
+                        layer = bm.loops.layers.uv.active
+                        self.assertEqual(len(collect_uv_islands(obj, bm, layer, bpy.context.scene.tool_settings)), 1)
+                        islands = collect_uv_islands(obj, bm, layer, bpy.context.scene.tool_settings, split_overlaps=True)
+                        self.assertEqual([len(island.faces) for island in islands], [2, 2])
+                        before = coords(obj), state(obj)
+                        # Repeat topology stacking on already coincident charts.
+                        self.assertEqual(bpy.ops.ho.uvtools_topology_stack(), {'FINISHED'})
+                        self.assertEqual(coords(obj), before[0])
+                        self.assertEqual(bpy.ops.ho.uvtools_unstack(mode=layout, gap=.125), {'FINISHED'})
+                        dx, dy = (.625, 0) if layout == 'HORIZONTAL' else ((0, .625) if layout == 'VERTICAL' else (1, 0))
+                        self.assertEqual(coords(obj)[:8], before[0][:8])
+                        self.assertEqual(coords(obj)[8:], tuple((x+dx, y+dy) for x, y in before[0][8:]))
+                        self.assertEqual(state(obj), before[1])
+
+    def test_overlap_detector_does_not_split_normal_or_reflected_charts(self):
+        points = ((0, 0), (1, 0), (1, 1), (0, 1), (2, 0), (2, 1))
+        for reflected in (False, True):
+            for reverse_second in (False, True):
+                with self.subTest(reflected=reflected, reverse_second=reverse_second):
+                    clear_scene()
+                    faces = ((0, 1, 2, 3), (1, 4, 5, 2))
+                    if reverse_second:
+                        faces = (faces[0], tuple(reversed(faces[1])))
+                    coordinates = tuple((-x, y) if reflected else (x, y) for x, y in points)
+                    obj = create_object('Continuous', [(coordinates, faces)])
+                    edit([obj])
+                    bm = bmesh.from_edit_mesh(obj.data)
+                    for edge in bm.edges:
+                        edge.seam = True
+                    islands = collect_uv_islands(obj, bm, bm.loops.layers.uv.active,
+                                                 bpy.context.scene.tool_settings, split_overlaps=True)
+                    self.assertEqual(len(islands), 1)
+                    self.assertEqual(len(islands[0].coordinates), 6)
 
 
 if __name__ == '__main__':
