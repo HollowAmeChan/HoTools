@@ -474,19 +474,14 @@ class IMAGE_MT_uvs_context_hotools(Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator(OP_UVTools_FitToFirstQuadrant.bl_idname, text="适配到象限", icon="FULLSCREEN_ENTER")
-        layout.operator(OP_UVTools_TopologyStack.bl_idname, text="拓扑堆叠", icon="UV")
-        layout.operator(OP_UVTools_Unstack.bl_idname, text="取消堆叠", icon="UV")
-        layout.operator(OP_UVTools_LineUnwrap.bl_idname, text="线展开所选 UV 岛")
-        layout.operator(OP_UVTools_StraightenIsland.bl_idname, text="直化所选 UV 岛")
-        layout.separator()
-        layout.operator(OP_UVTools_MirrorInTile.bl_idname, text="本象限左右翻转").axis = 'U'
-        layout.operator(OP_UVTools_MirrorInTile.bl_idname, text="本象限上下翻转").axis = 'V'
-        layout.separator()
-        layout.operator(OP_UVTools_Mirror.bl_idname, text="左右镜像 UV").axis = 'U'
-        layout.operator(OP_UVTools_Mirror.bl_idname, text="上下镜像 UV").axis = 'V'
-        layout.operator(OP_UVTools_Translate.bl_idname, text="平移所选 UV")
-        layout.menu('IMAGE_MT_hotools_uv_align')
+        layout.operator(OP_UVTools_FitToFirstQuadrant.bl_idname, text="适配到象限", icon="GESTURE_ZOOM")
+        layout.operator(OP_UVTools_TopologyStack.bl_idname, text="拓扑堆栈", icon="AREA_JOIN_DOWN")
+        layout.operator(OP_UVTools_Unstack.bl_idname, text="取消堆栈", icon="MOD_ARRAY")
+        layout.operator(OP_UVTools_LineUnwrap.bl_idname, text="线展开",icon="MOD_TINT")
+        layout.operator(OP_UVTools_StraightenIsland.bl_idname, text="直化岛",icon="VIEW_ORTHO")
+        layout.operator(OP_UVTools_MirrorInTile.bl_idname, text="翻转",icon="MOD_MIRROR")
+        layout.operator(OP_UVTools_Mirror.bl_idname, text="镜像",icon="MOD_MIRROR")
+        layout.operator(OP_UVTools_Translate.bl_idname, text="平移",icon="TRIA_RIGHT")
 
 def draw_in_IMAGE_MT_uvs_context_menu(self,context: bpy.types.Context):
     """UV编辑器右键菜单"""
