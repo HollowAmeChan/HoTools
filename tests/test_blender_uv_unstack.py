@@ -86,7 +86,7 @@ class UnstackTests(unittest.TestCase):
         self.assertEqual(after[:8], tuple((x+1, y) for x, y in before[:8]))
 
     def test_variable_sizes_no_overlap_and_shape_is_only_translated(self):
-        other = ((3, 2), (4.25, 2), (4.25, 2.25), (3, 2.25))
+        other = ((.25, .25), (1.5, .25), (1.5, .5), (.25, .5))
         obj = create_object('DifferentSizes', [(SQUARE, FACE), (other, FACE), (SQUARE, FACE)])
         edit([obj])
         before = coords(obj)
@@ -124,14 +124,19 @@ class UnstackTests(unittest.TestCase):
         self.assertEqual(coords(obj)[8:], before[0][8:])
         self.assertEqual(state(obj), before[1])
 
-    def test_empty_single_and_missing_layer_cancel(self):
+    def test_single_workspace_allowed_empty_and_missing_layer_cancel(self):
         for specs, uv in (([(SQUARE, FACE)], True), ([(SQUARE, FACE)]*2, False)):
             clear_scene()
             obj = create_object('Nothing', specs, with_uv=uv)
             edit([obj])
-            self.assertEqual(bpy.ops.ho.uvtools_unstack(), {'CANCELLED'})
+            self.assertEqual(bpy.ops.ho.uvtools_unstack(), {'FINISHED'} if uv else {'CANCELLED'})
             if not uv:
                 self.assertIsNone(bmesh.from_edit_mesh(obj.data).loops.layers.uv.active)
+        clear_scene()
+        obj = self.triple()
+        bm = bmesh.from_edit_mesh(obj.data)
+        select_uv_faces(bm, set())
+        self.assertEqual(bpy.ops.ho.uvtools_unstack(), {'CANCELLED'})
 
     def test_update_failure_rolls_back(self):
         obj = self.triple(True)
@@ -290,6 +295,93 @@ class UnstackTests(unittest.TestCase):
                                                  bpy.context.scene.tool_settings, split_overlaps=True)
                     self.assertEqual(len(islands), 1)
                     self.assertEqual(len(islands[0].coordinates), 6)
+
+    def test_independent_overlapping_workspaces_for_all_layouts_and_sync_modes(self):
+        shifted = tuple((x+4, y+2) for x, y in SQUARE)
+        standalone = tuple((x+10, y-3) for x, y in SQUARE)
+        for sync in (False, True):
+            for mode in ('HORIZONTAL', 'VERTICAL', 'TILE'):
+                with self.subTest(sync=sync, mode=mode):
+                    clear_scene()
+                    obj = create_object('Workspaces', [(SQUARE, FACE)]*3+[(shifted, FACE)]*2+[(standalone, FACE)])
+                    edit([obj], sync, 'FACE')
+                    bm = bmesh.from_edit_mesh(obj.data)
+                    bm.faces.active = bm.faces[4]
+                    before = coords(obj), state(obj), coords(obj, 'OtherUV')
+                    self.assertEqual(bpy.ops.ho.uvtools_unstack(mode=mode, gap=.125), {'FINISHED'})
+                    shifts = ((0, 0), (.625, 0), (1.25, 0), (.625, 0), (0, 0), (0, 0)) if mode == 'HORIZONTAL' else (
+                        ((0, 0), (0, .625), (0, 1.25), (0, .625), (0, 0), (0, 0)) if mode == 'VERTICAL' else
+                        ((0, 0), (1, 0), (1, 0), (1, 0), (0, 0), (0, 0)))
+                    expected = tuple((x+dx, y+dy) for index, (dx, dy) in enumerate(shifts)
+                                     for x, y in before[0][index*4:index*4+4])
+                    self.assertEqual(coords(obj), expected)
+                    self.assertEqual((state(obj), coords(obj, 'OtherUV')), before[1:])
+
+    def test_partial_overlap_is_transitive_even_when_end_islands_do_not_overlap(self):
+        squares = [tuple((x+i*.375, y) for x, y in SQUARE) for i in range(3)]
+        obj = create_object('PartialOverlap', [(points, FACE) for points in squares])
+        edit([obj], False, 'FACE')
+        before = coords(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_unstack(mode='TILE'), {'FINISHED'})
+        self.assertEqual(coords(obj)[:4], before[:4])
+        self.assertEqual(coords(obj)[4:], tuple((x+1, y) for x, y in before[4:]))
+
+    def test_each_workspace_can_span_objects_with_shared_mesh_instances(self):
+        shifted = tuple((x+4, y+2) for x, y in SQUARE)
+        first = create_object('Z_Active', [(SQUARE, FACE), (shifted, FACE)])
+        second = create_object('A_Other', [(SQUARE, FACE), (shifted, FACE)])
+        linked = bpy.data.objects.new('B_Shared', second.data)
+        bpy.context.collection.objects.link(linked)
+        linked.select_set(True)
+        edit([first, second, linked], True, 'FACE')
+        before = coords(first), coords(second), state(first), state(second)
+        self.assertEqual(bpy.ops.ho.uvtools_unstack(mode='TILE'), {'FINISHED'})
+        self.assertEqual(coords(first), before[0])
+        self.assertEqual(coords(second), tuple((x+1, y) for x, y in before[1]))
+        self.assertEqual((state(first), state(second)), before[2:])
+
+    def test_aabb_overlap_without_uv_area_overlap_keeps_each_island_in_place(self):
+        first = ((0, 0), (2, 0), (0, 2))
+        second = ((2, 2), (2, .75), (.75, 2))
+        obj = create_object('SeparateTriangles', [(first, ((0, 1, 2),)), (second, ((0, 1, 2),))])
+        edit([obj])
+        before = coords(obj), state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_unstack(), {'FINISHED'})
+        self.assertEqual((coords(obj), state(obj)), before)
+
+    def test_concave_ngon_empty_area_is_not_a_workspace_overlap(self):
+        concave = ((0, 0), (3, 0), (3, 1), (1, 1), (1, 3), (0, 3))
+        other = ((1.5, 1.5), (2.5, 1.5), (2.5, 2.5), (1.5, 2.5))
+        obj = create_object('Concave', [(concave, (tuple(range(6)),)), (other, FACE)])
+        edit([obj])
+        before = coords(obj), state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_unstack(), {'FINISHED'})
+        self.assertEqual((coords(obj), state(obj)), before)
+
+    def test_touching_borders_standalone_and_single_island_are_valid_workspaces(self):
+        for count in (1, 3):
+            with self.subTest(count=count):
+                clear_scene()
+                squares = [tuple((x+i*.5, y) for x, y in SQUARE) for i in range(count)]
+                obj = create_object('Touching', [(points, FACE) for points in squares])
+                edit([obj], True, 'FACE')
+                before = coords(obj), state(obj)
+                for mode in ('HORIZONTAL', 'VERTICAL', 'TILE'):
+                    self.assertEqual(bpy.ops.ho.uvtools_unstack(mode=mode), {'FINISHED'})
+                    self.assertEqual((coords(obj), state(obj)), before)
+
+    def test_workspaces_may_still_overlap_after_local_arrangement(self):
+        # The first workspace's arranged second island may land on an unrelated
+        # workspace. There is no global packing pass that moves the latter.
+        standalone = tuple((x+.625, y) for x, y in SQUARE)
+        obj = create_object('LocalOnly', [(SQUARE, FACE)]*2+[(standalone, FACE)])
+        edit([obj])
+        before = coords(obj), state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_unstack(gap=.125), {'FINISHED'})
+        self.assertEqual(coords(obj)[:4], before[0][:4])
+        self.assertEqual(coords(obj)[8:], before[0][8:])
+        self.assertEqual(coords(obj)[4:8], coords(obj)[8:])
+        self.assertEqual(state(obj), before[1])
 
 
 if __name__ == '__main__':
