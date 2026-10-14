@@ -9,6 +9,7 @@ from mathutils import Vector
 from collections import defaultdict
 from bpy.app.handlers import persistent
 from .stack import OP_UVTools_TopologyStack
+from .unstack import OP_UVTools_Unstack
 from .transform import TRANSFORM_CLASSES, OP_UVTools_Mirror, OP_UVTools_MirrorInTile, OP_UVTools_Translate
 from .straighten import STRAIGHTEN_CLASSES, OP_UVTools_LineUnwrap, OP_UVTools_StraightenIsland
 from Utils.mesh_uv import selected_uv_point_groups, uv_edit_poll, write_uv_points
@@ -475,6 +476,7 @@ class IMAGE_MT_uvs_context_hotools(Menu):
         layout = self.layout
         layout.operator(OP_UVTools_FitToFirstQuadrant.bl_idname, text="适配到象限", icon="FULLSCREEN_ENTER")
         layout.operator(OP_UVTools_TopologyStack.bl_idname, text="拓扑堆叠", icon="UV")
+        layout.operator(OP_UVTools_Unstack.bl_idname, text="取消堆叠", icon="UV")
         layout.operator(OP_UVTools_LineUnwrap.bl_idname, text="线展开所选 UV 岛")
         layout.operator(OP_UVTools_StraightenIsland.bl_idname, text="直化所选 UV 岛")
         layout.separator()
@@ -494,7 +496,7 @@ def draw_in_IMAGE_MT_uvs_context_menu(self,context: bpy.types.Context):
 
 cls = [OP_UVTools_ReplaceFromLayer,OP_UVTools_MoveActiveUV,
        IMAGE_MT_uvs_context_hotools,OP_UVTools_FitToFirstQuadrant,
-       OP_UVTools_UV2SK,OP_UVTools_TopologyStack,*TRANSFORM_CLASSES,*STRAIGHTEN_CLASSES]
+       OP_UVTools_UV2SK,OP_UVTools_TopologyStack,OP_UVTools_Unstack,*TRANSFORM_CLASSES,*STRAIGHTEN_CLASSES]
 
 
 

@@ -34,6 +34,31 @@ def fit_points_to_tile(points, tile=(0, 0), margin=0.0):
     return tuple(tuple(tile[a]+.5+(p[a]-center[a])*scale for a in (0, 1)) for p in points)
 
 
+def unstack_offsets(islands, mode='HORIZONTAL', gap=.01):
+    """Translations for ordered island coordinates; the first island stays put.
+
+    AABB arrangement advances to each preceding island's far edge. TILE is the
+    baking layout: every remaining island receives the SAME (+1, 0) translation,
+    preserving their mutual overlap instead of stepping through successive tiles.
+    """
+    if mode not in {'HORIZONTAL', 'VERTICAL', 'TILE'} or not isfinite(gap) or gap < 0:
+        raise ValueError('排列模式或间距无效')
+    islands = tuple(checked_points(points) for points in islands)
+    if not islands:
+        raise ValueError('没有选中的 UV 岛')
+    if mode == 'TILE':
+        return ((0.0, 0.0),) + ((1.0, 0.0),)*(len(islands)-1)
+    axis = 0 if mode == 'HORIZONTAL' else 1
+    end = max(p[axis] for p in islands[0])
+    offsets = [(0.0, 0.0)]
+    for points in islands[1:]:
+        low, high = min(p[axis] for p in points), max(p[axis] for p in points)
+        shift = end+gap-low
+        offsets.append((shift, 0.0) if axis == 0 else (0.0, shift))
+        end = end+gap+(high-low)
+    return tuple(offsets)
+
+
 def mirror_points(points, axis, center):
     points = checked_points(points)
     if axis not in (0, 1) or len(center) != 2 or not all(isfinite(v) for v in center):
