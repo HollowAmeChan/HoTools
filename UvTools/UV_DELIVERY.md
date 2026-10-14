@@ -1,6 +1,6 @@
 # UV 功能交付与验证
 
-验证日期：2026-10-13；2026-10-14 补充象限适配、取消堆叠、重叠岛连选及 UV 边界 seam 验证。
+验证日期：2026-10-13；2026-10-14 补充象限适配、取消堆叠、重叠岛连选、UV 边界 seam 及长度均化验证。
 实际版本：Blender 4.5.8 LTS（d7359176d0d3）与 5.2.0 LTS（fbe6228777e7）。
 测试使用独立 `--background --factory-startup` 进程，不修改用户当前场景或偏好。
 
@@ -19,6 +19,7 @@
 | 取消堆叠，横向/纵向/跨象限排列 | 可见岛 AABB 间距排列；跨象限保留首岛，其余统一 +1U | 模式/同步/选择组合、不同 AABB 尺寸、首岛、+1U 后其他岛保持重叠、实际角点精确平移、回滚与 Undo/Redo |
 | UV 独立 Shift+S 游标饼 | `HO_MT_uv_cursor_pie` 与独立 UV Editor 键位，共享原游标饼开关 | 八槽 UV-only、原生吸附、同步开关、二维游标与 3D 游标隔离、开关清理及原 3D 饼回归 |
 | 所选 Mesh 全部活动 UV 岛边界追加 seam | `seams.py`，逐网格检测共享边两端 UV 与折叠重叠边界，立即执行 | 物体/多物体编辑模式、不同活动 UV、隐藏/未选面、同步开关、原 seam 保留、共享 mesh、形态键与回滚/Undo/Redo |
+| UV 线长度均化，固定端点、按 3D 边长比例拉直 | `length.py` 真实 UV 开链 + 世界变换下的网格边长，直接写中间点 | 两端每个角点精确保留、多线/岛/物体、非均匀缩放、UV 接缝两侧、精细同步与回退、原生 Undo/Redo 和失败回滚 |
 | 公共层仔细处理两版 UV 同步 API，自带测试 | `mesh_uv.py`、`uv_state.py`，能力检测与层级恢复顺序 | 同步开关、5.2 有效/失效状态、点/边/面/岛、多物体、pin/seam、其他 UV 层、失败回滚与 Undo/Redo |
 
 堆叠保持精确对应。此前尝试的微量偏移已按用户纠正撤回，不作为当前实现的一部分。
@@ -34,7 +35,7 @@
 
 | 测试 | 4.5.8 | 5.2.0 |
 | --- | --- | --- |
-| 纯算法：`test_uv_math.py`、`test_uv_topology.py`、`test_uv_chains.py`、`test_uv_unstack.py` | Python 3.11：50 通过 | Python 3.13：50 通过 |
+| 纯算法：`test_uv_math.py`、`test_uv_topology.py`、`test_uv_chains.py`、`test_uv_unstack.py`、`test_uv_length.py` | Python 3.11：56 通过 | Python 3.13：56 通过 |
 | `test_blender_uv_topology_stack.py` | 18 通过，1 项新版选择测试跳过 | 19 通过 |
 | `test_blender_uv_transform.py` | 26 通过，1 项新版选择测试跳过 | 27 通过 |
 | `test_blender_uv_straighten.py` | 18 通过 | 18 通过 |
@@ -42,8 +43,9 @@
 | `test_blender_uv_unstack.py` | 14 通过 | 14 通过 |
 | `test_blender_uv_cursor_pie.py` | 8 通过，1 项新版选择测试跳过 | 9 通过 |
 | `test_blender_uv_seams.py` | 16 通过 | 16 通过 |
+| `test_blender_uv_length.py` | 13 通过，2 项新版选择测试跳过 | 15 通过 |
 
-每版有 113 项原生集成测试；4.5 的三项跳过仅针对它不具备的 5.x 精细 UV 同步状态。
+每版有 128 项原生集成测试；4.5 的五项跳过仅针对它不具备的 5.x 精细 UV 同步状态。
 测试的 `injected ... failure` 报告来自故意注入失败，以验证坐标/用户状态回滚。
 
 复现命令：
@@ -59,6 +61,7 @@
 & 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/test_blender_uv_unstack.py
 & 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/test_blender_uv_cursor_pie.py
 & 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/test_blender_uv_seams.py
+& 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/test_blender_uv_length.py
 ```
 
 5.2 的集成测试使用同样命令，将 Blender 可执行文件路径换为
@@ -67,3 +70,4 @@
 插件重新加载后，新操作符通过 UV 编辑器右键 → HoTools 或 F3 使用；参数在 F9 中调整。
 具体用法分别见 `TOPOLOGY_STACK.md`、`UV_UNSTACK.md`、`UV_TRANSFORM.md`、`UV_STRAIGHTEN.md`。
 活动 UV 边界标记 seam 的入口与范围见 `UV_SEAMS.md`。
+固定端点的 3D 比例长度均化见 `UV_LENGTH.md`。

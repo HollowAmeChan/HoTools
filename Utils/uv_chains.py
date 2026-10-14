@@ -1,7 +1,7 @@
 """Open UV chains and line constraints, independent of mesh tangents."""
 
 from collections import defaultdict
-from math import acos, atan2, cos, degrees, hypot, isfinite, sin
+from math import acos, atan2, cos, degrees, fsum, hypot, isfinite, sin
 
 from .uv_math import checked_points
 
@@ -53,6 +53,35 @@ def fit_line(points):
     if direction[0]*delta[0] + direction[1]*delta[1] < 0:
         direction = -direction[0], -direction[1]
     return center, direction
+
+
+def distribute_chain_by_lengths(points, edge_lengths):
+    """Straighten an ordered chain to its fixed endpoints using 3D edge ratios.
+
+    Zero-length mesh edges collapse their UV segment. A fully zero-length mesh
+    chain or coincident UV endpoints cannot define the requested ratio. Normalize
+    lengths before summation so tiny/large object scales remain well conditioned.
+    """
+    points = checked_points(points)
+    edge_lengths = tuple(edge_lengths)
+    if len(points) < 2 or len(edge_lengths) != len(points)-1:
+        raise ValueError('UV 开链点数与 3D 边长数量不匹配')
+    if any(not isfinite(length) or length < 0 for length in edge_lengths):
+        raise ValueError('3D 边长必须是有限非负数值')
+    largest = max(edge_lengths)
+    if largest == 0:
+        raise ValueError('所选线的 3D 总长度为零')
+    first, last = points[0], points[-1]
+    if first == last:
+        raise ValueError('UV 线的两端重合，无法保持端点并分配长度')
+    normalized = tuple(length/largest for length in edge_lengths)
+    total = fsum(normalized)
+    result, accumulated = [first], 0.0
+    for length in normalized[:-1]:
+        accumulated += length
+        t = accumulated/total
+        result.append(tuple((1-t)*a+t*b for a, b in zip(first, last)))
+    return tuple(result) + (last,)
 
 
 def _axis_direction(direction, mode):
