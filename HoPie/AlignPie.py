@@ -555,6 +555,10 @@ class HO_MT_uv_align_pie(bpy.types.Menu):
     bl_label = '饼: UV对齐'
     bl_idname = 'HO_MT_uv_align_pie'
 
+    @classmethod
+    def poll(cls, context):
+        return uv_edit_poll(context)
+
     def draw(self, context):
         pie = HoPie.from_pie_layout(self.layout.menu_pie(), context)
         mode = getattr(context.scene, 'ho_align_pie_mode', 'AXES')
@@ -581,10 +585,17 @@ class HO_MT_uv_align_pie(bpy.types.Menu):
                 op.axis = axis
                 op.type = 'CURSOR'
         else:
+            right = column.row(align=True)
             for text, axis in (('U 光标', 'U'), ('V 光标', 'V')):
-                op = pie.operator(AlignUV.bl_idname, text=text)
+                op = right.operator(AlignUV.bl_idname, text=text)
                 op.axis = axis
                 op.type = 'CURSOR'
+        # Blender pie order: left/right/bottom/top, upper-left/upper-right,
+        # then lower-left/lower-right. The first six slots were emitted above.
+        for text, axis in (('V 居中', 'V'), ('U 居中', 'U')):
+            op = pie.operator(AlignUV.bl_idname, text=text)
+            op.axis = axis
+            op.type = 'AVERAGE'
 
 
 ALIGN_PIE_CLASSES = (

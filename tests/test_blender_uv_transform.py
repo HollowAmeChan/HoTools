@@ -258,6 +258,50 @@ class UVTransformTests(unittest.TestCase):
             align_module.HO_MT_uv_align_pie.draw(menu, context)
         self.assertEqual({r.text: r.axis for r in records if r.text in {'水平', '垂直'}}, {'水平': 'V', '垂直': 'U'})
 
+    def test_uv_center_buttons_use_lower_left_and_lower_right_slots_in_both_modes(self):
+        class Layout:
+            def __init__(self, slots=None):
+                self.slots = slots
+            def menu_pie(self):
+                return self
+            def operator(self, idname, text='', **kwargs):
+                op = types.SimpleNamespace(idname=idname, text=text)
+                if self.slots is not None:
+                    self.slots.append(op)
+                return op
+            def separator(self, **kwargs):
+                if self.slots is not None:
+                    self.slots.append(None)
+            def split(self, **kwargs):
+                if self.slots is not None:
+                    self.slots.append(None)
+                return Layout()
+            def column(self, **kwargs):
+                return Layout()
+            def row(self, **kwargs):
+                return Layout()
+            def label(self, **kwargs):
+                pass
+            def prop(self, *args, **kwargs):
+                pass
+        for mode in ('VIEW', 'AXES'):
+            with self.subTest(mode=mode):
+                slots = []
+                context = types.SimpleNamespace(scene=types.SimpleNamespace(ho_align_pie_mode=mode))
+                align_module.HO_MT_uv_align_pie.draw(types.SimpleNamespace(layout=Layout(slots)), context)
+                self.assertEqual(len(slots), 8)
+                self.assertEqual((slots[6].text, slots[6].axis, slots[6].type), ('V 居中', 'V', 'AVERAGE'))
+                self.assertEqual((slots[7].text, slots[7].axis, slots[7].type), ('U 居中', 'U', 'AVERAGE'))
+
+    def test_uv_align_pie_poll_only_allows_uv_editing(self):
+        self.pair()
+        self.assertTrue(align_module.HO_MT_uv_align_pie.poll(bpy.context))
+        self.area.ui_type = 'IMAGE_EDITOR'
+        self.assertFalse(align_module.HO_MT_uv_align_pie.poll(bpy.context))
+        self.area.ui_type = 'UV'
+        bpy.ops.object.mode_set(mode='OBJECT')
+        self.assertFalse(align_module.HO_MT_uv_align_pie.poll(bpy.context))
+
     def test_tile_mirror_both_axes_multiobjects_and_sync_modes(self):
         tile_points = ((.125, .125), (.375, .125), (.375, .375), (.125, .375))
         faces = ((0, 1, 2, 3),)

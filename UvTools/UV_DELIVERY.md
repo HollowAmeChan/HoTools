@@ -30,12 +30,12 @@
 | --- | --- | --- |
 | 纯算法：`test_uv_math.py`、`test_uv_topology.py`、`test_uv_chains.py`、`test_uv_unstack.py` | Python 3.11：50 通过 | Python 3.13：50 通过 |
 | `test_blender_uv_topology_stack.py` | 18 通过，1 项新版选择测试跳过 | 19 通过 |
-| `test_blender_uv_transform.py` | 24 通过，1 项新版选择测试跳过 | 25 通过 |
+| `test_blender_uv_transform.py` | 26 通过，1 项新版选择测试跳过 | 27 通过 |
 | `test_blender_uv_straighten.py` | 18 通过 | 18 通过 |
 | `test_blender_pies.py` | 10 通过 | 10 通过 |
 | `test_blender_uv_unstack.py` | 11 通过 | 11 通过 |
 
-每版有 83 项原生集成测试；4.5 的两项跳过仅针对它不具备的 5.x 精细 UV 同步状态。
+每版有 85 项原生集成测试；4.5 的两项跳过仅针对它不具备的 5.x 精细 UV 同步状态。
 测试的 `injected ... failure` 报告来自故意注入失败，以验证坐标/用户状态回滚。
 
 复现命令：
