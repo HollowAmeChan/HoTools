@@ -485,6 +485,9 @@ def _draw_mesh_UV_tools(layout: LayoutBuilder, context):
     op = row.operator("ho.uvtools_unstack",text="修复",icon="NODE_COMPOSITING")
     op.mode = "TILE"
 
+    row = col.row(align=True)
+    row.operator("ho.uvtools_seams_from_islands",text="UV边界缝合边",icon="EDGESEL")
+
     col = rowMain.column(align=True)
     col.operator_context = "EXEC_DEFAULT"
     col.operator("transform.translate",text="",icon="TRIA_RIGHT",props={"value": (1, 0, 0),"orient_type": "GLOBAL","constraint_axis": (True, False, False),},)

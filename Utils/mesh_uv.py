@@ -1,4 +1,4 @@
-"""UV topology and selection reads shared by edit-mode tools (4.5 and 5.x).
+"""UV topology and selection reads shared by mesh tools (4.5 and 5.x).
 
 Reading never creates layers or flushes/changes selection. Loop references belong
 to the current edit BMesh and must be discarded after mode or layer changes.
@@ -106,6 +106,53 @@ def selected_uv_edge_loops(bm, uv_layer, settings):
     return result
 
 
+def _uv_face_orientations(faces, uv_layer):
+    orientations = {}
+    for face in faces:
+        coordinates = [tuple(loop[uv_layer].uv) for loop in face.loops]
+        origin = coordinates[0]
+        orientations[face] = sum(
+            (a[0]-origin[0])*(b[1]-origin[1])-(a[1]-origin[1])*(b[0]-origin[0])
+            for a, b in zip(coordinates[1:], coordinates[2:]))
+    return orientations
+
+
+def _uv_edge_sides_match(a, b, uv_layer, limit_squared, orientations=None):
+    a_next, b_next = a.link_loop_next, b.link_loop_next
+    first, second = (b, b_next) if a.vert == b.vert else (b_next, b)
+    if not ((a[uv_layer].uv-first[uv_layer].uv).length_squared <= limit_squared
+            and (a_next[uv_layer].uv-second[uv_layer].uv).length_squared <= limit_squared):
+        return False
+    if orientations is not None:
+        # Compare polygon orientation in the SAME directed edge frame, handling
+        # even inconsistent mesh face winding.
+        product = orientations[a.face]*orientations[b.face]
+        same_side = product > 0 if a.vert == b.vert else product < 0
+        if same_side:
+            return False
+    return True
+
+
+def uv_boundary_edges(bm, uv_layer, epsilon=1e-7, split_overlaps=True):
+    """Return every active-layer UV cut and surface border, ignoring selection.
+
+    Compares BOTH endpoints by mesh vertex identity. Detects cuts even when their
+    faces reconnect elsewhere in the same island. Existing seams do not affect
+    detection. Loose edges have no UV face and are excluded. Non-manifold edges
+    are boundaries if any radial face pair has a UV discontinuity/fold.
+    """
+    orientations = _uv_face_orientations(bm.faces, uv_layer) if split_overlaps else None
+    limit_squared = epsilon*epsilon
+    boundaries = []
+    for edge in bm.edges:
+        sides = tuple(edge.link_loops)
+        if len(sides) == 1 or any(
+                not _uv_edge_sides_match(a, b, uv_layer, limit_squared, orientations)
+                for index, a in enumerate(sides) for b in sides[index+1:]):
+            boundaries.append(edge)
+    return boundaries
+
+
 def collect_uv_islands(obj, bm, uv_layer, settings, epsilon=1e-7, visible_only=False, split_overlaps=False):
     """Find actual UV-contiguous face components, including invisible faces.
 
@@ -120,14 +167,7 @@ def collect_uv_islands(obj, bm, uv_layer, settings, epsilon=1e-7, visible_only=F
     bm.faces.index_update()
     faces = [face for face in bm.faces if not visible_only or (
         not face.hide and (settings.use_uv_select_sync or face.select))]
-    orientations = {}
-    if split_overlaps:
-        for face in faces:
-            coordinates = [tuple(loop[uv_layer].uv) for loop in face.loops]
-            origin = coordinates[0]
-            orientations[face] = sum(
-                (a[0]-origin[0])*(b[1]-origin[1])-(a[1]-origin[1])*(b[0]-origin[0])
-                for a, b in zip(coordinates[1:], coordinates[2:]))
+    orientations = _uv_face_orientations(faces, uv_layer) if split_overlaps else None
     loops = [loop for face in faces for loop in face.loops]
     corner_parent = {loop: loop for loop in loops}
     face_parent = {face: face for face in faces}
@@ -157,15 +197,7 @@ def collect_uv_islands(obj, bm, uv_layer, settings, epsilon=1e-7, visible_only=F
                     first, second = b, b_next
                 else:
                     first, second = b_next, b
-                if ((a[uv_layer].uv - first[uv_layer].uv).length_squared <= limit_squared
-                        and (a_next[uv_layer].uv - second[uv_layer].uv).length_squared <= limit_squared):
-                    if split_overlaps:
-                        # Compare polygon orientation in the SAME directed edge
-                        # frame, handling even inconsistent mesh face winding.
-                        product = orientations[a.face]*orientations[b.face]
-                        same_side = product > 0 if a.vert == b.vert else product < 0
-                        if same_side:
-                            continue
+                if _uv_edge_sides_match(a, b, uv_layer, limit_squared, orientations):
                     union(face_parent, a.face, b.face)
                     union(corner_parent, a, first)
                     union(corner_parent, a_next, second)
