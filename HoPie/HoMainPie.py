@@ -459,22 +459,31 @@ def _draw_mesh_UV_tools(layout: LayoutBuilder, context):
     rowMain.scale_y = 1.25
 
     col = rowMain.column(align=True)
+    col.operator_context = "EXEC_DEFAULT"
+    op = col.operator("ho.uvtools_translate",text="",icon="TRIA_RIGHT")
+    op.direction = "POS_U"
+    op = col.operator("ho.uvtools_translate",text="",icon="TRIA_LEFT")
+    op.direction = "NEG_U"
+    op = col.operator("ho.uvtools_translate",text="",icon="TRIA_UP",)
+    op.direction = "POS_V"
+    op = col.operator("ho.uvtools_translate",text="",icon="TRIA_DOWN",)
+    op.direction = "NEG_V"
+
+    col = rowMain.column(align=True)
 
     row = col.row(align=True)
-    row.operator("uv.unwrap",text="展开",)
-    # bpy.ops.transform.mirror(orient_type='GLOBAL', orient_matrix=((1, 0, 0), (0, 1, 0), (0, 0, 1)), orient_matrix_type='GLOBAL', constraint_axis=(True, False, False))
+    row.operator("uv.unwrap",text="展开",icon="MONKEY",)
     row.operator("ho.uvtools_line_unwrap",text="线展开",icon="MOD_TINT",)
     row.operator("ho.uvtools_straighten_island",text="直化岛",icon="VIEW_ORTHO",)
 
     row = col.row(align=True)
-    row.operator_context = "EXEC_DEFAULT"
-    op = row.operator("ho.uvtools_mirror",text="U",icon="MOD_MIRROR",)
+    op = row.operator("ho.uvtools_mirror_in_tile",text="U",icon="MOD_MIRROR",)
     op.axis = 'U'
-    op = row.operator("ho.uvtools_mirror",text="V",icon="MOD_MIRROR",)
+    op = row.operator("ho.uvtools_mirror_in_tile",text="V",icon="MOD_MIRROR",)
     op.axis = 'V'
-    op = row.operator("ho.uvtools_mirror_in_tile",text="U",icon="ARROW_LEFTRIGHT",)
+    op = row.operator("ho.uvtools_mirror",text="U",icon="ARROW_LEFTRIGHT",)
     op.axis = 'U'
-    op = row.operator("ho.uvtools_mirror_in_tile",text="V",icon="ARROW_LEFTRIGHT",)
+    op = row.operator("ho.uvtools_mirror",text="V",icon="ARROW_LEFTRIGHT",)
     op.axis = 'V'
     row.operator("uvtools_fit_to_first_quadrant",text="适配象限",icon="GESTURE_ZOOM",)
 
@@ -486,14 +495,8 @@ def _draw_mesh_UV_tools(layout: LayoutBuilder, context):
     op.mode = "TILE"
 
     row = col.row(align=True)
-    row.operator("ho.uvtools_seams_from_islands",text="UV边界缝合边",icon="EDGESEL")
-
-    col = rowMain.column(align=True)
-    col.operator_context = "EXEC_DEFAULT"
-    col.operator("transform.translate",text="",icon="TRIA_RIGHT",props={"value": (1, 0, 0),"orient_type": "GLOBAL","constraint_axis": (True, False, False),},)
-    col.operator("transform.translate",text="",icon="TRIA_LEFT",props={"value": (-1, 0, 0),"orient_type": "GLOBAL","constraint_axis": (True, False, False),},)
-    col.operator("transform.translate",text="",icon="TRIA_UP",props={"value": (0, 1, 0),"orient_type": "GLOBAL","constraint_axis": (False, True, False),},)
-    col.operator("transform.translate",text="",icon="TRIA_DOWN",props={"value": (0, -1, 0),"orient_type": "GLOBAL","constraint_axis": (False, True, False),},)
+    row.operator("ho.uvtools_seams_from_islands",text="边界缝合",icon="STRIP_COLOR_01")
+    row.operator("ho.uvtools_uniformize_length",text="拉直均化",icon="CENTER_ONLY")
 
 
 class HO_MT_HoMainPieMesh(Menu):

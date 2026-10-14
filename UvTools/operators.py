@@ -11,6 +11,7 @@ from bpy.app.handlers import persistent
 from .stack import OP_UVTools_TopologyStack
 from .unstack import OP_UVTools_Unstack
 from .seams import OP_UVTools_SeamsFromIslands
+from .length import OP_UVTools_UniformizeLength
 from .transform import TRANSFORM_CLASSES, OP_UVTools_Mirror, OP_UVTools_MirrorInTile, OP_UVTools_Translate
 from .straighten import STRAIGHTEN_CLASSES, OP_UVTools_LineUnwrap, OP_UVTools_StraightenIsland
 from Utils.mesh_uv import selected_uv_point_groups, uv_edit_poll, write_uv_points
@@ -480,10 +481,11 @@ class IMAGE_MT_uvs_context_hotools(Menu):
         layout.operator(OP_UVTools_TopologyStack.bl_idname, text="拓扑堆栈", icon="AREA_JOIN_DOWN")
         layout.operator(OP_UVTools_Unstack.bl_idname, text="取消堆栈", icon="MOD_ARRAY")
         layout.operator(OP_UVTools_LineUnwrap.bl_idname, text="线展开",icon="MOD_TINT")
+        layout.operator(OP_UVTools_UniformizeLength.bl_idname, text="长度均化", icon="ALIGN_JUSTIFY")
         layout.operator(OP_UVTools_StraightenIsland.bl_idname, text="直化岛",icon="VIEW_ORTHO")
         layout.operator(OP_UVTools_SeamsFromIslands.bl_idname, text="UV边界缝合边", icon="EDGESEL")
         layout.operator(OP_UVTools_MirrorInTile.bl_idname, text="翻转",icon="MOD_MIRROR")
-        layout.operator(OP_UVTools_Mirror.bl_idname, text="镜像",icon="MOD_MIRROR")
+        layout.operator(OP_UVTools_Mirror.bl_idname, text="镜像",icon="ARROW_LEFTRIGHT")
         layout.operator(OP_UVTools_Translate.bl_idname, text="平移",icon="TRIA_RIGHT")
 
 def draw_in_IMAGE_MT_uvs_context_menu(self,context: bpy.types.Context):
@@ -494,7 +496,8 @@ def draw_in_IMAGE_MT_uvs_context_menu(self,context: bpy.types.Context):
 
 cls = [OP_UVTools_ReplaceFromLayer,OP_UVTools_MoveActiveUV,
        IMAGE_MT_uvs_context_hotools,OP_UVTools_FitToFirstQuadrant,
-       OP_UVTools_UV2SK,OP_UVTools_TopologyStack,OP_UVTools_Unstack,OP_UVTools_SeamsFromIslands,*TRANSFORM_CLASSES,*STRAIGHTEN_CLASSES]
+       OP_UVTools_UV2SK,OP_UVTools_TopologyStack,OP_UVTools_Unstack,OP_UVTools_SeamsFromIslands,
+       OP_UVTools_UniformizeLength,*TRANSFORM_CLASSES,*STRAIGHTEN_CLASSES]
 
 
 
