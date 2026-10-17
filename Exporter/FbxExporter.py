@@ -15,6 +15,8 @@
 # 二、导出前几何与修改器处理
 # 4. 网格化对象（默认开启）：把选中的 CURVE 转成 MESH，并为共享 Mesh 数据的对象
 #    创建独立数据，覆盖 Alt+D 等链接网格实例。
+#    曲线先统一快照求值几何，再逐个转换，避免选中的倒角/锥化截面先变成网格，
+#    导致依赖它们的路径失去截面、导出成没有面的线；快照包含镜像等修改器的结果。
 #    解决 Blender/FBX 对曲线和共享网格实例支持不一致，导致对象漏导或结果互相影响的问题。
 # 5. 数据传递修改器整层接管：对选中导出网格，在**全部预处理最前面**把「数据传递链」
 #    做对（见 apply_data_transfer_modifiers）。数据传递能传四个域——顶点（顶点组权重/
@@ -403,7 +405,7 @@ class FBXExporter:
 
     @staticmethod
     def meshify_selected_objects(selection, active_object):
-        """把选中的曲线类对象转成 Mesh，并解除 Alt+D 网格对象的数据共享。"""
+        """先快照全部曲线的求值几何，再转 Mesh，避免倒角/锥化引用失效。"""
         selection_names = [ob.name for ob in selection]
         active_object_name = active_object.name if active_object else None
         convertible_names = [
@@ -425,7 +427,23 @@ class FBXExporter:
         converted_objects = 0
         made_single_user = 0
         failed = []
+        curve_meshes = {}
         try:
+            # 截面/锥化曲线也可能被选中。逐个 convert 会先把它们变成 Mesh，
+            # 后面的路径失去引用，只剩没有面的线；先求值所有对象保证顺序无关。
+            bpy.context.view_layer.update()
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            for object_name in convertible_names:
+                ob = bpy.data.objects.get(object_name)
+                try:
+                    curve_meshes[object_name] = bpy.data.meshes.new_from_object(
+                        ob.evaluated_get(depsgraph),
+                        preserve_all_data_layers=True,
+                        depsgraph=depsgraph,
+                    )
+                except Exception as exc:
+                    failed.append((object_name, exc))
+
             for object_name in shared_mesh_names:
                 ob = bpy.data.objects.get(object_name)
                 if ob is None or ob.name not in bpy.context.view_layer.objects:
@@ -439,17 +457,30 @@ class FBXExporter:
 
             for object_name in convertible_names:
                 ob = bpy.data.objects.get(object_name)
-                if ob is None or ob.name not in bpy.context.view_layer.objects:
+                if (ob is None or ob.name not in bpy.context.view_layer.objects
+                        or object_name not in curve_meshes):
                     continue
                 try:
                     bpy.ops.object.select_all(action='DESELECT')
                     ob.select_set(True)
                     bpy.context.view_layer.objects.active = ob
-                    bpy.ops.object.convert(target='MESH')
+                    result = bpy.ops.object.convert(target='MESH')
+                    ob = bpy.data.objects.get(object_name)
+                    if "FINISHED" not in result or ob is None or ob.type != "MESH":
+                        raise RuntimeError(f"曲线转网格未完成：{result}")
+                    converted_mesh = ob.data
+                    ob.data = curve_meshes.pop(object_name)
+                    # 快照已包含完整修改器结果，不能再叠加一次镜像等修改器。
+                    ob.modifiers.clear()
+                    if converted_mesh.users == 0:
+                        bpy.data.meshes.remove(converted_mesh)
                     converted_objects += 1
                 except Exception as exc:
                     failed.append((object_name, exc))
         finally:
+            for mesh in curve_meshes.values():
+                if mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
             FBXExporter.restore_selection_by_names(selection_names, active_object_name)
 
         selection = [
