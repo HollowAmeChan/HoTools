@@ -239,6 +239,7 @@ try:
         armature_keep, ob_keep = build_scene("keepshapekeys")
         ob_keep.parent = armature_keep
         ob_keep.matrix_parent_inverse = armature_keep.matrix_world.inverted()
+        ob_keep.data.shape_keys.key_blocks["Wide"].value = 0.65
         activate_all([armature_keep, ob_keep], armature_keep)
         filepath_keep = OUT_DIR / "shapekey_keepshapekeys.fbx"
         assert bpy.ops.ho.final_fbx_export(
@@ -254,11 +255,16 @@ try:
         assert bpy.data.objects.get("Mesh_keepshapekeys.001") is None, (
             "出现了 .001 副本残留，说明改名顺序不对"
         )
+        restored_key = bpy.data.objects["Mesh_keepshapekeys"].data.shape_keys.key_blocks["Wide"]
+        assert abs(restored_key.value - 0.65) < 1e-6, "导出后工程里的键值没恢复"
         imported_keep = readback(filepath_keep)
         assert imported_keep is not None, "带形态键的网格在 FBX 里整个丢失了"
         assert imported_keep.name.startswith("Mesh_keepshapekeys")
         assert imported_keep.data.shape_keys is not None, "FBX 里丢了形态键"
         assert [k.name for k in imported_keep.data.shape_keys.key_blocks] == ["Basis", "Wide"]
+        assert abs(imported_keep.data.shape_keys.key_blocks["Wide"].value - 0.65) < 1e-6, (
+            "应用骨架姿态重建形态键时丢失了当前值，FBX 默认权重应为 65%"
+        )
     finally:
         bpy.utils.unregister_class(shapekey_operators.OP_ApplyArmatureModifiersKeepShapekeys)
 

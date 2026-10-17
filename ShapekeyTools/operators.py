@@ -1236,6 +1236,19 @@ class OP_ApplyArmatureModifiersKeepShapekeys(Operator):
         # 创建最终物体
         final_obj = self.copy_object(receiver)
 
+        # join_shapes 只创建形状，新键的 value 等设置都是默认值。必须在删除
+        # 原物体前复制设置，否则应用骨架姿态后 FBX 的默认形态键权重会全变成 0。
+        source_keys = orig_obj.data.shape_keys
+        final_keys = final_obj.data.shape_keys
+        final_keys.use_relative = source_keys.use_relative
+        final_keys.eval_time = source_keys.eval_time
+        for source, target in zip(source_keys.key_blocks, final_keys.key_blocks):
+            target.name = source.name
+            shapekey_utils.copy_shape_key_settings(source, target)
+        for source, target in zip(source_keys.key_blocks, final_keys.key_blocks):
+            target.relative_key = final_keys.key_blocks[source.relative_key.name]
+        final_obj.active_shape_key_index = orig_obj.active_shape_key_index
+
         # 先删原物体再改名：改名的顺序不能反。若先 final_obj.name = orig_obj.name，
         # 原名还被原物体占着，Blender 会给副本加 .001 后缀，随后原物体被删，
         # 于是场景里只剩下 xxx.001。导出流程（以及所有按名字跟踪物体的步骤）会因此
@@ -1254,11 +1267,6 @@ class OP_ApplyArmatureModifiersKeepShapekeys(Operator):
         for mod in final_obj.modifiers:
             if mod.name in orig_mod_states and mod.name not in applied_mods:
                 mod.show_viewport = orig_mod_states[mod.name]
-
-        # 恢复形态键名称
-        for idx, name in enumerate(shapekey_names):
-            if idx < len(final_obj.data.shape_keys.key_blocks):
-                final_obj.data.shape_keys.key_blocks[idx].name = name
 
         return {'FINISHED'}
 
