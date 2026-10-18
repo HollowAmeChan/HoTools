@@ -1,4 +1,4 @@
-"""Slide cuts must continue across triangle fans along a selected rim."""
+"""Slide cuts must continue across triangle and quad-corner fans along a rim."""
 
 import sys
 import inspect
@@ -12,14 +12,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from MeshTools import offset_edges_modal as cut
 
 
-def make_strip(triangles=3, closed=False):
-    # Two selected rim edges meet at the apex of an arbitrary triangle fan.
+def make_strip(triangles=3, closed=False, fan_type="TRI"):
+    # Two selected rim edges meet at an arbitrary triangle/quad-corner fan.
     coords = [(-3, 1, 0), (0, 1, 0), (3, 1, 0), (-3, -1, 0)]
     coords.extend((-1 + 2 * i / max(1, triangles), -1, 0.3 * (i % 2)) for i in range(triangles + 1))
     end = len(coords)
     coords.append((3, -1, 0))
     faces = [(0, 3, 4, 1)]
-    faces.extend((1, 4 + i, 5 + i) for i in range(triangles))
+    for i in range(triangles):
+        if fan_type == "QUAD" or (fan_type == "MIXED" and i % 2 == 0):
+            extra = len(coords)
+            a, b = coords[4 + i], coords[5 + i]
+            coords.append(((a[0] + b[0]) * 0.5, -1.3, (a[2] + b[2]) * 0.5))
+            faces.append((1, 4 + i, extra, 5 + i))
+        else:
+            faces.append((1, 4 + i, 5 + i))
     faces.append((1, 4 + triangles, end, 2))
     keys = {(0, 1), (1, 2)}
     if closed:
@@ -50,9 +57,11 @@ def selected_components(bm):
     return components
 
 
-for triangles in (0, 1, 3, 7):
+for triangles, fan_type in [(0, "TRI")] + [
+    (count, kind) for count in (1, 3, 7) for kind in ("TRI", "QUAD", "MIXED")
+]:
     for closed in (False, True):
-        mesh, keys = make_strip(triangles, closed)
+        mesh, keys = make_strip(triangles, closed, fan_type)
         bm = bmesh.new()
         bm.from_mesh(mesh)
         cut._ensure_tables(bm)
@@ -61,7 +70,7 @@ for triangles in (0, 1, 3, 7):
         cache = cut._build_inner_cut_cache(mesh, specs, 0.5)
         try:
             components = selected_components(cache["bm"])
-            assert len(components) == 1, f"三角面扇区切线断开：{triangles=} {closed=} {len(components)=}"
+            assert len(components) == 1, f"扇区切线断开：{triangles=} {fan_type=} {closed=} {len(components)=}"
             edges = components[0]
             assert len(edges) == triangles + (4 if closed else 2), "扇区里的每个三角面都必须切到"
             vertices = {v for e in edges for v in e.verts}
@@ -74,7 +83,7 @@ for triangles in (0, 1, 3, 7):
             bpy.data.meshes.remove(mesh)
 
 # Exercise the same cached preview updates and cancel path used by the modal.
-mesh, keys = make_strip(5, closed=True)
+mesh, keys = make_strip(5, closed=True, fan_type="MIXED")
 obj = bpy.data.objects.new("SlideCutPreview", mesh)
 bpy.context.scene.collection.objects.link(obj)
 bpy.ops.object.select_all(action="DESELECT")

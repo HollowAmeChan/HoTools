@@ -534,7 +534,7 @@ def _collect_inner_specs(bm, selected_keys):
                 }
             )
 
-    # Two rim edges can meet at the apex of several triangles. Those faces
+    # Two rim edges can meet at a fan of triangles or quad corners. Those faces
     # touch the rim only at that vertex, so the edge-adjacent pass above misses
     # them. Continue across each spoke, measuring every cut point from the
     # same rim vertex so preview sliding remains continuous through the fan.
@@ -544,7 +544,7 @@ def _collect_inner_specs(bm, selected_keys):
             continue
         anchor = bm.verts[anchor_id]
         for face in sorted(edge.link_faces, key=lambda item: item.index):
-            if (face in visited or face.hide or len(face.verts) != 3
+            if (face in visited or face.hide or len(face.verts) not in {3, 4}
                     or anchor not in face.verts):
                 continue
             if any(_edge_key(item) in selected_keys for item in face.edges):
