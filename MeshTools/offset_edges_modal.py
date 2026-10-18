@@ -486,8 +486,11 @@ def _find_edge(bm, key):
 
 def _collect_inner_specs(bm, selected_keys):
     specs = []
+    visited = set()
+    pending = []
+    rim_vertices = {index for key in selected_keys for index in key}
     for face in sorted(bm.faces, key=lambda item: item.index):
-        if not face.is_valid or len(face.verts) not in {3, 4}:
+        if not face.is_valid or face.hide or len(face.verts) not in {3, 4}:
             continue
         selected = [edge for edge in face.edges if _edge_key(edge) in selected_keys]
         if len(selected) != 1:
@@ -522,12 +525,42 @@ def _collect_inner_specs(bm, selected_keys):
                 break
             cross_specs.append((_edge_key(edge), endpoint.index))
         if valid:
+            visited.add(face)
+            pending.extend(cross_specs)
             specs.append(
                 {
                     "face_ids": tuple(vertex.index for vertex in face.verts),
                     "cross": tuple(cross_specs),
                 }
             )
+
+    # Two rim edges can meet at the apex of several triangles. Those faces
+    # touch the rim only at that vertex, so the edge-adjacent pass above misses
+    # them. Continue across each spoke, measuring every cut point from the
+    # same rim vertex so preview sliding remains continuous through the fan.
+    for edge_key, anchor_id in pending:
+        edge = bm.edges.get((bm.verts[edge_key[0]], bm.verts[edge_key[1]]))
+        if edge is None or len(edge.link_faces) > 2:
+            continue
+        anchor = bm.verts[anchor_id]
+        for face in sorted(edge.link_faces, key=lambda item: item.index):
+            if (face in visited or face.hide or len(face.verts) != 3
+                    or anchor not in face.verts):
+                continue
+            if any(_edge_key(item) in selected_keys for item in face.edges):
+                continue
+            if sum(vertex.index in rim_vertices for vertex in face.verts) != 1:
+                continue
+            cross = tuple(
+                (_edge_key(item), anchor_id)
+                for item in face.edges if anchor in item.verts
+            )
+            visited.add(face)
+            pending.extend(cross)
+            specs.append({
+                "face_ids": tuple(vertex.index for vertex in face.verts),
+                "cross": cross,
+            })
     return specs
 
 

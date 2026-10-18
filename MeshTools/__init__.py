@@ -228,6 +228,7 @@ def unregister():
     # handler drawing over a disabled add-on.
     cleanup_corrective_smooth_huds()
     cleanup_singularity_smooth_huds()
+    symmetrize.cleanup_symmetrize_huds()
 
     for keymap, keymap_item in addon_keymaps:
         keymap.keymap_items.remove(keymap_item)
