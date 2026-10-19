@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 from test_blender_uv_topology_stack import clear_scene, coords, create_object, edit, operators, select_uv_faces, state
 from test_uv_chains import grid
+from test_uv_quad import hair_fixture
 from Utils.mesh_uv import collect_uv_islands
 from Utils.uv_chains import trace_open_chains
 from Utils.uv_state import UVSceneState
@@ -646,6 +647,145 @@ class StraightenTests(unittest.TestCase):
         # Axis snapping may rotate rows to U or V depending on the nearest frame.
         for chain in ((0, 1, 2, 3), (0, 4, 8, 12)):
             self.assertTrue(any(len({points[v][axis] for v in chain}) == 1 for axis in (0, 1)))
+
+    def make_hair(self, columns=1, double_tip=False, tip_first=False, mirror=False):
+        from math import cos, sin
+        topology, mesh, lengths, caps = hair_fixture(columns, double_tip, tip_first)
+        sign = -1 if mirror else 1
+        points = tuple((2+cos(.27)*x-sin(.27)*sign*y, -1+sin(.27)*x+cos(.27)*sign*y)
+                       for x, y in topology.coordinates)
+        obj = create_object('HairTip', [(points, topology.polygons)])
+        for vertex, coordinate in zip(obj.data.vertices, mesh):
+            vertex.co = coordinate
+        return obj, caps
+
+    def assert_hair_tip_centers(self, obj, caps):
+        from math import hypot
+        points = vertex_uv(obj)
+        for tip, base in caps:
+            a, b = points[base[0]], points[base[-1]]
+            x, y = points[tip]
+            along = (x-(a[0]+b[0])/2)*(b[0]-a[0])+(y-(a[1]+b[1])/2)*(b[1]-a[1])
+            self.assertLess(abs(along)/hypot(b[0]-a[0], b[1]-a[1]), 2e-6)
+        self.assert_quad_rectangles(obj)
+
+    def test_hair_single_triangle_and_fan_center_in_both_sync_modes_and_mirrors(self):
+        for sync in (False, True):
+            for columns in (1, 3):
+                for mirror in (False, True):
+                    with self.subTest(sync=sync, columns=columns, mirror=mirror):
+                        clear_scene()
+                        obj, caps = self.make_hair(columns, mirror=mirror)
+                        edit([obj], sync, 'FACE')
+                        bm = bmesh.from_edit_mesh(obj.data)
+                        bm.faces.active = next(face for face in bm.faces if len(face.loops) == 3)
+                        before = state(obj), self.settings_state(), coords(obj, 'OtherUV')
+                        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+                        self.assert_hair_tip_centers(obj, caps)
+                        self.assertEqual((state(obj), self.settings_state(), coords(obj, 'OtherUV')), before)
+                        uv = bm.loops.layers.uv.active
+                        for face in bm.faces:
+                            if len(face.loops) == 4:
+                                for loop in face.loops:
+                                    delta = loop[uv].uv-loop.link_loop_next[uv].uv
+                                    self.assertTrue(delta.x == 0 or delta.y == 0)
+
+    def test_hair_fan_height_uses_world_3d_altitude(self):
+        from math import hypot
+        obj, caps = self.make_hair(columns=3)
+        obj.scale = (2, 3, 4)
+        edit([obj], True, 'FACE')
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+        self.assert_hair_tip_centers(obj, caps)
+        points = vertex_uv(obj)
+        tip, base = caps[0]
+        a, b = points[base[0]], points[base[-1]]
+        height = hypot(points[tip][0]-(a[0]+b[0])/2, points[tip][1]-(a[1]+b[1])/2)
+        self.assertAlmostEqual(height/hypot(b[0]-a[0], b[1]-a[1]), hypot(1.7*3, .8*4)/(3*.4*2), places=5)
+
+    def test_hair_double_ended_fan_with_active_triangle_and_explicit_quad_mode(self):
+        obj, caps = self.make_hair(columns=2, double_tip=True, tip_first=True)
+        edit([obj], False, 'FACE')
+        before = state(obj), coords(obj, 'OtherUV')
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(algorithm='QUAD'), {'FINISHED'})
+        self.assert_hair_tip_centers(obj, caps)
+        self.assertEqual((state(obj), coords(obj, 'OtherUV')), before)
+
+    def test_hair_pinned_apex_and_incompatible_body_pins(self):
+        obj, caps = self.make_hair()
+        edit([obj], False, 'FACE')
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        tip, base = caps[0]
+        for face in bm.faces:
+            for loop in face.loops:
+                loop[uv].pin_uv = loop.vert.index == tip
+        before = vertex_uv(obj)[tip], state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+        self.assertEqual(vertex_uv(obj)[tip], before[0])
+        self.assert_hair_tip_centers(obj, caps)
+        self.assertEqual(state(obj), before[1])
+        clear_scene()
+        obj, caps = self.make_hair()
+        edit([obj], False, 'FACE')
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        tip, base = caps[0]
+        for face in bm.faces:
+            for loop in face.loops:
+                loop[uv].pin_uv = loop.vert.index in (tip, base[0], base[-1])
+        before = coords(obj), state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'CANCELLED'})
+        self.assertEqual((coords(obj), state(obj)), before)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(respect_pins=False), {'FINISHED'})
+        self.assert_hair_tip_centers(obj, caps)
+        self.assertEqual(state(obj), before[1])
+
+    def test_hair_tip_write_failure_restores_whole_island(self):
+        obj, caps = self.make_hair(columns=3)
+        edit([obj], True, 'FACE')
+        before = coords(obj), state(obj)
+        actual, calls = bmesh.update_edit_mesh, []
+        def fail_once(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError('injected hair tip write failure')
+            return actual(*args, **kwargs)
+        with patch.object(bmesh, 'update_edit_mesh', side_effect=fail_once):
+            self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'CANCELLED'})
+        self.assertEqual((coords(obj), state(obj)), before)
+
+    def test_hair_tip_degenerate_3d_triangle_keeps_original_uvs(self):
+        obj, caps = self.make_hair()
+        tip, base = caps[0]
+        obj.data.vertices[tip].co = (obj.data.vertices[base[0]].co+obj.data.vertices[base[-1]].co)/2
+        edit([obj], True, 'FACE')
+        before = coords(obj), state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'CANCELLED'})
+        self.assertEqual((coords(obj), state(obj)), before)
+
+    def test_hair_selected_tip_only_processes_its_complete_visible_island(self):
+        obj, caps = self.make_hair(columns=3)
+        edit([obj], False, 'FACE')
+        bm = bmesh.from_edit_mesh(obj.data)
+        select_uv_faces(bm, {face.index for face in bm.faces if len(face.loops) == 3})
+        before = state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+        self.assert_hair_tip_centers(obj, caps)
+        self.assertEqual(state(obj), before)
+
+    def test_hair_tip_undo_redo(self):
+        obj, caps = self.make_hair(columns=3)
+        edit([obj], True, 'FACE')
+        name, before = obj.name, coords(obj)
+        bpy.ops.ed.undo_push(message='Before hair tip straightening')
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+        after = coords(obj)
+        bpy.ops.ed.undo_push(message='After hair tip straightening')
+        self.assertEqual(bpy.ops.ed.undo(), {'FINISHED'})
+        self.assertEqual(coords(bpy.data.objects[name]), before)
+        self.assertEqual(bpy.ops.ed.redo(), {'FINISHED'})
+        self.assertEqual(coords(bpy.data.objects[name]), after)
 
 
 if __name__ == '__main__':

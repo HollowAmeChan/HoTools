@@ -1,4 +1,4 @@
-"""Rectangular quad charts from topology and averaged 3D edge-strip lengths.
+"""Rectangular quad bodies and centered triangle tips from 3D strip metrics.
 
 No Blender or external addon dependency. Integer grid coordinates are propagated
 across quad edges and checked globally before generating exact orthogonal rows.
@@ -7,9 +7,11 @@ across quad edges and checked globally before generating exact orthogonal rows.
 from collections import defaultdict, deque
 from math import atan2, cos, fsum, hypot, isfinite, pi, sin, sqrt
 
+from .uv_topology import IslandTopology, TopologyError
+
 
 class QuadLayoutError(ValueError):
-    """The UV chart cannot be embedded as one rectangular quad lattice."""
+    """The quad body or its terminal triangle layout is incompatible."""
 
 
 def quad_lattice(topology, seed=0):
@@ -54,20 +56,123 @@ def _area(points):
                 for a, b in zip(points[1:], points[2:]))/2
 
 
+def _quad_body(topology, seed):
+    """Recognize terminal triangle fans attached to an edge-connected quad body.
+
+    Every tip triangle has exactly one vertex outside the quad body. Its opposite
+    edge must attach directly to a quad; interior triangulation is not a tip.
+    """
+    faces = topology.polygons
+    quads = [i for i, face in enumerate(faces) if len(face) == 4]
+    if not quads or any(len(face) not in (3, 4) for face in faces):
+        raise QuadLayoutError('四边化需要四边形主体；末端允许三角尖端')
+    if not 0 <= seed < len(faces):
+        raise QuadLayoutError('四边化种子面无效')
+    if len(quads) == len(faces):
+        return topology, tuple(range(len(topology.coordinates))), seed, {}
+    vertices = sorted({v for i in quads for v in faces[i]})
+    members = set(vertices)
+    tips = defaultdict(list)
+    for i, face in enumerate(faces):
+        if len(face) == 4:
+            continue
+        outside = set(face)-members
+        if len(outside) != 1:
+            raise QuadLayoutError('混合面不是附在四边形主体末端的三角尖端')
+        tip = next(iter(outside))
+        base = tuple(sorted(v for v in face if v != tip))
+        attached = [f for f in topology.edge_faces[base] if len(faces[f]) == 4]
+        if len(attached) != 1:
+            raise QuadLayoutError('三角尖端的底边需要连接四边形主体')
+        tips[tip].append((base, attached[0]))
+    remap = {v: i for i, v in enumerate(vertices)}
+    try:
+        body = IslandTopology([topology.coordinates[v] for v in vertices],
+                              [tuple(remap[v] for v in faces[i]) for i in quads])
+    except TopologyError as exc:
+        raise QuadLayoutError('尖端连接的四边形主体不连通') from exc
+    body_seed = quads.index(seed) if seed in quads else 0
+    return body, tuple(vertices), body_seed, tips
+
+
+def _triangle_height(a, b, base):
+    """3D altitude from side lengths, normalized before squaring."""
+    largest = max(a, b, base)
+    if largest <= 0 or base <= 0:
+        raise ValueError('三角尖端存在零长 3D 底边')
+    a, b, base = a/largest, b/largest, base/largest
+    along = (a*a+base*base-b*b)/(2*base)
+    height = sqrt(max(0.0, a*a-along*along))*largest
+    if height <= largest*1e-12:
+        raise ValueError('三角尖端的 3D 高度退化')
+    return height
+
+
+def _append_triangle_tips(topology, lattice, grid, tips, edge_lengths, largest):
+    for tip, bases in tips.items():
+        base_nodes = {v for edge, face in bases for v in edge}
+        degrees = defaultdict(int)
+        neighbors = defaultdict(set)
+        for (a, b), face in bases:
+            degrees[a] += 1
+            degrees[b] += 1
+            neighbors[a].add(b)
+            neighbors[b].add(a)
+        ends = [v for v in base_nodes if degrees[v] == 1]
+        if len(ends) != 2 or any(degrees[v] > 2 for v in base_nodes):
+            raise QuadLayoutError('三角尖端底边需要形成单条开链')
+        reached, pending = set(), [ends[0]]
+        while pending:
+            node = pending.pop()
+            if node not in reached:
+                reached.add(node)
+                pending.extend(neighbors[node]-reached)
+        if reached != base_nodes:
+            raise QuadLayoutError('同一三角尖点连接了不连续的底边')
+        normal_axis = next((a for a in (0, 1) if len({lattice[v][a] for v in base_nodes}) == 1), None)
+        if normal_axis is None:
+            raise QuadLayoutError('三角尖端底边跨越了四边形主体的转角')
+        midpoint = tuple((grid[ends[0]][a]+grid[ends[1]][a])/2 for a in (0, 1))
+        sides, weights, heights = [], [], []
+        for (a, b), face in bases:
+            center = sum(grid[v][normal_axis] for v in topology.polygons[face])/4
+            sides.append(1 if center > midpoint[normal_axis] else -1)
+            base = edge_lengths[tuple(sorted((a, b)))]
+            height = _triangle_height(edge_lengths[tuple(sorted((tip, a)))],
+                                      edge_lengths[tuple(sorted((tip, b)))], base)
+            weights.append(base/largest)
+            heights.append(height/largest)
+        if len(set(sides)) != 1:
+            raise QuadLayoutError('三角尖端底边的四边形主体方向不一致')
+        # Fan height = 2 * total 3D triangle area / total base arc length.
+        height = fsum(w*h for w, h in zip(weights, heights))/fsum(weights)
+        point = list(midpoint)
+        point[normal_axis] -= sides[0]*height
+        grid[tip] = tuple(point)
+
+
 def quadrify_coordinates(topology, edge_lengths, seed=0, direction='KEEP', pins=None):
-    """Return strictly rectangular UVs, preserving area/pose unless pins fix them.
+    """Rectify a quad body and center terminal triangle tips in one UV frame.
 
     edge_lengths maps each sorted UV-node edge to its 3D length. Opposite rows
     share averaged interval lengths, so varying 3D face shapes cannot bend a UV
     row. KEEP fits the old UV orientation; AUTO snaps that frame to the U/V axes.
+    A terminal triangle/fan apex is centered over its straight base chain, with
+    height from 3D triangle altitudes. Area/pose are preserved unless pins fix them.
     Original pin coordinates constrain one common similarity transform. An
     incompatible pin set is rejected instead of bending the rectangular result.
     """
     if direction not in {'KEEP', 'AUTO'}:
         raise ValueError('四边化方向无效')
-    lattice = quad_lattice(topology, seed)
+    body, body_vertices, body_seed, tips = _quad_body(topology, seed)
+    local_lattice = quad_lattice(body, body_seed)
+    lattice = {v: point for v, point in zip(body_vertices, local_lattice)}
+    body_edges = [tuple(sorted((body_vertices[a], body_vertices[b]))) for a, b in body.edge_faces]
+    if any(edge not in edge_lengths or not isfinite(edge_lengths[edge]) or edge_lengths[edge] < 0
+           for edge in topology.edge_faces):
+        raise ValueError('四边化需要有效的 3D 网格边长')
     strips = (defaultdict(list), defaultdict(list))
-    for edge in topology.edge_faces:
+    for edge in body_edges:
         a, b = (lattice[v] for v in edge)
         axis = 0 if a[0] != b[0] else 1
         length = edge_lengths.get(edge)
@@ -79,8 +184,8 @@ def quadrify_coordinates(topology, edge_lengths, seed=0, direction='KEEP', pins=
         raise ValueError('四边形网格的 3D 边长为零')
     levels = []
     for axis, strip in enumerate(strips):
-        low = min(p[axis] for p in lattice)
-        high = max(p[axis] for p in lattice)
+        low = min(p[axis] for p in lattice.values())
+        high = max(p[axis] for p in lattice.values())
         positions = {low: 0.0}
         for interval in range(low, high):
             values = strip.get(interval, ())
@@ -89,11 +194,15 @@ def quadrify_coordinates(topology, edge_lengths, seed=0, direction='KEEP', pins=
                 raise ValueError('四边形行列存在零长或缺失的 3D 间隔')
             positions[interval+1] = positions[interval]+width
         levels.append(positions)
-    grid = tuple((levels[0][x], levels[1][y]) for x, y in lattice)
+    grid = [None]*len(topology.coordinates)
+    for v, (x, y) in lattice.items():
+        grid[v] = levels[0][x], levels[1][y]
+    _append_triangle_tips(topology, lattice, grid, tips, edge_lengths, largest)
+    grid = tuple(grid)
     before = topology.coordinates
     original_area = fsum(abs(_area([before[v] for v in face])) for face in topology.polygons)
     grid_area = fsum(abs(_area([grid[v] for v in face])) for face in topology.polygons)
-    seed_area = _area([before[v] for v in topology.polygons[seed]])
+    seed_area = _area([before[body_vertices[v]] for v in body.polygons[body_seed]])
     if original_area <= 0 or grid_area <= 0 or seed_area == 0:
         raise ValueError('原 UV 面退化，无法保留四边化朝向')
     handedness = 1 if seed_area > 0 else -1

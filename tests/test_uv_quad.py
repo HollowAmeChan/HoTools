@@ -2,7 +2,7 @@
 
 import sys
 import unittest
-from math import cos, hypot, sin
+from math import cos, hypot, sin, sqrt
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -30,15 +30,40 @@ def area(points):
     return sum(a[0]*b[1]-b[0]*a[1] for a, b in zip(points, points[1:]+points[:1]))/2
 
 
+def hair_fixture(columns=1, double_tip=False, tip_first=False):
+    levels = (0, .15, .6, 1.5, 3)
+    mesh = [(x*.4, y, 0) for y in levels for x in range(columns+1)]
+    points = [(x+.12*y+.02*y*y, y+.02*x*x) for x, y, z in mesh]
+    quads = [tuple((columns+1)*y+i for i in (x, x+1, x+columns+2, x+columns+1))
+             for y in range(len(levels)-1) for x in range(columns)]
+    triangles, caps = [], []
+    for top in ((True, False) if double_tip else (True,)):
+        row = len(levels)-1 if top else 0
+        base = tuple(row*(columns+1)+x for x in range(columns+1))
+        tip = len(points)
+        tip_y = levels[-1]+1.7 if top else -1.1
+        mesh.append((columns*.4*.92, tip_y, .8))
+        points.append((columns*.4*.94+.12*tip_y+.02*tip_y*tip_y, tip_y))
+        triangles.extend((a, b, tip) if top else (b, a, tip) for a, b in zip(base, base[1:]))
+        caps.append((tip, base))
+    faces = triangles+quads if tip_first else quads+triangles
+    topology = IslandTopology(points, faces)
+    lengths = {edge: sqrt(sum((mesh[edge[1]][a]-mesh[edge[0]][a])**2 for a in range(3)))
+               for edge in topology.edge_faces}
+    return topology, tuple(mesh), lengths, tuple(caps)
+
+
 class QuadTests(unittest.TestCase):
     def assert_rectangles(self, topology, result):
         for face in topology.polygons:
+            self.assertGreater(area([topology.coordinates[v] for v in face])*area([result[v] for v in face]), 0)
+            if len(face) != 4:
+                continue
             a, b, c, d = [result[v] for v in face]
             e, f = (b[0]-a[0], b[1]-a[1]), (d[0]-a[0], d[1]-a[1])
             self.assertAlmostEqual(e[0]*f[0]+e[1]*f[1], 0, places=8)
             self.assertAlmostEqual(c[0], b[0]+d[0]-a[0], places=8)
             self.assertAlmostEqual(c[1], b[1]+d[1]-a[1], places=8)
-            self.assertGreater(area([topology.coordinates[v] for v in face])*area([result[v] for v in face]), 0)
 
     def test_curved_rows_become_exact_rectangles_without_angle_threshold(self):
         topology, mesh, lengths = make_grid()
@@ -134,6 +159,85 @@ class QuadTests(unittest.TestCase):
         collapsed = IslandTopology([(0, 0)]*len(mesh), topology.polygons)
         with self.assertRaises(ValueError):
             quadrify_coordinates(collapsed, lengths)
+
+    def assert_tips_centered(self, result, caps):
+        for tip, base in caps:
+            a, b = result[base[0]], result[base[-1]]
+            midpoint = ((a[0]+b[0])/2, (a[1]+b[1])/2)
+            dx, dy = result[tip][0]-midpoint[0], result[tip][1]-midpoint[1]
+            self.assertAlmostEqual(dx*(b[0]-a[0])+dy*(b[1]-a[1]), 0, places=8)
+
+    def test_terminal_triangle_is_centered_after_straightening(self):
+        topology, mesh, lengths, caps = hair_fixture()
+        result = quadrify_coordinates(topology, lengths, direction='AUTO')
+        self.assert_rectangles(topology, result)
+        self.assert_tips_centered(result, caps)
+        self.assertAlmostEqual(result[caps[0][0]][0], sum(result[v][0] for v in caps[0][1])/2)
+
+    def test_triangle_fan_tip_centers_over_its_full_width(self):
+        topology, mesh, lengths, caps = hair_fixture(columns=3)
+        result = quadrify_coordinates(topology, lengths, direction='AUTO')
+        self.assert_rectangles(topology, result)
+        self.assert_tips_centered(result, caps)
+        original_area = sum(abs(area([topology.coordinates[v] for v in face])) for face in topology.polygons)
+        self.assertAlmostEqual(sum(abs(area([result[v] for v in face])) for face in topology.polygons), original_area)
+
+    def test_tip_height_uses_3d_triangle_altitude_even_when_apex_is_off_center(self):
+        topology, mesh, lengths, caps = hair_fixture(columns=3)
+        result = quadrify_coordinates(topology, lengths, direction='AUTO')
+        tip, base = caps[0]
+        a, b = result[base[0]], result[base[-1]]
+        height = hypot(result[tip][0]-(a[0]+b[0])/2, result[tip][1]-(a[1]+b[1])/2)
+        width = hypot(b[0]-a[0], b[1]-a[1])
+        self.assertAlmostEqual(height/width, hypot(1.7, .8)/(3*.4))
+
+    def test_tips_at_both_ends_and_triangle_seed_are_supported(self):
+        topology, mesh, lengths, caps = hair_fixture(columns=2, double_tip=True, tip_first=True)
+        result = quadrify_coordinates(topology, lengths, seed=0, direction='AUTO')
+        self.assert_rectangles(topology, result)
+        self.assert_tips_centered(result, caps)
+
+    def test_tip_centering_survives_rotation_reflection_and_reversed_faces(self):
+        base, mesh, lengths, caps = hair_fixture(columns=3)
+        for sign in (1, -1):
+            points = tuple((cos(.4)*x-sin(.4)*sign*y, sin(.4)*x+cos(.4)*sign*y) for x, y in base.coordinates)
+            topology = IslandTopology(points, [face[::-1] if i % 2 else face for i, face in enumerate(base.polygons)])
+            result = quadrify_coordinates(topology, lengths)
+            self.assert_rectangles(topology, result)
+            self.assert_tips_centered(result, caps)
+
+    def test_pinned_apex_keeps_position_while_centering_and_conflicts_reject(self):
+        topology, mesh, lengths, caps = hair_fixture()
+        tip, base = caps[0]
+        result = quadrify_coordinates(topology, lengths, pins={tip: topology.coordinates[tip]})
+        self.assertEqual(result[tip], topology.coordinates[tip])
+        self.assert_tips_centered(result, caps)
+        with self.assertRaisesRegex(ValueError, '固定点'):
+            quadrify_coordinates(topology, lengths, direction='AUTO',
+                                  pins={v: topology.coordinates[v] for v in (tip, base[0], base[-1])})
+
+    def test_interior_triangles_and_corner_fans_are_not_terminal_tips(self):
+        points = ((0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1))
+        topology = IslandTopology(points, ((0, 1, 4, 3), (1, 2, 5), (1, 5, 4)))
+        lengths = {edge: hypot(points[edge[1]][0]-points[edge[0]][0], points[edge[1]][1]-points[edge[0]][1])
+                   for edge in topology.edge_faces}
+        with self.assertRaises(QuadLayoutError):
+            quadrify_coordinates(topology, lengths)
+        points = ((0, 0), (1, 0), (1, 1), (0, 1), (2, -1))
+        topology = IslandTopology(points, ((0, 1, 2, 3), (1, 0, 4), (2, 1, 4)))
+        lengths = {edge: hypot(points[edge[1]][0]-points[edge[0]][0], points[edge[1]][1]-points[edge[0]][1])
+                   for edge in topology.edge_faces}
+        with self.assertRaises(QuadLayoutError):
+            quadrify_coordinates(topology, lengths)
+
+    def test_degenerate_3d_tip_rejected_before_generating_uvs(self):
+        topology, mesh, lengths, caps = hair_fixture()
+        tip, base = caps[0]
+        width = lengths[tuple(sorted(base))]
+        lengths[tuple(sorted((tip, base[0])))] = width*.4
+        lengths[tuple(sorted((tip, base[1])))] = width*.6
+        with self.assertRaisesRegex(ValueError, '高度退化'):
+            quadrify_coordinates(topology, lengths)
 
 
 if __name__ == '__main__':

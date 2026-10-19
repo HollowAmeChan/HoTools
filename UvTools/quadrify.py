@@ -12,11 +12,14 @@ def quadrify_island_plan(context, island, direction='KEEP', respect_pins=True, t
         raise ValueError('岛隐藏或未完整显示')
     topology = topology if topology is not None else IslandTopology(island.coordinates, island.polygons)
     active_face = island.bm.faces.active
-    if active_face in island.faces:
+    candidates = [i for i, face in enumerate(island.polygons) if len(face) == 4]
+    if not candidates:
+        raise ValueError('四边化需要至少一个四边形作为主体')
+    if active_face in island.faces and len(active_face.loops) == 4:
         seed = island.faces.index(active_face)
     else:
         center = tuple((min(p[a] for p in island.coordinates)+max(p[a] for p in island.coordinates))/2 for a in (0, 1))
-        seed = min(range(len(island.faces)), key=lambda i: sum(
+        seed = min(candidates, key=lambda i: sum(
             (sum(island.coordinates[v][a] for v in island.polygons[i])/len(island.polygons[i])-center[a])**2
             for a in (0, 1)))
     active = context.active_object

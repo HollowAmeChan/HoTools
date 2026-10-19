@@ -13,7 +13,7 @@
 | 平移所选 UV，方向与距离 | ±U/±V，UV/像素距离 | 往返、四方向、非正方形图像、缺图取消、状态与其他层不变 |
 | 沿轴对齐与 Alt+A 失效修复 | 公共对齐函数；`ho.align_uv` 保留，右键有独立入口 | 多物体、平均值按独立 UV 点、隐藏点、5.2 精细选择、光标轴向、原生快捷键注册 |
 | 线展开，支持兼容多内部线，避免受切向影响倒置 | 真实选中边 → 多开链 → UV 框架/区域锚点 → 原生展开 | 同岛多内部线、镜像/旋转、两种展开方法、U/V/保留方向、三角/混合/五边形/带洞岛 |
-| 直化岛，四边形优先、阈值可控 | 规则四边形按拓扑生成严格矩形行列，3D 平均间距；其他拓扑联合阈值约束 | 明显弯曲网格完全拉直、严格正交、旋转/镜像、面积/中心、3D 缩放、原 pin、孔洞/L 形、混合拓扑与回滚 |
+| 直化岛，四边形优先、阈值可控 | 四边形主体生成矩形行列，末端三角尖点居中并按 3D 高度延伸；其他拓扑联合阈值约束 | 完全拉直/摆正、单尖/三角扇/双端、旋转/镜像、3D 高度/缩放、面积/中心、原 pin、孔洞/L 形、混合拓扑与回滚 |
 | 单模式拓扑堆叠，强制顶点对齐，考虑镜像 | 图双射后复制所有主岛点，内部点偏差不阻止修正 | 非对称镜像、重新编号、内部点强修、孔洞、错拓扑排除、主岛、多分组、共享 mesh |
 | 紧急：本象限中线翻转到另一半 | 每个可见岛按其整数 UV 象限中线反射 | 第一象限、其他 UDIM、负象限、U/V、部分网格面选择可用、未显示 UV 不变 |
 | 象限适配支持同步，按 AABB 中心居中后尽量填满 | 公共选区读取 + AABB 居中等比适配，默认第一象限 | 两版选择模式、长方形短边留白对称、多物体整体 AABB、未显示点保护、单点/直线、边距与 Undo/Redo |
@@ -40,17 +40,17 @@
 
 | 测试 | 4.5.8 | 5.2.0 |
 | --- | --- | --- |
-| 纯算法：`test_uv_math.py`、`test_uv_topology.py`、`test_uv_chains.py`、`test_uv_unstack.py`、`test_uv_length.py`、`test_uv_overlap.py`、`test_uv_quad.py` | Python 3.11：76 通过 | Python 3.13：76 通过 |
+| 纯算法：`test_uv_math.py`、`test_uv_topology.py`、`test_uv_chains.py`、`test_uv_unstack.py`、`test_uv_length.py`、`test_uv_overlap.py`、`test_uv_quad.py` | Python 3.11：84 通过 | Python 3.13：84 通过 |
 | `test_blender_uv_topology_stack.py` | 18 通过，1 项新版选择测试跳过 | 19 通过 |
 | `test_blender_uv_transform.py` | 26 通过，1 项新版选择测试跳过 | 27 通过 |
-| `test_blender_uv_straighten.py` | 33 通过 | 33 通过 |
+| `test_blender_uv_straighten.py` | 41 通过 | 41 通过 |
 | `test_blender_pies.py` | 10 通过 | 10 通过 |
 | `test_blender_uv_unstack.py` | 21 通过 | 21 通过 |
 | `test_blender_uv_cursor_pie.py` | 8 通过，1 项新版选择测试跳过 | 9 通过 |
 | `test_blender_uv_seams.py` | 16 通过 | 16 通过 |
 | `test_blender_uv_length.py` | 13 通过，2 项新版选择测试跳过 | 15 通过 |
 
-每版有 150 项原生集成测试；4.5 的五项跳过仅针对它不具备的 5.x 精细 UV 同步状态。
+每版有 158 项原生集成测试；4.5 的五项跳过仅针对它不具备的 5.x 精细 UV 同步状态。
 测试的 `injected ... failure` 报告来自故意注入失败，以验证坐标/用户状态回滚。
 
 复现命令：

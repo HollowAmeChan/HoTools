@@ -72,12 +72,12 @@ class OP_UVTools_LineUnwrap(bpy.types.Operator):
 class OP_UVTools_StraightenIsland(bpy.types.Operator):
     bl_idname = 'ho.uvtools_straighten_island'
     bl_label = '直化所选 UV 岛'
-    bl_description = '四边形岛优先按拓扑生成严格矩形行列，默认摆正到最近U/V轴并保留镜像朝向；其他岛可按近直线阈值直化'
+    bl_description = '四边形主体按拓扑生成矩形行列，末端三角尖点居中，默认摆正到最近U/V轴；其他岛按近直线阈值直化'
     bl_options = {'REGISTER', 'UNDO'}
 
     algorithm: EnumProperty(name='直化算法', items=(
-        ('AUTO', '四边形优先', '规则四边形岛按拓扑四边化，其他岛使用阈值直化'),
-        ('QUAD', '拓扑四边化', '按四边形连接关系生成笔直、正交的行列；3D边长按行列平均'),
+        ('AUTO', '四边形优先', '四边形主体和末端三角尖端按拓扑直化，其他岛使用阈值直化'),
+        ('QUAD', '拓扑四边化', '主体生成矩形行列，末端三角尖点居中；3D边长按行列平均'),
         ('THRESHOLD', '阈值直化', '只直化符合转角与全链偏差阈值的线，适合三角面和混合面'),
     ), default='AUTO')  # type: ignore
 
@@ -118,7 +118,8 @@ class OP_UVTools_StraightenIsland(bpy.types.Operator):
                 try:
                     topology = IslandTopology(island.coordinates, island.polygons)
                     if self.algorithm == 'QUAD' or (self.algorithm == 'AUTO' and self.include_internal
-                                                   and all(len(face) == 4 for face in island.polygons)):
+                                                   and any(len(face) == 4 for face in island.polygons)
+                                                   and all(len(face) in (3, 4) for face in island.polygons)):
                         try:
                             quad_plans.append(quadrify_island_plan(context, island, self.direction, self.respect_pins, topology))
                             quad_count += 1
