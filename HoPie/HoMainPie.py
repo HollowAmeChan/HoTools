@@ -497,6 +497,8 @@ def _draw_mesh_UV_tools(layout: LayoutBuilder, context):
     row = col.row(align=True)
     row.operator("ho.uvtools_seams_from_islands",text="边界缝合",icon="STRIP_COLOR_01")
     row.operator("ho.uvtools_uniformize_length",text="拉直均化",icon="CENTER_ONLY")
+    row.operator("uv.average_islands_scale",text="均化岛",icon="ORIENTATION_VIEW")
+
 
 
 class HO_MT_HoMainPieMesh(Menu):
