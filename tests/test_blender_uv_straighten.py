@@ -17,6 +17,7 @@ from Utils.mesh_uv import collect_uv_islands
 from Utils.uv_chains import trace_open_chains
 from Utils.uv_state import UVSceneState
 unwrap_module = importlib.import_module(operators.__package__ + '.unwrap')
+straighten_module = importlib.import_module(operators.__package__ + '.straighten')
 
 
 def select_edges(obj, edges, sync):
@@ -231,7 +232,7 @@ class StraightenTests(unittest.TestCase):
         obj = self.make_grid(noise=.03)
         edit([obj])
         before = coords(obj), state(obj)
-        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(angle_threshold=0, deviation_threshold=0), {'CANCELLED'})
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(algorithm='THRESHOLD', angle_threshold=0, deviation_threshold=0), {'CANCELLED'})
         self.assertEqual((coords(obj), state(obj)), before)
 
     def test_guard_rejects_flips_and_nonfinite_coordinates(self):
@@ -369,6 +370,246 @@ class StraightenTests(unittest.TestCase):
             for v in chain[1:-1]:
                 self.assertAlmostEqual(unwrap_module._area(result[chain[0]], result[chain[-1]], result[v]), 0, places=5)
         self.assertEqual(state(obj), before_state)
+
+    def make_curved_quad_grid(self, name='CurvedQuads', mirror=False, rotate=False, faces=None):
+        points = tuple((x+.035*y*y, y+.18*x*x) for y in range(4) for x in range(4))
+        if mirror:
+            points = tuple((-x, y) for x, y in points)
+        if rotate:
+            points = tuple((.8*x-.6*y+4, .6*x+.8*y-2) for x, y in points)
+        polygons = grid()[1] if faces is None else faces
+        obj = create_object(name, [(points, polygons)])
+        for i, vertex in enumerate(obj.data.vertices):
+            vertex.co = i % 4, i//4, 0
+        return obj
+
+    def assert_quad_rectangles(self, obj):
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        for face in bm.faces:
+            if len(face.loops) != 4:
+                continue
+            a, b, c, d = [loop[uv].uv.copy() for loop in face.loops]
+            edge, side = b-a, d-a
+            self.assertLess(abs(edge.dot(side))/(edge.length*side.length), 2e-6)
+            self.assertLess((c-(b+d-a)).length, max(edge.length, side.length)*2e-6)
+
+    def test_quad_priority_fixes_curvature_missed_by_default_threshold(self):
+        obj = self.make_curved_quad_grid()
+        edit([obj], False, 'FACE')
+        before = state(obj), self.settings_state(), coords(obj, 'OtherUV')
+        original = coords(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(algorithm='THRESHOLD'), {'CANCELLED'})
+        self.assertEqual(coords(obj), original)
+        with patch.object(unwrap_module, '_unwrap', side_effect=AssertionError('quad path must not unwrap')):
+            self.assertEqual(bpy.ops.ho.uvtools_straighten_island(direction='AUTO'), {'FINISHED'})
+        self.assert_quad_rectangles(obj)
+        points = vertex_uv(obj)
+        for y in range(4):
+            self.assertEqual(len({points[y*4+x][1] for x in range(4)}), 1)
+        for x in range(4):
+            self.assertEqual(len({points[y*4+x][0] for y in range(4)}), 1)
+        self.assertEqual((state(obj), self.settings_state(), coords(obj, 'OtherUV')), before)
+
+    def test_quad_sync_selection_matrix_preserves_state(self):
+        for sync in (False, True):
+            for selection in ('VERTEX', 'EDGE', 'FACE', 'ISLAND'):
+                if sync and selection == 'ISLAND':
+                    continue
+                with self.subTest(sync=sync, selection=selection):
+                    clear_scene()
+                    obj = self.make_curved_quad_grid()
+                    edit([obj], sync, selection)
+                    bm = bmesh.from_edit_mesh(obj.data)
+                    for edge in bm.edges:
+                        edge.seam = edge.index % 2 == 0
+                    if sync and hasattr(bm, 'uv_select_sync_valid'):
+                        bm.uv_select_sync_valid = False
+                    before = state(obj), self.settings_state(), coords(obj, 'OtherUV')
+                    self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+                    self.assert_quad_rectangles(obj)
+                    self.assertEqual((state(obj), self.settings_state(), coords(obj, 'OtherUV')), before)
+
+    def test_quad_mirrors_rotations_and_area_preserved(self):
+        for mirror in (False, True):
+            clear_scene()
+            obj = self.make_curved_quad_grid(mirror=mirror, rotate=True)
+            edit([obj], True, 'FACE')
+            before = vertex_uv(obj), state(obj)
+            self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+            self.assert_quad_rectangles(obj)
+            after = vertex_uv(obj)
+            old_area, new_area = 0, 0
+            for face in grid()[1]:
+                old = sum(unwrap_module._area(before[0][face[0]], before[0][face[i]], before[0][face[i+1]]) for i in (1, 2))
+                new = sum(unwrap_module._area(after[face[0]], after[face[i]], after[face[i+1]]) for i in (1, 2))
+                self.assertGreater(old*new, 0)
+                old_area += abs(old)
+                new_area += abs(new)
+            self.assertAlmostEqual(old_area, new_area, places=4)
+            self.assertEqual(state(obj), before[1])
+
+    def test_quad_average_3d_spacing_includes_nonuniform_object_scale(self):
+        obj = self.make_curved_quad_grid()
+        for i, vertex in enumerate(obj.data.vertices):
+            vertex.co = (0, 1, 3, 6)[i % 4], i//4*2, 0
+        obj.scale = (2, 3, 1)
+        edit([obj], False, 'FACE')
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(direction='AUTO'), {'FINISHED'})
+        points = vertex_uv(obj)
+        widths = [points[x+1][0]-points[x][0] for x in range(3)]
+        self.assertAlmostEqual(widths[1]/widths[0], 2, places=5)
+        self.assertAlmostEqual(widths[2]/widths[0], 3, places=5)
+        self.assertAlmostEqual((points[4][1]-points[0][1])/widths[0], 3, places=5)
+        self.assert_quad_rectangles(obj)
+
+    def test_quad_hole_l_shape_and_reversed_faces(self):
+        faces = grid()[1]
+        for polygons in (tuple(face for i, face in enumerate(faces) if i != 4),
+                         tuple(face for i, face in enumerate(faces) if i//3 == 0 or i % 3 == 0),
+                         tuple(face[::-1] if i % 2 else face for i, face in enumerate(faces))):
+            clear_scene()
+            obj = self.make_curved_quad_grid(faces=polygons)
+            edit([obj], True, 'FACE')
+            before = state(obj)
+            self.assertEqual(bpy.ops.ho.uvtools_straighten_island(algorithm='QUAD'), {'FINISHED'})
+            self.assert_quad_rectangles(obj)
+            self.assertEqual(state(obj), before)
+
+    def test_quad_single_pin_kept_and_incompatible_pins_explicitly_rejected(self):
+        obj = self.make_curved_quad_grid()
+        edit([obj], False, 'FACE')
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        for face in bm.faces:
+            for loop in face.loops:
+                loop[uv].pin_uv = loop.vert.index == 5
+        before = vertex_uv(obj)[5], state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+        self.assertEqual(vertex_uv(obj)[5], before[0])
+        self.assertEqual(state(obj), before[1])
+        self.assert_quad_rectangles(obj)
+        clear_scene()
+        obj = self.make_curved_quad_grid()
+        edit([obj], False, 'FACE')
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        for face in bm.faces:
+            for loop in face.loops:
+                loop[uv].pin_uv = loop.vert.index in (0, 3, 12)
+        before = coords(obj), state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'CANCELLED'})
+        self.assertEqual((coords(obj), state(obj)), before)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(respect_pins=False), {'FINISHED'})
+        self.assertEqual(state(obj), before[1])
+        self.assert_quad_rectangles(obj)
+
+    def test_quad_and_triangle_islands_in_one_run_keep_both_results(self):
+        a = self.make_curved_quad_grid('A_Quad')
+        points, quads = grid(noise=.01)
+        faces = tuple(tri for face in quads for tri in ((face[0], face[1], face[2]), (face[0], face[2], face[3])))
+        b = create_object('B_Tri', [(points, faces)])
+        for i, vertex in enumerate(b.data.vertices):
+            vertex.co = i % 4, i//4, 0
+        empty = create_object('NoUV', [(points, faces)], with_uv=False)
+        edit([a, b, empty], True, 'FACE')
+        before = [(state(obj), coords(obj, 'OtherUV')) for obj in (a, b)]
+        original = coords(a), coords(b)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(deviation_threshold=.02), {'FINISHED'})
+        self.assert_quad_rectangles(a)
+        self.assertNotEqual(coords(a), original[0])
+        self.assertNotEqual(coords(b), original[1])
+        self.assertEqual([(state(obj), coords(obj, 'OtherUV')) for obj in (a, b)], before)
+        self.assertIsNone(bmesh.from_edit_mesh(empty.data).loops.layers.uv.active)
+
+    def test_quad_write_failure_restores_all_actual_corners(self):
+        obj = self.make_curved_quad_grid()
+        edit([obj], True, 'FACE')
+        before = coords(obj), state(obj)
+        actual, calls = bmesh.update_edit_mesh, []
+        def fail_once(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError('injected quad write failure')
+            return actual(*args, **kwargs)
+        with patch.object(bmesh, 'update_edit_mesh', side_effect=fail_once):
+            self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'CANCELLED'})
+        self.assertEqual((coords(obj), state(obj)), before)
+
+    def test_mixed_quad_failure_restores_already_solved_triangle_island(self):
+        a = self.make_curved_quad_grid('A_Quad')
+        points, quads = grid(noise=.01)
+        faces = tuple(tri for face in quads for tri in ((face[0], face[1], face[2]), (face[0], face[2], face[3])))
+        b = create_object('B_Tri', [(points, faces)])
+        for i, vertex in enumerate(b.data.vertices):
+            vertex.co = i % 4, i//4, 0
+        edit([a, b], True, 'FACE')
+        before = [(coords(obj), state(obj)) for obj in (a, b)]
+        with patch.object(straighten_module, 'write_uv_points', side_effect=RuntimeError('injected final quad write failure')):
+            self.assertEqual(bpy.ops.ho.uvtools_straighten_island(deviation_threshold=.02), {'CANCELLED'})
+        self.assertEqual([(coords(obj), state(obj)) for obj in (a, b)], before)
+
+    def test_quad_skips_hidden_or_unshown_island(self):
+        for sync in (False, True):
+            clear_scene()
+            obj = self.make_curved_quad_grid()
+            edit([obj], sync, 'FACE')
+            bm = bmesh.from_edit_mesh(obj.data)
+            if sync:
+                bm.faces[8].hide_set(True)
+            else:
+                bm.faces[8].select_set(False)
+            before = coords(obj), state(obj)
+            self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'CANCELLED'})
+            self.assertEqual((coords(obj), state(obj)), before)
+
+    def test_quad_single_face_and_explicit_nonquad_mode(self):
+        obj = create_object('SingleQuad', [(((0, 0), (3, .2), (2.8, 1.2), (.1, 1)), ((0, 1, 2, 3),))])
+        for i, vertex in enumerate(obj.data.vertices):
+            vertex.co = ((0, 0, 0), (3, 0, 0), (3, 1, 0), (0, 1, 0))[i]
+        edit([obj])
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+        self.assert_quad_rectangles(obj)
+        clear_scene()
+        obj = create_object('Triangle', [(((0, 0), (1, 0), (0, 1)), ((0, 1, 2),))])
+        edit([obj])
+        before = coords(obj), state(obj)
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(algorithm='QUAD'), {'CANCELLED'})
+        self.assertEqual((coords(obj), state(obj)), before)
+
+    def test_quad_undo_redo(self):
+        obj = self.make_curved_quad_grid()
+        edit([obj], True, 'FACE')
+        name, before = obj.name, coords(obj)
+        bpy.ops.ed.undo_push(message='Before quadrify')
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+        after = coords(obj)
+        bpy.ops.ed.undo_push(message='After quadrify')
+        self.assertEqual(bpy.ops.ed.undo(), {'FINISHED'})
+        self.assertEqual(coords(bpy.data.objects[name]), before)
+        self.assertEqual(bpy.ops.ed.redo(), {'FINISHED'})
+        self.assertEqual(coords(bpy.data.objects[name]), after)
+
+    def test_quad_stacked_mirror_charts_with_shared_border_are_rectified_independently(self):
+        mesh_points = ((0, 0), (1, 0), (1, 1), (0, 1), (2, 0), (2, 1))
+        faces = ((0, 1, 2, 3), (1, 4, 5, 2))
+        square = ((.1, .2), (.8, .23), (.75, .9), (.15, .85))
+        for sync in (False, True):
+            clear_scene()
+            obj = create_object('StackedMirror', [(mesh_points, faces)])
+            for i, vert in enumerate(obj.data.vertices):
+                vert.co = (*mesh_points[i], 0)
+            uv = obj.data.uv_layers[0]
+            for loop, point in zip(uv.data, square+(square[1], square[0], square[3], square[2])):
+                loop.uv = point
+            edit([obj], sync, 'FACE')
+            before = state(obj), coords(obj, 'OtherUV')
+            self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+            self.assert_quad_rectangles(obj)
+            self.assertEqual((state(obj), coords(obj, 'OtherUV')), before)
+            after = coords(obj)
+            for point in after[:4]:
+                self.assertLess(min(((point[0]-x)**2+(point[1]-y)**2)**.5 for x, y in after[4:]), 2e-6)
 
 
 if __name__ == '__main__':
