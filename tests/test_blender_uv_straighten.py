@@ -611,6 +611,42 @@ class StraightenTests(unittest.TestCase):
             for point in after[:4]:
                 self.assertLess(min(((point[0]-x)**2+(point[1]-y)**2)**.5 for x, y in after[4:]), 2e-6)
 
+    def test_default_orients_long_uneven_quad_strips_to_uv_axes(self):
+        from math import cos, sin
+        levels = (0, .01, .03, .07, .15, .3, .7, 1.2, 2.1, 3.5, 5.5, 8)
+        faces = tuple((2*y, 2*y+1, 2*y+3, 2*y+2) for y in range(len(levels)-1))
+        for sync in (False, True):
+            for angle in (-.13, .07, .6):
+                clear_scene()
+                points = tuple((cos(angle)*x-sin(angle)*y+3, sin(angle)*x+cos(angle)*y-2)
+                               for y in levels for x in (0, .3))
+                obj = create_object('LeaningStrip', [(points, faces)])
+                for i, vertex in enumerate(obj.data.vertices):
+                    vertex.co = (i % 2*.3, levels[i//2], 0)
+                edit([obj], sync, 'FACE')
+                before = state(obj), coords(obj, 'OtherUV')
+                self.assertEqual(bpy.ops.ho.uvtools_straighten_island(), {'FINISHED'})
+                result = vertex_uv(obj)
+                self.assertEqual(len({result[2*y][0] for y in range(len(levels))}), 1)
+                self.assertEqual(len({result[2*y+1][0] for y in range(len(levels))}), 1)
+                self.assertTrue(all(result[2*y][1] == result[2*y+1][1] for y in range(len(levels))))
+                self.assertEqual((state(obj), coords(obj, 'OtherUV')), before)
+
+    def test_invocation_does_not_inherit_old_keep_direction_from_redo_cache(self):
+        obj = self.make_curved_quad_grid(rotate=True)
+        edit([obj], False, 'FACE')
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island('INVOKE_DEFAULT', direction='KEEP'), {'FINISHED'})
+        last = bpy.context.window_manager.operator_properties_last('ho.uvtools_straighten_island')
+        last.direction = 'KEEP'  # emulate a value saved by the preceding version
+        clear_scene()
+        obj = self.make_curved_quad_grid(rotate=True)
+        edit([obj], False, 'FACE')
+        self.assertEqual(bpy.ops.ho.uvtools_straighten_island('INVOKE_DEFAULT'), {'FINISHED'})
+        points = vertex_uv(obj)
+        # Axis snapping may rotate rows to U or V depending on the nearest frame.
+        for chain in ((0, 1, 2, 3), (0, 4, 8, 12)):
+            self.assertTrue(any(len({points[v][axis] for v in chain}) == 1 for axis in (0, 1)))
+
 
 if __name__ == '__main__':
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(StraightenTests))

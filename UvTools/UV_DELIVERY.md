@@ -29,7 +29,9 @@
 真实两版测试覆盖原生 Ctrl+L → 重复拓扑堆叠 → 三种取消堆叠排列，同步开关均通过。
 原生连选行为未替换；正常连续岛、整体镜像岛及反向网格面不会因此误拆。
 线展开的闭环/分叉不强行压直，同岛多条不相交开链可同时处理。
-自动直化默认保留方向，轴向吸附作为明确参数；不可兼容或不收敛的线网不写入。
+自动直化默认摆正到最近 U/V 轴，保留镜像朝向；“保留线方向”可明确选择。
+三角斜线网无法全部吸轴时先联合直化，再将主行列框架整体摆正，不压塌斜线。
+不可兼容或不收敛的线网不写入。新调用不沿用旧版本 KEEP 方向缓存。
 直化岛默认四边形优先；规则四边形行列直接写回，无展开器后处理，不受近直线
 检测阈值限制。其他拓扑或仅边界直化仍使用阈值路径；结果报告分别列出两类岛数。
 完整岛展开会检查隐藏/未完整显示的范围；日常象限翻转按编辑器可见岛处理。
@@ -38,17 +40,17 @@
 
 | 测试 | 4.5.8 | 5.2.0 |
 | --- | --- | --- |
-| 纯算法：`test_uv_math.py`、`test_uv_topology.py`、`test_uv_chains.py`、`test_uv_unstack.py`、`test_uv_length.py`、`test_uv_overlap.py`、`test_uv_quad.py` | Python 3.11：75 通过 | Python 3.13：75 通过 |
+| 纯算法：`test_uv_math.py`、`test_uv_topology.py`、`test_uv_chains.py`、`test_uv_unstack.py`、`test_uv_length.py`、`test_uv_overlap.py`、`test_uv_quad.py` | Python 3.11：76 通过 | Python 3.13：76 通过 |
 | `test_blender_uv_topology_stack.py` | 18 通过，1 项新版选择测试跳过 | 19 通过 |
 | `test_blender_uv_transform.py` | 26 通过，1 项新版选择测试跳过 | 27 通过 |
-| `test_blender_uv_straighten.py` | 31 通过 | 31 通过 |
+| `test_blender_uv_straighten.py` | 33 通过 | 33 通过 |
 | `test_blender_pies.py` | 10 通过 | 10 通过 |
 | `test_blender_uv_unstack.py` | 21 通过 | 21 通过 |
 | `test_blender_uv_cursor_pie.py` | 8 通过，1 项新版选择测试跳过 | 9 通过 |
 | `test_blender_uv_seams.py` | 16 通过 | 16 通过 |
 | `test_blender_uv_length.py` | 13 通过，2 项新版选择测试跳过 | 15 通过 |
 
-每版有 148 项原生集成测试；4.5 的五项跳过仅针对它不具备的 5.x 精细 UV 同步状态。
+每版有 150 项原生集成测试；4.5 的五项跳过仅针对它不具备的 5.x 精细 UV 同步状态。
 测试的 `injected ... failure` 报告来自故意注入失败，以验证坐标/用户状态回滚。
 
 复现命令：

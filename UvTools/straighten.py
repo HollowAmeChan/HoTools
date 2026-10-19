@@ -72,7 +72,7 @@ class OP_UVTools_LineUnwrap(bpy.types.Operator):
 class OP_UVTools_StraightenIsland(bpy.types.Operator):
     bl_idname = 'ho.uvtools_straighten_island'
     bl_label = '直化所选 UV 岛'
-    bl_description = '四边形岛优先按拓扑生成严格矩形行列；其他岛可按近直线阈值直化，保持原UV旋转与镜像朝向'
+    bl_description = '四边形岛优先按拓扑生成严格矩形行列，默认摆正到最近U/V轴并保留镜像朝向；其他岛可按近直线阈值直化'
     bl_options = {'REGISTER', 'UNDO'}
 
     algorithm: EnumProperty(name='直化算法', items=(
@@ -87,7 +87,8 @@ class OP_UVTools_StraightenIsland(bpy.types.Operator):
                                       description='全链最大垂直偏差与链长的比值，防止密集圆弧被误判')  # type: ignore
     include_internal: BoolProperty(name='包含内部线', default=True,
                                   description='四边形优先模式关闭此项时仅使用边界阈值直化')  # type: ignore
-    direction: EnumProperty(name='直线方向', items=(DIRECTIONS[3], DIRECTIONS[0]), default='KEEP')  # type: ignore
+    direction: EnumProperty(name='直线方向', items=(DIRECTIONS[0], DIRECTIONS[3]), default='AUTO',
+                            options={'SKIP_SAVE'})  # type: ignore
     method: EnumProperty(name='展开方法', items=METHODS, default='ANGLE_BASED')  # type: ignore
     respect_pins: BoolProperty(name='尊重原固定点', default=True)  # type: ignore
 

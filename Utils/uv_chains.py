@@ -127,6 +127,33 @@ def _project_joint_lines(frame, chains):
     return {v: current[v] for v in members}
 
 
+def _align_joint_lines(frame, chains):
+    """Keep crossing/diagonal lines straight, then rotate their dominant frame.
+
+    The fourth angular moment groups parallel AND perpendicular lines together.
+    This keeps grid rows/columns dominant over a few long triangular diagonals.
+    """
+    constraints = _project_joint_lines(frame, chains)
+    directions = []
+    for chain in chains:
+        points = [constraints[v] for v in chain]
+        center, direction = fit_line(points)
+        angle = atan2(direction[1], direction[0])
+        weight = sum(hypot(b[0]-a[0], b[1]-a[1]) for a, b in zip(points, points[1:]))
+        directions.append((center, direction, angle, weight))
+    c4 = fsum(weight*cos(4*angle) for center, direction, angle, weight in directions)
+    s4 = fsum(weight*sin(4*angle) for center, direction, angle, weight in directions)
+    center, direction, angle, weight = max(directions, key=lambda item: (
+        round(c4*cos(4*item[2])+s4*sin(4*item[2]), 10), item[3]))
+    target = _axis_direction(direction, 'AUTO')
+    rotation = atan2(target[1], target[0])-angle
+    c, s = cos(rotation), sin(rotation)
+    def rotate(point):
+        x, y = point[0]-center[0], point[1]-center[1]
+        return center[0]+c*x-s*y, center[1]+s*x+c*y
+    return tuple(rotate(point) for point in frame), {v: rotate(point) for v, point in constraints.items()}
+
+
 def line_constraints(coordinates, chains, mode='AUTO', preserve_lengths=True):
     """Rotate a stable UV frame, then constrain lines; return initial UVs + pins.
 
@@ -185,6 +212,8 @@ def line_constraints(coordinates, chains, mode='AUTO', preserve_lengths=True):
             shift = k-a*x-b*y
             target = x+a*shift, y+b*shift
         if any(abs(a*target[0]+b*target[1]-k) > 1e-6 for a, b, k in rows):
+            if mode == 'AUTO' and not preserve_lengths:
+                return _align_joint_lines(frame, chains)
             raise ValueError('多条直线约束不相容，请降低直化阈值')
         constraints[vertex] = target
     return frame, constraints

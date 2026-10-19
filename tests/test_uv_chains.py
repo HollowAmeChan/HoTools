@@ -114,6 +114,22 @@ class UVChainTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 call()
 
+    def test_auto_orients_dominant_grid_without_collapsing_triangle_diagonals(self):
+        points, quads = grid(noise=.01)
+        points = tuple((cos(.55)*x-sin(.55)*y, sin(.55)*x+cos(.55)*y) for x, y in points)
+        faces = tuple(tri for face in quads for tri in ((face[0], face[1], face[2]), (face[0], face[2], face[3])))
+        chains = find_straight_chains(IslandTopology(points, faces), 10, .02)
+        frame, pins = line_constraints(points, chains, 'AUTO', False)
+        for chain in chains:
+            a, b = pins[chain[0]], pins[chain[-1]]
+            for v in chain[1:-1]:
+                self.assertAlmostEqual((b[0]-a[0])*(pins[v][1]-a[1])-(b[1]-a[1])*(pins[v][0]-a[0]), 0, places=6)
+        # A row/column family is aligned, rather than the longer grid diagonal.
+        rows = [tuple(y*4+x for x in range(4)) for y in range(4)]
+        columns = [tuple(y*4+x for y in range(4)) for x in range(4)]
+        self.assertLess(min(min(max(pins[v][a] for v in chain)-min(pins[v][a] for v in chain)
+                               for a in (0, 1)) for chain in rows+columns), 1e-6)
+
 
 if __name__ == '__main__':
     unittest.main()
