@@ -401,6 +401,134 @@ class BlenderTopologyStackTests(unittest.TestCase):
         bpy.ops.object.mode_set(mode='OBJECT')
         self.assertFalse(bpy.ops.ho.uvtools_topology_stack.poll())
 
+    def test_active_object_targets_for_every_shape_group_in_both_sync_modes(self):
+        quad = ((0, 0), (2, 0), (1.8, .5), (0, 1))
+        qfaces = ((0, 1, 2, 3),)
+        for sync in (False, True):
+            with self.subTest(sync=sync):
+                clear_scene()
+                active = create_object('Z_Active', [(POINTS, FACES), (quad, qfaces)])
+                source = create_object('A_Source', [(transformed(quad, mirror=True), qfaces),
+                                                   (transformed(POINTS, angle=.5, mirror=True), FACES)])
+                edit([active, source], sync, 'FACE')
+                before = coords(active), state(active), state(source), coords(source, 'OtherUV')
+                self.assertEqual(bpy.ops.ho.uvtools_topology_stack(), {'FINISHED'})
+                self.assertEqual(coords(active), before[0])
+                self.assertEqual(set(coords(source)[:4]), set(before[0][12:]))
+                self.assertEqual(set(coords(source)[4:]), set(before[0][:12]))
+                self.assertEqual((state(active), state(source), coords(source, 'OtherUV')), before[1:])
+
+    def test_ambiguous_sources_choose_closest_active_target_not_first_within_tolerance(self):
+        def shape(t):
+            return ((0, 0), (2, 0), (1.7+t, 1.2), (.1, .8))
+        faces = ((0, 1, 2, 3),)
+        for sync in (False, True):
+            clear_scene()
+            active = create_object('Z_Active', [(shape(0), faces),
+                                               (transformed(shape(.4), offset=(6, 3)), faces)])
+            source = create_object('A_Source', [(transformed(shape(.33), offset=(2, -4)), faces),
+                                               (transformed(shape(.02), mirror=True), faces),
+                                               (transformed(shape(.4), angle=.7), faces)])
+            edit([active, source], sync, 'FACE')
+            before = coords(active), state(active), state(source)
+            self.assertEqual(bpy.ops.ho.uvtools_topology_stack(shape_tolerance=.07), {'FINISHED'})
+            self.assertEqual(coords(active), before[0])
+            self.assertEqual(set(coords(source)[:4]), set(before[0][4:]))
+            self.assertEqual(set(coords(source)[4:8]), set(before[0][:4]))
+            self.assertEqual(set(coords(source)[8:]), set(before[0][4:]))
+            self.assertEqual((state(active), state(source)), before[1:])
+            result = coords(source)
+            self.assertEqual(bpy.ops.ho.uvtools_topology_stack(shape_tolerance=.07), {'FINISHED'})
+            self.assertEqual(coords(source), result)
+            self.assertEqual(coords(active), before[0])
+
+    def test_all_sources_copy_final_active_face_master_directly_with_permuted_vertices(self):
+        active_points = transformed(POINTS, angle=.65, mirror=True, offset=(7, 4))
+        active = create_object('Z_Active', [(POINTS, FACES), (active_points, FACES)])
+        order = (2, 4, 0, 3, 1)
+        topology = permuted(transformed(POINTS, angle=-.3, scale=1.8), FACES, order)
+        a = create_object('A_Source', [(topology.coordinates, topology.polygons)])
+        b = create_object('B_Source', [(transformed(POINTS, mirror=True), FACES)])
+        edit([active, a, b], True, 'FACE')
+        bm = bmesh.from_edit_mesh(active.data)
+        bm.faces.active = bm.faces[4]
+        before = coords(active)
+        self.assertEqual(bpy.ops.ho.uvtools_topology_stack(), {'FINISHED'})
+        after = coords(active)
+        self.assertEqual(after[12:], before[12:])
+        self.assertEqual(after[:12], before[12:])
+        self.assertEqual(coords(b), before[12:])
+        self.assertEqual(set(coords(a)), set(before[12:]))
+        # Check mapping orientation/vertex correspondence, not just equal clouds.
+        master_topology = IslandTopology(active_points, FACES)
+        match = stack.match_islands(topology, master_topology, .05)
+        from mathutils import Vector
+        expected = tuple(tuple(Vector(active_points[match.mapping[v]])) for face in topology.polygons for v in face)
+        self.assertEqual(coords(a), expected)
+
+    def test_active_target_has_priority_over_more_similar_nonactive_sources(self):
+        faces = ((0, 1, 2, 3),)
+        a_shape = ((0, 0), (2, 0), (1.7, 1.2), (.1, .8))
+        active_shape = ((6, 3), (8, 3), (7.9, 4.2), (6.1, 3.8))
+        active = create_object('Z_Active', [(active_shape, faces)])
+        source = create_object('A_Source', [(a_shape, faces), (transformed(a_shape), faces)])
+        edit([active, source], True, 'FACE')
+        before = coords(active)
+        self.assertEqual(bpy.ops.ho.uvtools_topology_stack(shape_tolerance=.07), {'FINISHED'})
+        self.assertEqual(coords(active), before)
+        self.assertEqual(coords(source), before+before)
+
+    def test_active_linked_instance_remains_target_despite_dedup_object_name(self):
+        active = create_object('Z_Active', [(POINTS, FACES)])
+        linked = bpy.data.objects.new('A_Linked', active.data)
+        bpy.context.collection.objects.link(linked)
+        linked.select_set(True)
+        source = create_object('B_Source', [(transformed(POINTS), FACES)])
+        edit([active, linked, source], False, 'FACE')
+        before = coords(active)
+        self.assertEqual(bpy.ops.ho.uvtools_topology_stack(), {'FINISHED'})
+        self.assertEqual(coords(active), before)
+        self.assertEqual(coords(source), before)
+
+    def test_group_without_active_target_still_stacks_and_unmatched_active_is_unchanged(self):
+        active = create_object('Z_Active', [(((0, 0), (1, 0), (0, 1)), ((0, 1, 2),))])
+        a = create_object('A_Fallback', [(POINTS, FACES)])
+        b = create_object('B_Fallback', [(transformed(POINTS), FACES)])
+        edit([active, b, a], True, 'FACE')
+        before = coords(active), coords(a)
+        self.assertEqual(bpy.ops.ho.uvtools_topology_stack(), {'FINISHED'})
+        self.assertEqual(coords(active), before[0])
+        self.assertEqual(coords(a), before[1])
+        self.assertEqual(coords(b), before[1])
+
+    def test_unselected_active_face_is_not_promoted_over_selected_active_islands(self):
+        active = create_object('Z_Active', [(POINTS, FACES), (transformed(POINTS, offset=(9, 8)), FACES)])
+        source = create_object('A_Source', [(transformed(POINTS), FACES)])
+        edit([active, source], False, 'FACE')
+        bm = bmesh.from_edit_mesh(active.data)
+        select_uv_faces(bm, set(range(4, 8)))
+        bm.faces.active = bm.faces[0]
+        before = coords(active)
+        self.assertEqual(bpy.ops.ho.uvtools_topology_stack(), {'FINISHED'})
+        self.assertEqual(coords(active), before)
+        self.assertEqual(coords(source), before[12:])
+
+    def test_late_active_target_matching_budget_failure_leaves_all_groups_untouched(self):
+        active = create_object('Z_Active', [(POINTS, FACES)])
+        a = create_object('A_Source', [(transformed(POINTS), FACES)])
+        b = create_object('B_Source', [(transformed(POINTS, offset=(8, 4)), FACES)])
+        edit([active, a, b], True, 'FACE')
+        before = [(coords(obj), state(obj)) for obj in (active, a, b)]
+        actual, calls = stack.match_islands, []
+        def fail_later(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise MatchBudgetExceeded('late active target match budget')
+            return actual(*args, **kwargs)
+        with patch.object(stack, 'match_islands', side_effect=fail_later):
+            self.assertEqual(bpy.ops.ho.uvtools_topology_stack(), {'CANCELLED'})
+        self.assertEqual([(coords(obj), state(obj)) for obj in (active, a, b)], before)
+
 
 if __name__ == '__main__':
     print('Testing topology stack in', bpy.app.version_string)

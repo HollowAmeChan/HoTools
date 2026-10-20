@@ -10,11 +10,59 @@ from Utils.mesh_uv import collect_uv_islands, iter_edit_uv_meshes
 from Utils.uv_topology import IslandTopology, MatchBudgetExceeded, TopologyError, match_islands
 
 
+def _stack_groups(candidates, active_mesh, tolerance):
+    """Elect active-object masters first, then assign each source directly.
+
+    Matching under a tolerance is not transitive. Never let an earlier source
+    consume an active target or route another source through a moved island.
+    Input is already ordered by active face, active object and stable island key.
+    """
+    groups = []
+    active, others = [], []
+    for pair in candidates:
+        (active if pair[0].obj.data == active_mesh else others).append(pair)
+
+    def destination(topology, choices):
+        best = None
+        for order, group in enumerate(choices):
+            match = match_islands(topology, group[1], tolerance)
+            if match is None:
+                continue
+            # Choose the closest shape before considering stable master order.
+            # Mapping/pose is computed against this final, unmoved master only.
+            score = (round(match.error, 12), round(match.vertex_error, 12), order)
+            if best is None or score < best[0]:
+                best = score, group, match
+        return None if best is None else best[1:]
+
+    for island, topology in active:
+        target = destination(topology, groups)
+        if target is None:
+            groups.append([island, topology, []])
+        else:
+            group, match = target
+            group[2].append((island, match))
+    active_groups = tuple(groups)
+    fallback_groups = []
+    for island, topology in others:
+        target = destination(topology, active_groups)
+        if target is None:
+            target = destination(topology, fallback_groups)
+        if target is None:
+            group = [island, topology, []]
+            groups.append(group)
+            fallback_groups.append(group)
+        else:
+            group, match = target
+            group[2].append((island, match))
+    return groups
+
+
 class OP_UVTools_TopologyStack(bpy.types.Operator):
     bl_idname = 'ho.uvtools_topology_stack'
     bl_label = '拓扑堆叠'
     bl_description = ('将所选 UV 所在的同形状、同点数且拓扑对应的完整岛分组，'
-                      '把所有顶点强制对齐到主岛；自动识别镜像，活动面所在岛优先作为主岛')
+                      '每组优先堆到活动对象的岛，活动面优先；多目标比较匹配误差并稳定排序，自动识别镜像')
     bl_options = {'REGISTER', 'UNDO'}
 
     shape_tolerance: FloatProperty(
@@ -62,27 +110,20 @@ class OP_UVTools_TopologyStack(bpy.types.Operator):
             return {'CANCELLED'}
 
         plans, groups, reflected, unmatched = [], [], 0, 0
-        while candidates:
-            master, master_topology = candidates.pop(0)
-            remaining, group_count = [], 0
-            for island, topology in candidates:
-                try:
-                    match = match_islands(topology, master_topology, self.shape_tolerance)
-                except MatchBudgetExceeded as exc:
-                    # Nothing has been written yet, so cancellation is atomic.
-                    self.report({'WARNING'}, str(exc))
-                    return {'CANCELLED'}
-                if match is None:
-                    remaining.append((island, topology))
-                    continue
+        try:
+            assignments = _stack_groups(candidates, context.active_object.data, self.shape_tolerance)
+        except MatchBudgetExceeded as exc:
+            # No coordinates change until all master choices and mappings exist.
+            self.report({'WARNING'}, str(exc))
+            return {'CANCELLED'}
+        for master, master_topology, sources in assignments:
+            for island, match in sources:
                 plans.append((island, tuple(master.coordinates[index] for index in match.mapping)))
                 reflected += match.reflected
-                group_count += 1
-            if group_count:
+            if sources:
                 groups.append(master)
             else:
                 unmatched += 1
-            candidates = remaining
         if not plans:
             self.report({'WARNING'}, '没有同形状、同点数且拓扑对应的岛；可在操作面板调整形状容差')
             return {'CANCELLED'}
