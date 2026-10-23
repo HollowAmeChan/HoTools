@@ -482,6 +482,8 @@ class MappingCore:
         if len(tList) != len(sList):
             return True
         for tgt, src in zip(tList, sList):
+            if not src.name.strip() or not tgt.name.strip():
+                continue
             if obj.name == src.name:
                 obj.name = tgt.name
                 break
@@ -504,6 +506,8 @@ class MappingCore:
         if len(tList) != len(sList):
             return True
         for tgt, src in zip(tList, sList):
+            if not src.name.strip() or not tgt.name.strip():
+                continue
             # 查找对应源组并重命名
             try:
                 grp = groups[src.name]
@@ -531,6 +535,8 @@ class MappingCore:
         if len(tList) != len(sList):
             return True
         for tgt, src in zip(tList, sList):
+            if not src.name.strip() or not tgt.name.strip():
+                continue
             if src.name in blocks:
                 blocks[src.name].name = tgt.name
 
@@ -553,6 +559,8 @@ class MappingCore:
         MappingCore.set_object_mode(obj, 'OBJECT')
 
         for tgt, src in zip(tList, sList):
+            if not src.name.strip() or not tgt.name.strip():
+                continue
             for i, mat in enumerate(mats):
                 if mat and mat.name == src.name:
                     mats[i].name = tgt.name
@@ -584,6 +592,9 @@ class MappingCore:
 
         # 遍历源骨骼和目标骨骼，并根据源骨骼名称进行匹配和重命名
         for tbns, sbns in zip(target_bones, source_bones):
+            # 空行只占据列表位置，不参与重命名，避免 Blender 自动改成 Bone。
+            if not sbns.name.strip() or not tbns.name.strip():
+                continue
             bn = sbns.name
 
             # 如果找到匹配的源骨骼，进行重命名

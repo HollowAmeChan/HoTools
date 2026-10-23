@@ -497,6 +497,11 @@ def _tokenize(name: str) -> tuple[str, ...]:
     return tuple(token for token in core.split(" ") if token)
 
 
+def _has_toe_marker(name: str) -> bool:
+    # 包括 Toe_Thumb、ThumbToe、toeThumb 和全小写的 toethumb 等写法。
+    return "toe" in _normalize_text(name)
+
+
 @lru_cache(maxsize=2048)
 def _finger_key(name: str) -> tuple[str, int] | None:
     """把名字解析成手指的 (族, 节段序号)，序号 1=近端 2=中端 3=远端。
@@ -504,6 +509,9 @@ def _finger_key(name: str) -> tuple[str, int] | None:
     只在“族名所在的词及其之后的词”里找节段词和序号，因此 Forearm / SpringBone1 /
     PinkyToe 之类不会被当成手指；解析不出来返回 None，仍走原来的模糊匹配。
     """
+    if _has_toe_marker(name):
+        return None
+
     name = re.sub(r"\.\d{3}$", "", name or "")  # Blender 重名后缀不是节段序号
     tokens = [token for token in _strip_side_markers(name).split(" ") if token]
 
@@ -692,6 +700,10 @@ def _score_candidate(
     # 左右硬过滤，避免左右手互抢
     if spec.side is not None and bone.side is not None and spec.side != bone.side:
         return -999.0, "side-blocked"
+
+    # 脚趾可能包含完整的手指族名和节段名，不能参与手指匹配（包括模糊匹配）。
+    if spec.group == "finger" and _has_toe_marker(bone.name):
+        return -999.0, "toe-finger-blocked"
 
     name_score, name_reason = _name_similarity_score(spec, bone)
     topology_bonus, topology_reasons = _topology_score(
