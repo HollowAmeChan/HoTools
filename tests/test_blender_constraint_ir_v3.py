@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from bpy.props import PointerProperty, BoolProperty
 from bpy.types import PropertyGroup
-from BoneTools.boneProperty import PG_Hotools_BoneRef, PG_Hotools_AuxBoneInfo
+from BoneTools.boneProperty import PG_Hotools_BoneRef, PG_Hotools_AuxBoneInfo, register_existing_aim_pair, OT_Hotools_RegisterExistingAim
 from Exporter.ConstraintIRExporter import ConstraintIRExporter
 
 class TestProps(PropertyGroup):
@@ -25,9 +25,30 @@ for ty,name,target in [('COPY_LOCATION','Origin','P'),('DAMPED_TRACK','Aim','R')
     if ty=='LOCKED_TRACK':c.track_axis='TRACK_NEGATIVE_Z';c.lock_axis='LOCK_X'
 before=ConstraintIRExporter.export_to_dict(rig)
 assert len(before['knownConstraints'])==1 and len(before['unknownConstraints'])==2
-aux=owner.bone.hotools_boneprops.auxBone;aux.isAuxBone=True;aux.auxType='AIM';aux.aimVersion=1
-for n in ('R','U'):aux.sourceBones.add().name=n
-for n in ('Aim','Up'):aux.constraintNames.add().name=n
+before_pose=owner.matrix_basis.copy()
+before_constraints=[(c.name,c.type,c.influence,c.subtarget) for c in owner.constraints]
+register_existing_aim_pair(owner)
+register_existing_aim_pair(owner)
+assert owner.matrix_basis==before_pose
+assert before_constraints==[(c.name,c.type,c.influence,c.subtarget) for c in owner.constraints]
+aux=owner.bone.hotools_boneprops.auxBone
+assert [r.name for r in aux.sourceBones]==['R','U']
+assert [r.name for r in aux.constraintNames]==['Aim','Up']
+bpy.utils.register_class(OT_Hotools_RegisterExistingAim)
+from Utils.bone_selection import select_bones
+bpy.ops.object.mode_set(mode='POSE');select_bones(rig,['Owner'])
+assert bpy.ops.hotools.register_existing_aim()=={'FINISHED'}
+bpy.ops.object.mode_set(mode='OBJECT')
+aux=rig.data.bones['Owner'].hotools_boneprops.auxBone
+aux.auxType='FAN'
+try:
+    register_existing_aim_pair(rig.pose.bones['Owner'])
+except ValueError:
+    pass
+else:
+    raise AssertionError('Existing Fan ownership was overwritten')
+assert aux.auxType=='FAN'
+aux.auxType='AIM'
 after=ConstraintIRExporter.export_to_dict(rig)
 assert after['schemaVersion']==3 and after['unknownConstraints']==[]
 assert len(after['knownConstraints'])==3

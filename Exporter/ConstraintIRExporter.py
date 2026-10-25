@@ -366,6 +366,34 @@ class ConstraintIRExporter:
         return result
 
     @classmethod
+    def inspect_aim_pair(cls, armature, owner, names=None):
+        """Describe one strict rotation-only pair, without modifying ownership."""
+        stack = list(getattr(owner, "constraints", ()))
+        selected = [(i, c) for i, c in enumerate(stack)
+                    if (names is None or c.name in names) and c.type in {"DAMPED_TRACK", "LOCKED_TRACK"}]
+        if len(selected) != 2 or selected[1][0] != selected[0][0] + 1:
+            return None
+        pair = [c for _, c in selected]
+        if [c.type for c in pair] != ["DAMPED_TRACK", "LOCKED_TRACK"]:
+            return None
+        sources = [str(getattr(c, "subtarget", "")) for c in pair]
+        if len(set(sources)) != 2 or owner.name in sources:
+            return None
+        if any(not cls._targets_armature_bone(c, armature) or cls._bone_get(armature.data.bones, c.subtarget) is None for c in pair):
+            return None
+        if any(getattr(c, "influence", 0) != 1.0 or getattr(c, "owner_space", "") != "WORLD" or getattr(c, "target_space", "") != "WORLD" or getattr(c, "head_tail", 0) != 0 or getattr(c, "use_bbone_shape", False) for c in pair):
+            return None
+        if len({bool(getattr(c, "mute", False)) for c in pair}) != 1:
+            return None
+        damped, locked = pair
+        aim_axis, up_axis = getattr(damped, "track_axis", ""), getattr(locked, "track_axis", "")
+        axes = {"TRACK_X", "TRACK_Y", "TRACK_Z", "TRACK_NEGATIVE_X", "TRACK_NEGATIVE_Y", "TRACK_NEGATIVE_Z"}
+        if aim_axis not in axes or up_axis not in axes or aim_axis[-1] == up_axis[-1] or getattr(locked, "lock_axis", "") != "LOCK_" + aim_axis[-1]:
+            return None
+        return {"selected": selected, "sources": sources, "aim_axis": aim_axis, "up_axis": up_axis,
+                "muted": bool(getattr(damped, "mute", False))}
+
+    @classmethod
     def _collect_aim_bindings(cls, armature, data_bones, pose_bones, claimed):
         bindings, records = [], []
         for bone in data_bones:
@@ -381,34 +409,18 @@ class ConstraintIRExporter:
             if any(cls._bone_get(armature.data.bones, name) is None for name in sources):
                 continue
             owner = cls._bone_get(pose_bones, bone.name)
-            stack = list(getattr(owner, "constraints", ()))
             names = cls._constraint_names(aux)
             # Aim owns rotation only. Location and LBS references are independent.
             if len(names) < 2 or len(set(names)) != len(names):
                 continue
-            selected = [(i, c) for i, c in enumerate(stack) if c.name in names and c.type in {"DAMPED_TRACK", "LOCKED_TRACK"}]
-            if len(selected) != 2 or selected[1][0] != selected[0][0] + 1:
+            info = cls.inspect_aim_pair(armature, owner, names)
+            if info is None or info["sources"] != sources:
                 continue
+            selected = info["selected"]
             indices = [i for i, _ in selected]
-            pair = [c for _, c in selected]
-            if [getattr(c, "type", "") for c in pair] != ["DAMPED_TRACK", "LOCKED_TRACK"]:
-                continue
-            if any(not cls._targets_armature_bone(c, armature) or c.subtarget != source for c, source in zip(pair, sources)):
-                continue
-            if any(getattr(c, "influence", 0) != 1.0 or getattr(c, "owner_space", "") != "WORLD" or getattr(c, "target_space", "") != "WORLD" or getattr(c, "head_tail", 0) != 0 or getattr(c, "use_bbone_shape", False) for c in pair):
-                continue
-            if len({bool(getattr(c, "mute", False)) for c in pair}) != 1:
-                continue
-            damped, locked = pair
-            aim_axis = getattr(damped, "track_axis", "")
-            up_axis = getattr(locked, "track_axis", "")
-            axes = {"TRACK_X", "TRACK_Y", "TRACK_Z", "TRACK_NEGATIVE_X", "TRACK_NEGATIVE_Y", "TRACK_NEGATIVE_Z"}
-            if aim_axis not in axes or up_axis not in axes or aim_axis[-1] == up_axis[-1] or getattr(locked, "lock_axis", "") != "LOCK_" + aim_axis[-1]:
-                continue
             raw = [cls._raw_constraint(c, armature, i) for i, c in selected]
             bindings.append(AimBindingIR(
-                bone.name, sources[0], sources[1], aim_axis, up_axis, indices,
-                bool(getattr(damped, "mute", False)),
+                bone.name, sources[0], sources[1], info["aim_axis"], info["up_axis"], indices, info["muted"],
             ))
             for item in raw:
                 claimed.add((bone.name, item.stack_index))

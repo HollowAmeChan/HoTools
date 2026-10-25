@@ -11,7 +11,7 @@ from bpy.props import (
 
 from Utils import bone_utils
 from .hoAux.properties import PG_HoAuxBoneInfo
-from Utils.bone_selection import select_bones
+from Utils.bone_selection import select_bones, selected_pose_bones
 
 
 # 辅助骨类型枚举：与命名体系中的 marker 一一对应。
@@ -134,6 +134,62 @@ def _replace_aux_constraints(pose_bone, constraints):
     aux.constraintNames.clear()
     for constraint in constraints:
         _register_aux_constraint(pose_bone, constraint)
+
+
+def inspect_existing_aim_pair(pose_bone):
+    from Exporter.ConstraintIRExporter import ConstraintIRExporter
+    if pose_bone is None:
+        raise ValueError("请选择带 Damped Track＋Locked Track 的骨骼")
+    armature = pose_bone.id_data
+    aux = pose_bone.bone.hotools_boneprops.auxBone
+    if aux.isAuxBone and aux.auxType not in {"NONE", "AIM"}:
+        raise ValueError(f"{pose_bone.name} 已属于 {aux.auxType}，不会覆盖其他辅助骨关系")
+    info = ConstraintIRExporter.inspect_aim_pair(armature, pose_bone)
+    if info is None:
+        raise ValueError(f"{pose_bone.name} 需要一组相邻的完整 World Damped＋Locked，目标和轴须匹配 Aim v1")
+    return info
+
+
+def register_existing_aim_pair(pose_bone):
+    """Explicitly adopt a validated pair; never move the bone or edit constraints."""
+    info = inspect_existing_aim_pair(pose_bone)
+    aux = pose_bone.bone.hotools_boneprops.auxBone
+    owned = {ref.name for ref in aux.constraintNames} if aux.isAuxBone and aux.auxType == "AIM" else set()
+    owned.update(c.name for _, c in info["selected"])
+    aux.isAuxBone = True
+    aux.auxType = "AIM"
+    aux.aimVersion = 1
+    aux.sourceBones.clear()
+    for name in info["sources"]:
+        aux.sourceBones.add().name = name
+    _replace_aux_constraints(pose_bone, [c for c in pose_bone.constraints if c.name in owned])
+
+
+class OT_Hotools_RegisterExistingAim(Operator):
+    bl_idname = "hotools.register_existing_aim"
+    bl_label = "登记现有跟踪对为 Aim"
+    bl_description = "将所选骨骼现有的 Damped＋Locked 旋转对登记为 Ho Aim，供 IR 导出；不修改姿态或位置约束"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and context.object.type == "ARMATURE" and context.mode == "POSE"
+
+    def execute(self, context):
+        bones = selected_pose_bones(context, context.object)
+        if not bones:
+            self.report({"ERROR"}, "请选择需要登记的骨骼")
+            return {"CANCELLED"}
+        try:
+            for bone in bones:
+                inspect_existing_aim_pair(bone)
+            for bone in bones:
+                register_existing_aim_pair(bone)
+        except ValueError as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"已登记 {len(bones)} 个 Aim；请重新导出约束 IR")
+        return {"FINISHED"}
 
 
 class PG_Hotools_AuxGroupState(PropertyGroup):
@@ -269,6 +325,7 @@ class PT_Hotools_PosebonePanel(Panel):
         layout.prop(props, "endBone", toggle=False)
         layout.prop(props, "humanoidMapping", toggle=False)
         layout.prop(props, "deformMappingTag", toggle=False)
+        layout.operator("hotools.register_existing_aim", icon="CON_TRACKTO")
 
         aux = props.auxBone
         if aux.isAuxBone:
@@ -967,6 +1024,7 @@ cls = [
     PG_Hotools_AuxBoneInfo,
     PG_Hotools_BoneProps,
     OT_Hotools_AuxBoneClear,
+    OT_Hotools_RegisterExistingAim,
     OT_Hotools_AuxGroupToggle,
     OT_Hotools_AuxGroupSelect,
     OT_Hotools_AuxBoneSelect,
