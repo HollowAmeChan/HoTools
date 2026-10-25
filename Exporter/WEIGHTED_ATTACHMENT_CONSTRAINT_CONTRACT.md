@@ -1,6 +1,6 @@
 # Ho 手工加权附着框架：约束导出契约草案
 
-状态：2026-10-25 可行性验证／待实现提案。没有放开生产导出器的未知约束支持，没有改变 IR v2 的含义。
+状态：2026-10-25 的可行性验证与历史提案。当前生产契约见 [IR v3](IR_V3.md)，保留 v2 读取含义。本文的早期验证边界不自动代表后续所有后端已实测。
 
 后续决策：常用类型先直通，详见 [常用约束直通 IR 与三后端方案](DIRECT_CONSTRAINT_IMPORT_CONTRACT.md)。COPY_LOCATION、COPY_ROTATION、ARMATURE 拟独立成为已知直通类型；未标记的 Damped Track／Locked Track 继续 unknown。本文关于完整 frame profile 的建议保留为未来生成工具方向，不再作为前三类已知认领的前置条件。
 

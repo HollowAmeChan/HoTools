@@ -20,7 +20,7 @@ def ureg_props():
 class OP_exportRigConstraintIR(Operator, ExportHelper):
     bl_idname = "ho.export_rig_constraint_ir"
     bl_label = "导出 Rig 约束 IR"
-    bl_description = "导出 Aux 骨、原始 Blender 约束参数和 MCH 绑定；落地方案由导入端决定"
+    bl_description = "导出常用约束、MCH/Aux 关系和显式 Aim 旋转语义的 IR v3；落地方案由导入端决定"
     filename_ext = ".json"
 
     filter_glob: bpy.props.StringProperty(
@@ -38,7 +38,7 @@ class OP_exportRigConstraintIR(Operator, ExportHelper):
         try:
             constraint_ir = ConstraintIRExporter.build_ir(armature)
             if constraint_ir.is_empty():
-                self.report({"WARNING"}, "未找到 Aux 骨、MCH 开关或 MCH 绑定")
+                self.report({"WARNING"}, "未找到骨骼约束或已登记的 Rig 关系")
                 return {"CANCELLED"}
 
             with open(self.filepath, "w", encoding="utf-8") as output:

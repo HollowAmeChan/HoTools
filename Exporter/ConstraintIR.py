@@ -12,7 +12,7 @@ from typing import Any
 
 
 SCHEMA = "hotools.rig-constraint-ir"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def utc_export_time() -> str:
@@ -88,7 +88,7 @@ class AuxBoneIR:
 
 @dataclass
 class KnownConstraintIR:
-    """A raw constraint claimed by one generated rig relation."""
+    """A raw constraint claimed by a generated relation or a known direct type."""
 
     owner_bone: str
     relation_type: str
@@ -126,6 +126,27 @@ class UnknownConstraintIR:
 
 
 @dataclass
+class AimBindingIR:
+    """Rotation-only Aim semantics; independent of position binding and LBS."""
+
+    owner_bone: str
+    target_bone: str
+    up_bone: str
+    aim_axis: str
+    up_axis: str
+    constraint_stack_indices: list[int]
+    muted: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ownerBone": self.owner_bone, "semanticType": "AIM", "semanticVersion": 1,
+            "targetBone": self.target_bone, "upBone": self.up_bone,
+            "upMode": "OBJECT_POSITION", "aimAxis": self.aim_axis, "upAxis": self.up_axis,
+            "muted": self.muted, "constraintStackIndices": self.constraint_stack_indices,
+        }
+
+
+@dataclass
 class RigConstraintIR:
     """Top-level, platform-neutral snapshot of one armature's rig relations."""
 
@@ -135,6 +156,8 @@ class RigConstraintIR:
     aux_bones: list[AuxBoneIR] = field(default_factory=list)
     known_constraints: list[KnownConstraintIR] = field(default_factory=list)
     unknown_constraints: list[UnknownConstraintIR] = field(default_factory=list)
+    aim_bindings: list[AimBindingIR] = field(default_factory=list)
+    binding_context: dict[str, Any] = field(default_factory=dict)
     export_time: str = field(default_factory=utc_export_time)
 
     def is_empty(self) -> bool:
@@ -161,4 +184,6 @@ class RigConstraintIR:
             "unknownConstraints": [
                 constraint.to_dict() for constraint in self.unknown_constraints
             ],
+            "aimBindings": [binding.to_dict() for binding in self.aim_bindings],
+            "bindingContext": self.binding_context,
         }

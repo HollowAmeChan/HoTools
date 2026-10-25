@@ -218,9 +218,11 @@ def test_neutral_ir_contract():
         "auxBones",
         "knownConstraints",
         "unknownConstraints",
+        "aimBindings",
+        "bindingContext",
     ]
     assert data["schema"] == SCHEMA == "hotools.rig-constraint-ir"
-    assert data["schemaVersion"] == SCHEMA_VERSION == 2
+    assert data["schemaVersion"] == SCHEMA_VERSION == 3
     assert data["armatureName"] == "HeroRig"
     assert data["mchEnabledBones"] == ["UpperArm"]
 
@@ -271,19 +273,19 @@ def test_neutral_ir_contract():
     assert twist["constraints"][1]["parameters"]["owner_space"] == "LOCAL_WITH_PARENT"
     assert twist["constraints"][1]["parameters"]["target_space"] == "WORLD"
 
-    assert len(data["unknownConstraints"]) == 1
-    unknown = data["unknownConstraints"][0]
-    assert unknown["ownerBone"] == "Twist01"
-    assert unknown["constraint"]["targetObjectName"] == "OtherRig"
-    assert unknown["constraint"]["targetBoneName"] == "OtherBone"
-    assert unknown["reason"] == "辅助骨约束未匹配 HoTools 生成规则"
+    assert data["unknownConstraints"] == []
+    direct = next(x for x in data["knownConstraints"] if x["relationType"] == "DIRECT_CONSTRAINT")
+    assert direct["ownerBone"] == "Twist01"
+    assert direct["constraint"]["targetObjectName"] == "OtherRig"
+    assert direct["constraint"]["targetBoneName"] == "OtherBone"
     assert [
-        (item["relationType"], item["auxType"])
+        (item["relationType"], item.get("auxType", ""))
         for item in data["knownConstraints"]
     ] == [
         ("AUX_CONSTRAINT", "FAN"),
         ("MCH_BINDING", "MCH"),
         ("AUX_CONSTRAINT", "TWIST"),
+        ("DIRECT_CONSTRAINT", ""),
         ("AUX_CONSTRAINT", "TWIST"),
     ]
 
@@ -416,7 +418,7 @@ def test_known_and_unknown_scan_is_complete_and_deduplicated():
     assert len(unknown_keys) == len(data["unknownConstraints"])
     assert known_keys | unknown_keys == all_keys
     assert ("Forearm", 0) in unknown_keys
-    assert ("FanPin", 0) in unknown_keys
+    assert ("FanPin", 0) in known_keys
     assert ("SidecarBone", 1) in unknown_keys
     assert not any(
         item["ownerBone"] == "SidecarBone"

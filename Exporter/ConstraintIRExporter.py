@@ -7,6 +7,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from .ConstraintIR import (
+    AimBindingIR,
     AuxBoneIR,
     KnownConstraintIR,
     MCHBindingIR,
@@ -20,6 +21,7 @@ class ConstraintIRExporter:
     """Export Aux and MCH relations without choosing Unity runtime semantics."""
 
     MCH_AUX_TYPE = "MCH"
+    DIRECT_TYPES = frozenset({"COPY_LOCATION", "COPY_ROTATION", "ARMATURE"})
 
     _NON_PARAMETER_PROPERTIES = {
         "rna_type",
@@ -45,6 +47,11 @@ class ConstraintIRExporter:
         "target_space",
     )
     _TYPE_FALLBACK_PARAMETERS = {
+        "ARMATURE": (
+            "use_deform_preserve_volume", "use_bone_envelopes", "use_current_location",
+        ),
+        "DAMPED_TRACK": ("head_tail", "use_bbone_shape", "track_axis"),
+        "LOCKED_TRACK": ("head_tail", "use_bbone_shape", "track_axis", "lock_axis"),
         "COPY_ROTATION": (
             "euler_order",
             "mix_mode",
@@ -141,6 +148,12 @@ class ConstraintIRExporter:
             pose_bones,
             known_constraint_ids,
         )
+        aim_bindings, aim_records = cls._collect_aim_bindings(
+            armature, data_bones, pose_bones, known_constraint_ids,
+        )
+        direct_records = cls._collect_direct_constraints(
+            armature, pose_bones, known_constraint_ids,
+        )
         unknown_constraints = cls._collect_unknown_constraints(
             armature,
             pose_bones,
@@ -151,6 +164,9 @@ class ConstraintIRExporter:
             mch_bindings,
             aux_bones,
         )
+        known_constraints.extend(aim_records)
+        known_constraints.extend(direct_records)
+        known_constraints.sort(key=lambda item: (item.owner_bone, item.constraint.stack_index))
 
         kwargs = {}
         if export_time is not None:
@@ -162,6 +178,8 @@ class ConstraintIRExporter:
             aux_bones=aux_bones,
             known_constraints=known_constraints,
             unknown_constraints=unknown_constraints,
+            aim_bindings=aim_bindings,
+            binding_context=cls._binding_context(armature, data_bones),
             **kwargs,
         )
 
@@ -263,12 +281,12 @@ class ConstraintIRExporter:
             constraint_names = cls._constraint_names(aux)
             constraint_name_set = set(constraint_names)
             aux_type = str(getattr(aux, "auxType", "NONE") or "NONE")
-            is_mch = aux_type.strip().upper() == cls.MCH_AUX_TYPE
+            strict_binding = aux_type.strip().upper() in {cls.MCH_AUX_TYPE, "AIM"}
             pose_bone = cls._bone_get(pose_bones, bone.name)
             constraints = []
-            # MCH constraints can only be claimed by the strict binding path.
-            # A malformed MCH record must remain visible in unknownConstraints.
-            if pose_bone is not None and not is_mch:
+            # MCH/Aim must pass their own structural recognition, rather than
+            # being claimed just because a name was registered on the bone.
+            if pose_bone is not None and not strict_binding:
                 constraints = []
                 for stack_index, constraint in enumerate(
                     getattr(pose_bone, "constraints", ())
@@ -330,6 +348,148 @@ class ConstraintIRExporter:
                 )
             )
         return result
+
+    @classmethod
+    def _collect_direct_constraints(cls, armature, pose_bones, claimed):
+        result = []
+        for owner in cls._sorted_bones(pose_bones):
+            for index, constraint in enumerate(getattr(owner, "constraints", ())):
+                key = (owner.name, index)
+                if key in claimed or getattr(constraint, "type", "") not in cls.DIRECT_TYPES:
+                    continue
+                claimed.add(key)
+                result.append(KnownConstraintIR(
+                    owner_bone=owner.name,
+                    relation_type="DIRECT_CONSTRAINT",
+                    constraint=cls._raw_constraint(constraint, armature, index),
+                ))
+        return result
+
+    @classmethod
+    def _collect_aim_bindings(cls, armature, data_bones, pose_bones, claimed):
+        bindings, records = [], []
+        for bone in data_bones:
+            props = getattr(bone, "hotools_boneprops", None)
+            aux = getattr(props, "auxBone", None)
+            if not getattr(aux, "isAuxBone", False) or getattr(aux, "auxType", "") != "AIM":
+                continue
+            if getattr(aux, "aimVersion", 0) != 1:
+                continue
+            sources = cls._source_bone_names(aux)
+            if len(sources) != 2 or len(set(sources)) != 2 or bone.name in sources:
+                continue
+            if any(cls._bone_get(armature.data.bones, name) is None for name in sources):
+                continue
+            owner = cls._bone_get(pose_bones, bone.name)
+            stack = list(getattr(owner, "constraints", ()))
+            names = cls._constraint_names(aux)
+            # Aim owns rotation only. Location and LBS references are independent.
+            if len(names) < 2 or len(set(names)) != len(names):
+                continue
+            selected = [(i, c) for i, c in enumerate(stack) if c.name in names and c.type in {"DAMPED_TRACK", "LOCKED_TRACK"}]
+            if len(selected) != 2 or selected[1][0] != selected[0][0] + 1:
+                continue
+            indices = [i for i, _ in selected]
+            pair = [c for _, c in selected]
+            if [getattr(c, "type", "") for c in pair] != ["DAMPED_TRACK", "LOCKED_TRACK"]:
+                continue
+            if any(not cls._targets_armature_bone(c, armature) or c.subtarget != source for c, source in zip(pair, sources)):
+                continue
+            if any(getattr(c, "influence", 0) != 1.0 or getattr(c, "owner_space", "") != "WORLD" or getattr(c, "target_space", "") != "WORLD" or getattr(c, "head_tail", 0) != 0 or getattr(c, "use_bbone_shape", False) for c in pair):
+                continue
+            if len({bool(getattr(c, "mute", False)) for c in pair}) != 1:
+                continue
+            damped, locked = pair
+            aim_axis = getattr(damped, "track_axis", "")
+            up_axis = getattr(locked, "track_axis", "")
+            axes = {"TRACK_X", "TRACK_Y", "TRACK_Z", "TRACK_NEGATIVE_X", "TRACK_NEGATIVE_Y", "TRACK_NEGATIVE_Z"}
+            if aim_axis not in axes or up_axis not in axes or aim_axis[-1] == up_axis[-1] or getattr(locked, "lock_axis", "") != "LOCK_" + aim_axis[-1]:
+                continue
+            raw = [cls._raw_constraint(c, armature, i) for i, c in selected]
+            bindings.append(AimBindingIR(
+                bone.name, sources[0], sources[1], aim_axis, up_axis, indices,
+                bool(getattr(damped, "mute", False)),
+            ))
+            for item in raw:
+                claimed.add((bone.name, item.stack_index))
+                records.append(KnownConstraintIR(bone.name, "AIM_BINDING", item, bone.name, "AIM"))
+        return bindings, records
+
+    @classmethod
+    def _binding_context(cls, armature, bones):
+        def matrix(value):
+            if value is None:
+                return []
+            return [float(v) for row in value for v in row]
+        position_only = cls._position_only_bones(armature, bones)
+        return {
+            "space": "BLENDER_ARMATURE", "matrixLayout": "ROW_MAJOR",
+            "objectMatrix": matrix(getattr(armature, "matrix_world", None)),
+            "bones": [{
+                "boneName": b.name,
+                "parentBone": str(getattr(getattr(b, "parent", None), "name", "")),
+                "restMatrix": matrix(getattr(b, "matrix_local", None)),
+                "poseBasis": matrix(getattr(cls._bone_get(getattr(getattr(armature, "pose", None), "bones", ()), b.name), "matrix_basis", None)),
+                "inheritScale": str(getattr(b, "inherit_scale", "FULL")),
+                "connected": bool(getattr(b, "use_connect", False)),
+                "positionOnly": b.name in position_only,
+                "hasPoseAnimation": cls._has_pose_animation(armature, b.name),
+            } for b in bones],
+        }
+
+    @staticmethod
+    def _has_pose_animation(armature, bone_name):
+        anim = getattr(armature, "animation_data", None)
+        if anim is None:
+            return False
+        prefix = 'pose.bones[' + json.dumps(bone_name, ensure_ascii=False) + ']'
+        curves = list(getattr(anim, "drivers", ()))
+        actions = [getattr(anim, "action", None)]
+        actions.extend(getattr(strip, "action", None) for track in getattr(anim, "nla_tracks", ()) for strip in track.strips)
+        for action in actions:
+            if action is None:
+                continue
+            curves.extend(getattr(action, "fcurves", ()))
+            for layer in getattr(action, "layers", ()):
+                for strip in layer.strips:
+                    for bag in getattr(strip, "channelbags", ()):
+                        curves.extend(bag.fcurves)
+        return any(getattr(curve, "data_path", "").startswith(prefix) for curve in curves)
+
+    @classmethod
+    def _position_only_bones(cls, armature, bones):
+        """Conservative channel-use proof; never infer point semantics from a name."""
+        scenes = getattr(armature, "users_scene", None)
+        if scenes is None:
+            return set()
+        names = {b.name for b in bones}
+        full = {getattr(getattr(b, "parent", None), "name", "") for b in bones}
+        objects = {o.name: o for scene in scenes for o in scene.objects}.values()
+        for obj in objects:
+            if getattr(obj, "parent", None) == armature and getattr(obj, "parent_type", "") == "BONE":
+                full.add(getattr(obj, "parent_bone", ""))
+            modifiers = getattr(obj, "modifiers", ())
+            if any(getattr(m, "object", None) == armature for m in modifiers):
+                if any(getattr(m, "type", "") == "NODES" for m in modifiers):
+                    return set()
+                full.update(getattr(g, "name", "") for g in getattr(obj, "vertex_groups", ()))
+            anim = getattr(obj, "animation_data", None)
+            for driver in getattr(anim, "drivers", ()):
+                for variable in driver.driver.variables:
+                    for target in variable.targets:
+                        if getattr(target, "id", None) == armature:
+                            full.add(getattr(target, "bone_target", ""))
+        owners = list(getattr(getattr(armature, "pose", None), "bones", ())) + list(objects)
+        positional = {"COPY_LOCATION", "DAMPED_TRACK", "LOCKED_TRACK", "STRETCH_TO"}
+        for owner in owners:
+            for c in getattr(owner, "constraints", ()):
+                if getattr(c, "target", None) == armature:
+                    if getattr(c, "type", "") not in positional or getattr(c, "head_tail", 0) != 0 or getattr(c, "use_bbone_shape", False):
+                        full.add(getattr(c, "subtarget", ""))
+                for target in getattr(c, "targets", ()):
+                    if getattr(target, "target", None) == armature:
+                        full.add(getattr(target, "subtarget", ""))
+        return names - full
 
     @classmethod
     def _collect_known_constraint_records(
@@ -402,7 +562,7 @@ class ConstraintIRExporter:
                         reason=(
                             "辅助骨约束未匹配 HoTools 生成规则"
                             if cls._is_aux_bone(armature, pose_bone.name)
-                            else "未被 MCH/Aux 关系认领"
+                            else "约束类型或生成关系尚未识别"
                         ),
                     )
                 )
@@ -472,6 +632,11 @@ class ConstraintIRExporter:
         rna = getattr(constraint, "bl_rna", None)
         properties = getattr(rna, "properties", None)
         if properties is None:
+            if getattr(constraint, "type", "") == "ARMATURE":
+                return {"targets": [{"rnaType": "ArmatureConstraintTarget", "properties": {
+                    "target": None if getattr(t, "target", None) is None else {"name": str(getattr(t.target, "name", "")), "rnaType": "Object"},
+                    "subtarget": str(getattr(t, "subtarget", "")), "weight": getattr(t, "weight", 0.0),
+                }} for t in getattr(constraint, "targets", ())]}
             return {}
 
         result = {}

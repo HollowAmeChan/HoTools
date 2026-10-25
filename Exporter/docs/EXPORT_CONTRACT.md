@@ -6,11 +6,10 @@ IR 的固定标识为：
 
 ```text
 schema = hotools.rig-constraint-ir
-schemaVersion = 2
+schemaVersion = 3
 ```
 
-版本 2 是新的中立 IR，不兼容旧 Unity 映射 JSON；导入端必须按 `schema` 与
-`schemaVersion` 严格拒绝旧结构，不做字段猜测或回退。
+版本 3 增加常用约束直通、独立 Aim 旋转语义和绑定上下文。当前 Unity 端同时读取中立 IR v2/v3，v2 不自动重解释 unknown；旧 Unity 映射 JSON 仍不兼容，不做字段猜测。具体新增字段、生成工具属性与后端范围见 [IR v3](../IR_V3.md)。
 
 旁路清单版本固定为 `3.0`，约束文件条目的 `kind` 固定为
 `rigConstraintIR`。不保留旧 `constraints` 条目或旧字段兼容层。
@@ -22,7 +21,7 @@ schemaVersion = 2
 1. 在清零主骨前复制 `head`、`tail` 和 `roll`，创建 `MCH_<主骨名>`。
 2. MCH 使用主骨原来的父级，与主骨同级；原始子骨仍直接挂在主骨下，MCH 不插入形变父子链。
 3. 所有 MCH 创建完成后，清除主骨相对父级的静置局部旋转，并清除主骨 Pose 变换。
-4. 指向已生成主骨的同骨架既有约束和 Driver 骨目标改指对应 MCH。
+4. 指向已生成主骨的同骨架既有约束、Armature 多目标、Aim 属性的目标角色和 Driver 骨目标改指对应 MCH。
 5. 在 MCH PoseBone 上创建 Blender `CHILD_OF` 约束，名称统一为 `HoTools_MCH_Parent`，目标为原主骨，影响为 1，启用位置和旋转、禁用缩放，并设置绑定姿态逆矩阵。
 6. 在 MCH data Bone 上写入 `auxType=MCH`、原主骨 `sourceBones`，并把该约束的实际名称登记到 `constraintNames`。这是约束所有权事实，不靠骨名、名称前缀或全局同名搜索反推。
 
@@ -46,14 +45,21 @@ IR 必须先从所有 `data.bones` 采集 `generateMCH=True` 的原骨名，再�
 ```json
 {
   "schema": "hotools.rig-constraint-ir",
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "exportTime": "2026-08-03T00:00:00Z",
   "armatureName": "Armature",
   "mchEnabledBones": [],
   "mchBindings": [],
   "auxBones": [],
   "knownConstraints": [],
-  "unknownConstraints": []
+  "unknownConstraints": [],
+  "aimBindings": [],
+  "bindingContext": {
+    "space": "BLENDER_ARMATURE",
+    "matrixLayout": "ROW_MAJOR",
+    "objectMatrix": [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],
+    "bones": []
+  }
 }
 ```
 
@@ -62,14 +68,16 @@ IR 必须先从所有 `data.bones` 采集 `generateMCH=True` 的原骨名，再�
 | 字段 | 含义 |
 | --- | --- |
 | `schema` | 固定为 `hotools.rig-constraint-ir`。 |
-| `schemaVersion` | 固定为 `2`。不认识该版本的消费者必须拒绝猜测解析。 |
+| `schemaVersion` | 当前输出 `3`，Unity 读取 `2/3`。不认识版本的消费者必须拒绝猜测解析。 |
 | `exportTime` | 导出快照时间，使用 UTC ISO 8601 字符串。 |
 | `armatureName` | 当前 Armature 对象名。 |
 | `mchEnabledBones` | 当前骨架中 `generateMCH=True` 的 data Bone 名称列表。 |
 | `mchBindings` | 临时导出态中被严格识别出的 MCH `CHILD_OF` 绑定。 |
 | `auxBones` | 由 `auxBone.isAuxBone` 明确标记的全部辅助骨（包括 MCH）及其自描述元数据、已认领原始约束。 |
-| `knownConstraints` | 被 MCH/Aux 生成元数据显式认领的约束全集；每条带 owner、原始关系类型、原样 `auxType` 和原始约束。 |
+| `knownConstraints` | 被 MCH/Aux/Aim 关系或三类常用类型认领的原始约束全集；通用直通不伪造 `auxType`。 |
 | `unknownConstraints` | 全骨架扫描后未被任何已知关系认领的约束；每条带 owner、原因和原始约束。 |
+| `aimBindings` | 只负责旋转的 Aim 语义，不包含 LBS 或位置绑定。 |
+| `bindingContext` | 最终导出态的空间、对象矩阵、每骨静置／pose basis、父级和输入／消费者事实。 |
 
 列表使用稳定顺序：骨记录按骨名排序，约束沿 PoseBone 约束栈顺序。`sourceBones` 保留作者写入顺序；其他列表去重时保留第一次出现的位置。
 
@@ -174,7 +182,15 @@ bone.hotools_boneprops.auxBone.isAuxBone == true
 4. 普通 Aux 的 `constraints` 只反查当前 PoseBone 栈中被 `constraintNames` 明确认领的约束，并逐条保存原始类型、栈索引、目标和类型专用参数。跨对象目标仍保留原始对象名；只有同骨架目标才进入 `involvedBones`。
 5. 具有相同原始 `auxType` 和完全相同有序 `sourceBones` 的普通 aux 骨属于同一采集组。该分组只用于计算关联范围，不改变逐骨记录结构。
 
-约束名称只是一根 owner 骨内部的引用键：解析时必须先由属性找到 Aux 骨，再在该 PoseBone 自己的约束栈内查找 `constraintNames`；禁止跨骨骼全局搜索同名约束。MCH 不允许走普通 Aux 认领路径，其 `auxBones[]` 记录中的 `constraints` 固定为空；只有满足上一节全部条件的 `CHILD_OF` 才由 `mchBindings` 持有并计入 `knownConstraints`。登记过但签名不完整的 MCH 约束必须进入 `unknownConstraints`，不能降级成 `AUX_UNKNOWN`。
+约束名称只是一根 owner 骨内部的引用键：解析时必须先由属性找到 Aux 骨，再在该 PoseBone 自己的约束栈内查找 `constraintNames`；禁止跨骨骼全局搜索同名约束。MCH、AIM 不走普通 Aux 认领路径，其 `auxBones[]` 的 `constraints` 固定为空，必须经过各自严格签名。签名不完整的 MCH 仍进 unknown；无效 Aim 标记不认领跟踪对，但独立常用约束仍可按类型直通。
+
+## 常用直通与 Aim
+
+剩余的 COPY_LOCATION、COPY_ROTATION、ARMATURE 以 `DIRECT_CONSTRAINT` 认领，不要求生成标记，也不因设置超出某个后端能力而改叫 unknown。所有原始参数仍保留，数据无效或后端不支持由导入计划报告。
+
+`auxType=AIM`、`aimVersion=1` 的骨以两个有序 `sourceBones` 指定 target／up；在 owner 的 `constraintNames` 中登记相邻 Damped Track＋Locked Track。仅这两条旋转约束以 `AIM_BINDING` 认领，另在 `aimBindings` 写出语义；同骨的 Copy Location 仍独立直通。所有权登记可以包含其他生成约束，不会将它们混入 Aim 语义。
+
+Aim 不定义中心点、网格三角形或 LBS，不包含 `originBone`。未标记的 Damped／Locked 继续 unknown，不能仅靠相邻或显示名称猜组合。精确检查规则见 [IR v3](../IR_V3.md)。
 
 中立 IR 不输出 Unity `RotationConstraint` 或 `ParentConstraint`，不把 Fan 预先压成全轴世界空间旋转，也不决定 Twist 是否只取 Y 轴。Copy Rotation 与 Stretch To 即使共同构成当前 Twist，也应以各自原始 Blender 约束记录保留；是否在目标端合并成一个功能由导入解析器决定。
 
@@ -182,22 +198,17 @@ bone.hotools_boneprops.auxBone.isAuxBone == true
 
 划分流程固定如下：
 
-1. 先按 MCH 严格签名认领 `mchBindings`，再按普通 Aux 的 owner-local
-   `constraintNames` 认领普通 Aux 约束。
+1. 先认领严格 MCH，再按普通 Aux 的 owner-local 所有权认领；AIM 通过独立严格签名认领相邻旋转对，剩余三类常用类型直通。
 2. 一条约束的快照身份是 `(ownerBone, stackIndex)`；所有已认领身份写入同一集合，
    因此同一约束不能被两个关系重复输出。
 3. 随后遍历当前 Armature 的每根 PoseBone 及其完整约束栈。已认领项输出到
-   `knownConstraints`，其余项不做类型猜测，全部输出到 `unknownConstraints`。
+   `knownConstraints`；其余未注册类型／关系不做猜测，输出到 `unknownConstraints`。
 4. `knownConstraints` 与 `unknownConstraints` 必须互斥，二者并集必须等于扫描时
    Armature 上的全部 PoseBone 约束。导入器据此可以明确预览哪些关系会被解析、哪些会跳过。
 
-`knownConstraints[].relationType` 只区分 `MCH_BINDING` 与 `AUX_CONSTRAINT`；
-普通 Aux 同时原样携带 `auxType`。这个索引只是对 `mchBindings` 与
-`auxBones[].constraints` 的无损汇总，不增加 Unity 组件或降级语义。
+v3 的 relationType 为 `MCH_BINDING`、`AUX_CONSTRAINT`、`DIRECT_CONSTRAINT`、`AIM_BINDING`。原始约束事实保持完整；Aim 旋转对另有语义记录。它们均不提前选择 Unity 组件或降级模式。
 
-本流程不读取旧版隐式约定。缺少 `constraintNames` 的旧 Aux、手工同名约束、错误
-MCH target 或失效 source 都属于未知约束；如需被识别，必须重新运行对应生成流程写入
-完整所有权信息。
+本流程不读取旧版隐式约定。旧 Aux 缺少登记时不能冒充生成关系；三类常用类型可以直接已知，其余未注册类型仍未知。错误 MCH／失效 Aim 不由普通 Aux 路径兜底。
 
 同样的所有权规则适用于骨本身。Twist 重建只能替换
 `isAuxBone=true`、`auxType=TWIST` 且 `sourceBones` 完整匹配的旧生成骨；名称相似的
@@ -230,7 +241,7 @@ HoAux 骨没有普通 aux 的 `sourceBones`。导出器不得从骨父级、约�
 - 预计创建、合并、忽略或降级成的目标端对象；
 - 缺骨、未知参数、能力不足和歧义警告。
 
-默认的 VRC 兼容解析、Twist 只取 Y 轴、Fan 的实现方式，以及启用 HoAux 布尔开关后的另一套解析，都属于导入端策略。切换开关后必须重新计算预览；这些选择不回写、不篡改中立 IR。Blender 导出器只保证原始事实足以让不同导入策略重新决策。
+Standard、VRC 兼容解析、Twist 只取 Y 轴、Fan 的实现方式及 HoAuxRig 模式都属于导入端策略。切换模式后必须重新计算预览；这些选择不回写、不篡改中立 IR。Blender 导出器只保证原始事实足以让不同导入策略重新决策。
 
 ## 回归不变量
 

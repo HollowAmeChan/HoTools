@@ -4,6 +4,7 @@ from bpy.props import (
     BoolProperty,
     CollectionProperty,
     EnumProperty,
+    IntProperty,
     PointerProperty,
     StringProperty,
 )
@@ -22,6 +23,7 @@ AUX_BONE_TYPE_ITEMS = (
     ("FAN_SIDE", "FanSide", "侧向 fan 辅助骨"),
     ("TWIST", "Twist", "扭转辅助骨"),
     ("MCH", "MCH", "由主骨属性生成的中间绑定骨"),
+    ("AIM", "Aim", "旋转瞄准语义；sourceBones 依次为瞄准目标、上方向参考；不包含位置绑定"),
 )
 
 
@@ -154,7 +156,8 @@ class PG_Hotools_AuxBoneInfo(PropertyGroup):
     - 将来三骨定义的辅助骨：放 3 根，依此类推。
     同一根骨上挂的多组辅助骨（例如大腿上既有大腿-胯之间的 fan，又有大腿-小腿
     之间的 fan）可凭各自的 sourceBones 组合精确区分。
-    权重来源不在此记录：HoTools 强制辅助骨权重取自其直接父级。
+    旧形变 Aux 的权重来源不在此记录；AIM 仅声明旋转组合，sourceBones
+    的两项依次为瞄准目标和上方向参考，不声明权重或位置吸附。
     """
 
     isAuxBone: BoolProperty(
@@ -177,6 +180,10 @@ class PG_Hotools_AuxBoneInfo(PropertyGroup):
         name="关联约束",
         description="该辅助骨语义明确引用的约束名称，仅在当前骨骼的约束栈内解析",
         type=PG_Hotools_BoneRef,
+    )  # type: ignore
+    aimVersion: IntProperty(
+        name="Aim 契约版本", default=1, min=1,
+        description="AIM 类型的关系版本；v1 为相邻的阻尼跟踪＋锁定跟踪，仅组合旋转语义",
     )  # type: ignore
 
 

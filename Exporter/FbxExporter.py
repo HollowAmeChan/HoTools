@@ -2093,6 +2093,22 @@ class FBXExporter:
                     psub = getattr(con, "pole_subtarget", "")
                     if psub in name_map and name_map[psub] != pbone.name:
                         con.pole_subtarget = name_map[psub]
+                # Armature constraints store their sources in a collection,
+                # not in the usual target/subtarget pair.
+                for source in getattr(con, "targets", ()):
+                    sub = getattr(source, "subtarget", "")
+                    if getattr(source, "target", None) == ob and sub in name_map and name_map[sub] != pbone.name:
+                        source.subtarget = name_map[sub]
+
+            # Aim's sourceBones are semantic target roles, unlike the descriptive
+            # source group of legacy Fan/Twist. Keep these roles in sync with the
+            # remapped raw Damped/Locked references.
+            props = getattr(pbone.bone, "hotools_boneprops", None)
+            aux = getattr(props, "auxBone", None)
+            if getattr(aux, "isAuxBone", False) and getattr(aux, "auxType", "") == "AIM":
+                for source in aux.sourceBones:
+                    if source.name in name_map and name_map[source.name] != pbone.name:
+                        source.name = name_map[source.name]
 
         # 2. 驱动器变量的 bone_target（指向本骨架的骨）
         anim = getattr(ob, "animation_data", None)
@@ -2178,19 +2194,18 @@ class FBXExporter:
             count += 1
 
         if pending_inverse:
+            from Utils.bone_selection import select_bones
             previous_active = bpy.context.view_layer.objects.active
             ob.select_set(True)
             bpy.context.view_layer.objects.active = ob
             bpy.ops.object.mode_set(mode="POSE")
             try:
-                for bone in ob.data.bones:
-                    bone.select = False
+                select_bones(ob, [])
                 for mch_name, constraint_name in pending_inverse:
                     active_bone = ob.data.bones.get(mch_name)
                     if active_bone is None:
                         continue
-                    active_bone.select = True
-                    ob.data.bones.active = active_bone
+                    select_bones(ob, [mch_name], extend=True)
                     result = bpy.ops.constraint.childof_set_inverse(
                         constraint=constraint_name,
                         owner="BONE",
@@ -2256,6 +2271,9 @@ class FBXExporter:
         from .ConstraintIRExporter import ConstraintIRExporter
 
         constraint_ir = ConstraintIRExporter.build_ir(ob)
+        # Facts about this companion FBX, whose bone axes are fixed by getParams.
+        # Standalone neutral IR snapshots do not assert a particular FBX preset.
+        constraint_ir.binding_context["fbxBoneAxes"] = "Y_X"
         if constraint_ir.is_empty():
             return None
 

@@ -232,14 +232,14 @@ for mch_name, source_name in (
     assert mch["constraintNames"] == [FBXExporter.MCH_PARENT_CONSTRAINT_NAME]
     assert mch["constraints"] == []
 
-unknown = {
+direct = {
     (item["ownerBone"], item["constraint"]["name"]): item
-    for item in constraint_data["unknownConstraints"]
+    for item in constraint_data["knownConstraints"] if item["relationType"] == "DIRECT_CONSTRAINT"
 }
-assert (twist_names[0], "User_Twist_Interference") in unknown
-assert ("Forearm", "User_Main_Interference") in unknown
-assert ("Hand", "HoTools_FAN_CopyRotation") in unknown
-assert unknown[("Forearm", "User_Main_Interference")]["constraint"][
+assert (twist_names[0], "User_Twist_Interference") in direct
+assert ("Forearm", "User_Main_Interference") in direct
+assert ("Hand", "HoTools_FAN_CopyRotation") in direct
+assert direct[("Forearm", "User_Main_Interference")]["constraint"][
     "targetBoneName"
 ] == "MCH_Upper"
 
