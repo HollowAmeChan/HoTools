@@ -18,7 +18,7 @@
 #    曲线先统一快照求值几何，再逐个转换，避免选中的倒角/锥化截面先变成网格，
 #    导致依赖它们的路径失去截面、导出成没有面的线；快照包含镜像等修改器的结果。
 #    解决 Blender/FBX 对曲线和共享网格实例支持不一致，导致对象漏导或结果互相影响的问题。
-# 5. 数据传递修改器整层接管：对选中导出网格，在**全部预处理最前面**把「数据传递链」
+# 5. 数据传递修改器整层接管：对选中导出网格，先按开关排除视口隐藏的修改器，再把「数据传递链」
 #    做对（见 apply_data_transfer_modifiers）。数据传递能传四个域——顶点（顶点组权重/
 #    倒角权重/顶点色）、边（锐边/缝合/折痕/倒角/Freestyle）、面拐（自定义法线/角点色/UV）、
 #    面（平滑/Freestyle）；它评估的是“自己所在位置的网格”。
@@ -33,8 +33,8 @@
 #        “源网格与目标网格面拐数量不一致，此类情形无法使用 '拓扑' 映射”并丢弃自定义法线）；
 #      - 数据传递之间互为源时，边应用边求值让结果依赖处理顺序（实测同一文件三次导出三个值）；
 #      - 数据传递之后还有改拓扑的修改器时，面拐数只能按“数据传递那一刻”记录。
-#    位置的先后同样关键：删除隐藏/几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态都会
-#    改动修改器栈或求值环境，数据传递晚于它们就会和界面里看到的不一致。
+#    位置的先后同样关键：隐藏修改器必须先排除，避免被数据传递链提前烘进网格；之后的
+#    删除几何节点修改器、形态键烘焙、应用骨架姿态仍须晚于数据传递，避免改变传递结果。
 #    应用失败时保留原状、继续导出，并在控制台和导出报告中提示。带形态键的网格不替换网格
 #    数据（会丢形态键），走逐形态键烘焙。
 # 6. 按材质整理面顺序隐式修复：对所有选中的导出 Mesh 执行
@@ -56,7 +56,8 @@
 #    再用结果替换基础网格并重建同名形态键，最后移除已烘焙的修改器。
 #    复用 Utils.shapekey_utils.bake_modifiers_keeping_shape_keys——与修改器面板的
 #    「保持形态键应用」按钮是同一套实现，差别只在参数：导出按“FBX 会评估的修改器”
-#    （含只在渲染中显示的）、并保留骨架修改器给蒙皮；按钮按“视图显示中”的、连骨架一起烘。
+#    （关闭「删除隐藏修改器」时含只在渲染中显示的）、并保留骨架修改器给蒙皮；
+#    按钮按“视图显示中”的、连骨架一起烘。
 #    解决“形态键 + 几何节点”物体导出后 BlendShape 静默丢失的问题：Blender 原生导出
 #    在有修改器要应用时走 evaluated mesh（new_from_object），求值网格不带形态键
 #    （Blender 议题 #104714），物体本身能导出但形变数据没了。前提是各形态键求值后的
@@ -72,7 +73,8 @@
 #    开：约束参与应用姿态的求值，并保留到内置导出应用（资产本来就靠约束摆位时用）。
 # 10. 忽略描边修改器（默认开启）：临时移除开启翻转法线的 SOLIDIFY 描边修改器。
 #    解决渲染用外壳被误当成模型几何导出，导致重复表面和法线异常的问题。
-# 11. 删除隐藏修改器（默认开启）：临时移除视口隐藏的修改器。
+# 11. 删除隐藏修改器（默认开启）：在数据传递等求值/烘焙之前临时移除视口隐藏的修改器，
+#     包括未选中的数据传递源上的隐藏修改器，防止它们间接影响导出。
 #     解决隐藏修改器仍参与 FBX 评估，阻塞形态键/骨架等预处理或产生意外导出结果的问题。
 #
 # 三、骨架与蒙皮处理
@@ -2784,7 +2786,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。不留痕",default=False) # type: ignore
     cleanEmptyMaterialSlots:BoolProperty(name="清理未使用材质槽",description="导出前删除选中网格中没有被任何面使用的材质槽（无论槽中是否已有材质）。不留痕",default=True) # type: ignore
-    removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
+    removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="在数据传递和形态键烘焙等预处理之前临时删除视口隐藏的修改器，避免隐藏修改器被提前应用到导出网格。不留痕",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器，避免几何节点改变导出网格拓扑。不留痕",default=True) # type: ignore
     applyExportConstraints:BoolProperty(name="应用约束",description="关(默认):约束JSON写完后删除导出范围内的全部约束(物体级+姿态骨),约束只走JSON,避免内置导出把约束结果当成实际变换写进FBX造成内外不一致。开:保留约束交给内置导出应用(资产靠约束摆位时用)。不留痕",default=False) # type: ignore
     ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）。不留痕",default=True) # type: ignore
@@ -2923,9 +2925,20 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     f"创建了独立 Mesh 数据"
                 )
 
+            # 隐藏修改器必须在任何求值/烘焙前排除：数据传递链会把渲染可见的前置
+            # 修改器一起应用，事后再删除已经无法去掉烘进网格的效果。
+            # 同时处理未选中的传递源，避免源上的隐藏修改器间接影响导出结果。
+            if self.removeHiddenModifiers:
+                removed_hidden_modifiers, failed_hidden_modifiers = FBXExporter.remove_hidden_modifiers(bpy.context.scene.objects)
+                if failed_hidden_modifiers:
+                    print("[HoTools FBX] Failed to remove hidden modifiers:")
+                    for ob_name, mod_name, exc in failed_hidden_modifiers:
+                        print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
+                    self.report({"WARNING"}, f"{len(failed_hidden_modifiers)} 个隐藏修改器临时删除失败，详见控制台")
+
             # blender数据传递修改器在fbx导出时应用环境不齐全需要手动应用防止错误效果。
-            # 位置必须最靠前：删除隐藏/几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态
-            # 都会改修改器栈或求值环境，数据传递晚于它们就会和界面里看到的不一致
+            # 排除隐藏修改器后，仍须早于删除几何节点、形态键烘焙和应用骨架姿态：
+            # 这些操作会改修改器栈或求值环境，数据传递晚于它们就会和界面里看到的不一致
             # （实测表现：传递的法线在 FBX 里变成网格自身法线，即“传递丢失”）。
             (
                 data_transfer_applied,
@@ -2954,14 +2967,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     f"[HoTools FBX] 数据传递修改器隐式修复：手动应用了 "
                     f"{data_transfer_applied} 个修改器"
                 )
-
-            if self.removeHiddenModifiers:
-                removed_hidden_modifiers, failed_hidden_modifiers = FBXExporter.remove_hidden_modifiers(bpy.context.scene.objects)
-                if failed_hidden_modifiers:
-                    print("[HoTools FBX] Failed to remove hidden modifiers:")
-                    for ob_name, mod_name, exc in failed_hidden_modifiers:
-                        print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
-                    self.report({"WARNING"}, f"{len(failed_hidden_modifiers)} 个隐藏修改器临时删除失败，详见控制台")
 
             if self.ignoreGeometryNodes:
                 removed_gn, failed_gn = FBXExporter.remove_geometry_nodes_modifiers(bpy.context.scene.objects)

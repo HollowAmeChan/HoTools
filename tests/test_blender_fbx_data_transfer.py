@@ -1,7 +1,7 @@
 """HoFBX 导出：数据传递修改器必须在预处理最前面应用（回归测试，需要 Blender 后台运行）。
 
 背景（用户实测）：数据传递修改器要“很靠前地”应用才修得好——FBX 导出阶段的求值环境
-不完整，晚一步（删除隐藏/几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态）结果就会
+不完整，晚一步（删除几何节点修改器、形态键烘焙穿过修改器、应用骨架姿态）结果就会
 和界面里看到的不一致，表现是**传递的法线在 FBX 里退回网格自身法线**。
 之前修好过一版，后来形态键烘焙插到它前面又反弹了，所以这里锁死三件事：
 
@@ -189,10 +189,9 @@ with bpy.context.temp_override(object=target2, modifier=target2.modifiers["Decoy
     bpy.ops.object.modifier_apply(modifier="Decoy")
 assert mean_angle(corner_normals(target2.data), expected2) < 1e-4
 
-# ── 5. 只在渲染中显示的数据传递也要在“删隐藏修改器”之前被应用 ────────────────
-# 导出默认会删掉视口隐藏的修改器（removeHiddenModifiers）。数据传递若是视口关、
-# 渲染开，晚于这一步就什么都不剩了：这正是“传递的法线在导出后消失”的现场。
-# 放到最前面之后，它仍在栈上，按 (show_viewport or show_render) 口径被正常应用。
+# ── 5. 关闭“删除隐藏修改器”时，底层仍支持只在渲染中显示的数据传递 ────────────
+# 主流程默认先排除隐藏修改器（见 test_blender_fbx_hidden_modifiers.py）；
+# 此处直接调用底层，覆盖 removeHiddenModifiers=False 时保留的渲染口径。
 _source3, target3, decoy3 = build_fixture("render_only", with_shape_keys=True)
 render_only_transfer = target3.modifiers["DataTransfer"]
 render_only_transfer.show_viewport = False
