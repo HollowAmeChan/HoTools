@@ -430,7 +430,10 @@ def _draw_object_export_panel(layout: LayoutBuilder, context):
 
     row = col.row(align=True)
     row.operator("wm.obj_export",text="OBJ导出",icon="EXPORT",)
+
+    row = col.row(align=True)
     row.operator("wm.stl_export",text="STL导出",icon="EXPORT",)
+    row.operator("ho.stl_export",text="HoSTL导出",icon="EXPORT",)
 
 
 def _draw_object_quick_panel(layout: LayoutBuilder, context):
