@@ -76,8 +76,8 @@ def dialog_operator():
         for name, value in vars(cls).items():
             if isinstance(value, types.FunctionType):
                 setattr(state, name, types.MethodType(value, state))
-    if hasattr(operator, "_copy_property_names"):
-        state._copy_property_names = operator._copy_property_names
+    state.properties = types.SimpleNamespace(
+        is_property_set=lambda name: name == 'overwrite_mode' and hasattr(state, name))
     return state
 
 
@@ -90,7 +90,21 @@ class DialogCapture:
         return {'RUNNING_MODAL'}
 
 
-bpy.utils.register_class(operator)
+class LayoutCapture:
+    def __init__(self):
+        self.labels = []
+        self.props = []
+
+    def label(self, **kwargs):
+        self.labels.append(kwargs['text'])
+
+    def prop(self, state, property_name, **kwargs):
+        self.props.append((property_name, kwargs))
+
+
+registered = (operator,)
+for cls in registered:
+    bpy.utils.register_class(cls)
 try:
     # No collision retains the existing insertion order and center-line split.
     obj, source = fixture("FreshSplit")
@@ -151,7 +165,7 @@ try:
     assert not state.overwrite and not dialog.calls
     assert_split(obj)
 
-    # A collision only asks for a decision; no coordinates or keys change yet.
+    # The native dialog lists conflicts and exposes the overwrite/new enum.
     obj, source = fixture("InvokeCollision", ("Right",))
     keys = obj.data.shape_keys.key_blocks
     before_order = names(obj)
@@ -160,63 +174,45 @@ try:
     dialog = DialogCapture()
     context = types.SimpleNamespace(active_object=obj, window_manager=dialog)
     assert operator.invoke(state, context, None) == {'RUNNING_MODAL'}
-    assert state.overwrite and state._create_copy_on_cancel
-    assert len(dialog.calls) == 1
+    assert len(dialog.calls) == 1 and state.overwrite_mode == 'OVERWRITE'
     assert state._existing_target_names(obj) == ("WideRight",)
+    state.layout = LayoutCapture()
+    operator.draw(state, context)
+    # Keep enum item labels visible in Blender's expanded toggle buttons.
+    assert state.layout.props == [('overwrite_mode', {'expand': True})]
+    assert "WideRight" in state.layout.labels
+    assert not any("副本" in text for text in state.layout.labels)
+
+    # Opening, drawing and changing the selection do not execute the operation.
+    state.overwrite_mode = 'NEW'
     assert names(obj) == before_order
     for key in keys:
         assert np.array_equal(positions(key), before[key.name])
 
-    # Cancel dispatches the copy operation and cannot create a second set twice.
-    operator.cancel(state, context)
-    assert not state._create_copy_on_cancel
+    # Confirming NEW retains the conflicting key and generates numbered results.
+    assert operator.execute(state, context) == {'FINISHED'}
     assert names(obj) == ["Basis", "Wide", "WideLeft", "WideRight.001", "Tail", "WideRight"]
     assert_split(obj, "WideLeft", "WideRight.001")
     assert np.array_equal(positions(keys["WideRight"]), before["WideRight"])
-    after_cancel = names(obj)
-    operator.cancel(state, context)
-    assert names(obj) == after_cancel
 
-    # A real RNA callback has HO_OT_... ids rather than Python's ho.* ids.
-    obj, source = fixture("SplitRnaCancel", ("Left", "Right"))
-    keys = obj.data.shape_keys.key_blocks
-    old_shapes = {name: positions(keys[name]) for name in ("WideLeft", "WideRight")}
-    callback_ids = []
-    original_execute = operator.execute
-
-    def cancel_rna_execution(self, context):
-        callback_ids.append(self.bl_idname)
-        assert self.bl_idname == "HO_OT_split_shapekey"
-        # Background Blender skips invoke callbacks; use exec to obtain RNA self.
-        operator.execute = original_execute
-        self.overwrite = True
-        self._create_copy_on_cancel = True
-        self.cancel(context)
-        return {'CANCELLED'}
-
-    operator.execute = cancel_rna_execution
-    try:
-        result = bpy.ops.ho.split_shapekey(
-            'EXEC_DEFAULT', suffix_viewLeft="Left", suffix_viewRight="Right",
-        )
-        assert result == {'CANCELLED'}, result
-    finally:
-        operator.execute = original_execute
-    assert callback_ids == ["HO_OT_split_shapekey"]
-    assert len(names(obj)) == 7
-    assert_split(obj, "WideLeft.001", "WideRight.001")
-    for name, coords in old_shapes.items():
-        assert np.array_equal(positions(keys[name]), coords)
-
-    # Confirm uses the same execution logic and reuses the existing side.
-    obj, source = fixture("ConfirmCollision", ("Left", "Right"))
-    state = dialog_operator()
-    context = types.SimpleNamespace(active_object=obj, window_manager=DialogCapture())
-    assert operator.invoke(state, context, None) == {'RUNNING_MODAL'}
-    assert operator.execute(state, context) == {'FINISHED'}
-    assert len(names(obj)) == 5
-    assert not state._create_copy_on_cancel
-    assert_split(obj)
+    # Both registered enum choices override legacy bool arguments consistently.
+    mode_prop = bpy.ops.ho.split_shapekey.get_rna_type().properties['overwrite_mode']
+    assert mode_prop.default == 'OVERWRITE'
+    assert [(item.identifier, item.name) for item in mode_prop.enum_items] == [
+        ('OVERWRITE', "覆盖"), ('NEW', "新建")]
+    for mode in ('OVERWRITE', 'NEW'):
+        obj, source = fixture("SplitEnum" + mode, ("Left", "Right"))
+        keys = obj.data.shape_keys.key_blocks
+        old = {name: positions(keys[name]) for name in ("WideLeft", "WideRight")}
+        run_split(overwrite_mode=mode, overwrite=(mode == 'NEW'))
+        if mode == 'OVERWRITE':
+            assert len(names(obj)) == 5
+            assert_split(obj)
+        else:
+            assert len(names(obj)) == 7
+            assert_split(obj, "WideLeft.001", "WideRight.001")
+            for name, coords in old.items():
+                assert np.array_equal(positions(keys[name]), coords)
 
     # Empty/equal suffixes must never overwrite the source or alias both sides.
     obj, source = fixture("EmptySuffix")
@@ -233,6 +229,7 @@ try:
     ) == {'FINISHED'}
     assert_split(obj, "WideSide", "WideSide.001")
 finally:
-    bpy.utils.unregister_class(operator)
+    for cls in reversed(registered):
+        bpy.utils.unregister_class(cls)
 
 print("SHAPEKEY_SPLIT_OVERWRITE_OK", bpy.app.version_string)

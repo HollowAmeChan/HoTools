@@ -766,37 +766,36 @@ class OP_balanceShapekey(Operator):
         return {'FINISHED'}
 
 class _ShapeKeyOverwriteDialogMixin:
-    """生成键重名时统一确认；取消弹窗也通过独立算子保留撤销记录。"""
+    """重名时在原生确认弹窗中选择覆盖或新建。"""
 
-    _copy_property_names = ()
+    overwrite_mode: EnumProperty(
+        name="同名键处理",
+        items=[
+            ('OVERWRITE', "覆盖", "更新已有的同名形态键"),
+            ('NEW', "新建", "保留已有形态键，并新建编号键"),
+        ],
+        default='OVERWRITE',
+        options={'SKIP_SAVE'},
+    )  # type: ignore
 
     def _invoke_overwrite_dialog(self, context, *, title):
-        self.overwrite = True
-        self._create_copy_on_cancel = True
-        return context.window_manager.invoke_props_dialog(
-            self, width=440, title=title, confirm_text="确定（覆盖）")
+        self.overwrite_mode = 'OVERWRITE'
+        return context.window_manager.invoke_props_dialog(self, width=440, title=title)
 
-    def _draw_overwrite_warning(self, context):
-        if not getattr(self, "_create_copy_on_cancel", False):
+    def _draw_overwrite_options(self, context):
+        target_names = self._existing_target_names(context.active_object)
+        if not target_names:
             return False
-        layout = self.layout
-        layout.label(text="以下目标形态键已存在：", icon='ERROR')
-        for name in self._existing_target_names(context.active_object):
-            layout.label(text=name, icon='SHAPEKEY_DATA')
-        layout.label(text="确定：覆盖已有键；取消：保留已有键并新建副本。")
+        self.layout.label(text="以下目标形态键已存在：", icon='ERROR')
+        for name in target_names:
+            self.layout.label(text=name, icon='SHAPEKEY_DATA')
+        self.layout.prop(self, "overwrite_mode", expand=True)
         return True
 
-    def cancel(self, context):
-        if getattr(self, "_create_copy_on_cancel", False) and self.poll(context):
-            self._create_copy_on_cancel = False
-            properties = {
-                name: getattr(self, name) for name in self._copy_property_names
-            }
-            # RNA 实例的 bl_idname 使用 HO_OT_...，类定义保留 Python 调用名称。
-            operator_id = getattr(type(self), 'bl_idname', self.bl_idname)
-            op_module, op_name = operator_id.split('.')
-            operator = getattr(getattr(bpy.ops, op_module), op_name)
-            operator('EXEC_DEFAULT', True, overwrite=False, **properties)
+    def _apply_overwrite_mode(self):
+        # 保留脚本直接传入 overwrite=True/False 的兼容性。
+        if self.properties.is_property_set("overwrite_mode"):
+            self.overwrite = self.overwrite_mode == 'OVERWRITE'
 
 
 class OP_GenerateMirroredShapekey(_ShapeKeyOverwriteDialogMixin, Operator):
@@ -804,7 +803,6 @@ class OP_GenerateMirroredShapekey(_ShapeKeyOverwriteDialogMixin, Operator):
     bl_idname = "ho.generate_mirrored_shapekey"
     bl_label = "直接生成活动形态键的镜像形态键,并改名,不使用bl的镜像,而使用hotools的镜像,因此面板中的容差/轴向参数可用"
     bl_options = {'REGISTER', 'UNDO'}
-    _copy_property_names = ('auto_rename',)
 
     auto_rename: BoolProperty(
         name="自动改名",
@@ -852,20 +850,16 @@ class OP_GenerateMirroredShapekey(_ShapeKeyOverwriteDialogMixin, Operator):
 
     def invoke(self, context, event):
         self.overwrite = False
-        self._create_copy_on_cancel = False
         if self._existing_target_names(context.active_object):
             return self._invoke_overwrite_dialog(context, title="镜像目标键已存在")
         return self.execute(context)
 
     def draw(self, context):
-        if not self._draw_overwrite_warning(context):
+        if not self._draw_overwrite_options(context):
             self.layout.prop(self, "auto_rename")
 
-    def cancel(self, context):
-        _ShapeKeyOverwriteDialogMixin.cancel(self, context)
-
     def execute(self, context):
-        self._create_copy_on_cancel = False
+        self._apply_overwrite_mode()
         obj = context.active_object
         active_key = obj.active_shape_key
         source_index = obj.active_shape_key_index
@@ -916,7 +910,6 @@ class OP_SplitShapekey(_ShapeKeyOverwriteDialogMixin, Operator):
     bl_idname = "ho.split_shapekey"
     bl_label = "将形态键拆为左右两份，并改名,对于中线处的顶点会均分到两侧的形态键（以减少断裂感）"
     bl_options = {'REGISTER', 'UNDO'}
-    _copy_property_names = ('suffix_viewLeft', 'suffix_viewRight')
 
     # 添加两个属性供外部传入
     suffix_viewLeft: StringProperty(
@@ -931,7 +924,7 @@ class OP_SplitShapekey(_ShapeKeyOverwriteDialogMixin, Operator):
     )  # type: ignore
     overwrite: BoolProperty(
         name="覆盖已有形态键",
-        description="覆盖同名拆分键；关闭时新建带编号的副本",
+        description="覆盖同名拆分键；关闭时新建编号键",
         default=False,
         options={'HIDDEN', 'SKIP_SAVE'},
     )  # type: ignore
@@ -967,21 +960,18 @@ class OP_SplitShapekey(_ShapeKeyOverwriteDialogMixin, Operator):
 
     def invoke(self, context, event):
         self.overwrite = False
-        self._create_copy_on_cancel = False
         if not self._existing_target_names(context.active_object):
             return self.execute(context)
 
         return self._invoke_overwrite_dialog(context, title="拆分目标键已存在")
 
     def draw(self, context):
-        if not self._draw_overwrite_warning(context):
+        if not self._draw_overwrite_options(context):
             self.layout.prop(self, "suffix_viewLeft")
             self.layout.prop(self, "suffix_viewRight")
 
-    def cancel(self, context):
-        _ShapeKeyOverwriteDialogMixin.cancel(self, context)
-
     def execute(self, context):
+        self._apply_overwrite_mode()
         obj = context.active_object
         active_key = obj.active_shape_key
         source_index = obj.active_shape_key_index
@@ -1043,7 +1033,6 @@ class OP_SplitShapekey(_ShapeKeyOverwriteDialogMixin, Operator):
                     view_left_key.data[idx].co = vert.co    # 左侧保持基础
 
         obj.active_shape_key_index = shape_keys.key_blocks.find(view_right_key.name)
-        self._create_copy_on_cancel = False
         self.report(
             {'INFO'},
             f"形态键 '{key_name}' 已拆分为 "
@@ -2891,13 +2880,12 @@ class OP_ShapekeyTools_GenerateHideShapeKey(_ShapeKeyOverwriteDialogMixin, Opera
     """读取活动顶点组，为其同名骨生成 Hide 形态键"""
     bl_idname = "ho.shapekeytools_generate_hide_shapekey"
     bl_label = "生成Hide形态键"
-    bl_description = "读取【活动顶点组】，找到其同名骨的世界轴线（head→tail），把权重≥阈值（或手动选中）的顶点硬吸附到骨轴线上，形成沿骨方向的一根杆子；同名键已存在时，确定覆盖，取消则新建副本"
+    bl_description = "读取【活动顶点组】，找到其同名骨的世界轴线（head→tail），把权重≥阈值（或手动选中）的顶点硬吸附到骨轴线上，形成沿骨方向的一根杆子；同名键已存在时，可选择覆盖、新建或取消"
     bl_options = {'REGISTER', 'UNDO'}
-    _copy_property_names = ('mode', 'threshold', 'slide_smooth', 'slide_factor')
 
     overwrite: BoolProperty(
         name="覆盖已有形态键",
-        description="覆盖同名 Hide 键；关闭时新建带编号的副本",
+        description="覆盖同名 Hide 键；关闭时新建编号键",
         default=True,
         options={'HIDDEN', 'SKIP_SAVE'},
     ) # type: ignore
@@ -2948,7 +2936,6 @@ class OP_ShapekeyTools_GenerateHideShapeKey(_ShapeKeyOverwriteDialogMixin, Opera
 
     def invoke(self, context, event):
         self.overwrite = True
-        self._create_copy_on_cancel = False
         if self._existing_target_names(context.active_object):
             return self._invoke_overwrite_dialog(context, title="Hide 目标键已存在")
         # 执行前弹窗，让用户设置选取模式与权重阈值
@@ -2992,13 +2979,10 @@ class OP_ShapekeyTools_GenerateHideShapeKey(_ShapeKeyOverwriteDialogMixin, Opera
         layout.prop(self, "slide_smooth")
         if self.slide_smooth:
             layout.prop(self, "slide_factor")
-        self._draw_overwrite_warning(context)
-
-    def cancel(self, context):
-        _ShapeKeyOverwriteDialogMixin.cancel(self, context)
+        self._draw_overwrite_options(context)
 
     def execute(self, context):
-        self._create_copy_on_cancel = False
+        self._apply_overwrite_mode()
         obj = context.active_object
 
         vg = obj.vertex_groups.active

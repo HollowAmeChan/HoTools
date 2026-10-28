@@ -76,12 +76,16 @@ def dialog_operator(**kwargs):
     state = types.SimpleNamespace(
         mode='WEIGHT', threshold=0.5, slide_smooth=False, slide_factor=0.5,
         overwrite=True, report=lambda *args: None, poll=operator.poll,
-        bl_idname=operator.bl_idname, _copy_property_names=operator._copy_property_names,
+        bl_idname=operator.bl_idname,
     )
-    for method in ("_existing_target_names", "_invoke_overwrite_dialog", "_generate", "execute"):
-        setattr(state, method, types.MethodType(getattr(operator, method), state))
+    for cls in reversed(operator.__mro__):
+        for name, value in vars(cls).items():
+            if isinstance(value, types.FunctionType):
+                setattr(state, name, types.MethodType(value, state))
     for key, value in kwargs.items():
         setattr(state, key, value)
+    state.properties = types.SimpleNamespace(
+        is_property_set=lambda name: name == 'overwrite_mode' and hasattr(state, name))
     return state
 
 
@@ -94,7 +98,21 @@ class DialogCapture:
         return {'RUNNING_MODAL'}
 
 
-bpy.utils.register_class(operator)
+class LayoutCapture:
+    def __init__(self):
+        self.labels = []
+        self.props = []
+
+    def label(self, **kwargs):
+        self.labels.append(kwargs['text'])
+
+    def prop(self, state, property_name, **kwargs):
+        self.props.append((property_name, kwargs))
+
+
+registered = (operator,)
+for cls in registered:
+    bpy.utils.register_class(cls)
 try:
     # Explicit execution retains the previous default of replacing the existing key.
     prop = bpy.ops.ho.shapekeytools_generate_hide_shapekey.get_rna_type().properties['overwrite']
@@ -128,51 +146,84 @@ try:
     assert obj.active_shape_key.name == 'Hide_Bone.001'
     assert_weight_projection(keys['Hide_Bone.001'])
 
-    # No collision keeps the original parameter dialog, whose cancel does nothing.
+    # No collision keeps the original parameter dialog and generates on confirmation.
     obj = fixture("HideFreshDialog", existing=False)
     state, dialog = dialog_operator(), DialogCapture()
     context = types.SimpleNamespace(active_object=obj, window_manager=dialog)
     assert operator.invoke(state, context, None) == {'RUNNING_MODAL'}
-    assert not state._create_copy_on_cancel and len(dialog.calls) == 1
-    operator.cancel(state, context)
+    assert len(dialog.calls) == 1
     assert list(obj.data.shape_keys.key_blocks.keys()) == ['Basis']
     assert operator.execute(state, context) == {'FINISHED'}
     assert_weight_projection(obj.data.shape_keys.key_blocks['Hide_Bone'])
 
-    # Conflicts only request a decision; confirming uses the configured parameters.
+    # Parameters and the overwrite/new enum share one native confirmation dialog.
     obj = fixture("HideConfirmDialog")
     keys = obj.data.shape_keys.key_blocks
     before = positions(keys['Hide_Bone'])
     state, dialog = dialog_operator(), DialogCapture()
     context = types.SimpleNamespace(active_object=obj, window_manager=dialog)
     assert operator.invoke(state, context, None) == {'RUNNING_MODAL'}
-    assert state._create_copy_on_cancel and state.overwrite
+    assert len(dialog.calls) == 1 and state.overwrite_mode == 'OVERWRITE'
     assert state._existing_target_names(obj) == ('Hide_Bone',)
+    state.layout = LayoutCapture()
+    operator.draw(state, context)
+    assert [name for name, kwargs in state.layout.props] == [
+        'mode', 'threshold', 'slide_smooth', 'overwrite_mode']
+    # Keep enum item labels visible in Blender's expanded toggle buttons.
+    assert state.layout.props[-1][1] == {'expand': True}
+    assert "Hide_Bone" in state.layout.labels
+    assert not any("副本" in text for text in state.layout.labels)
     assert np.array_equal(positions(keys['Hide_Bone']), before)
-    assert dialog.calls[0][1]['confirm_text'] == '确定（覆盖）'
+
+    # Confirming the default choice directly replaces the existing shape.
     assert operator.execute(state, context) == {'FINISHED'}
-    assert not state._create_copy_on_cancel and len(keys) == 2
+    assert len(keys) == 2
     assert_weight_projection(keys['Hide_Bone'])
 
-    # Cancel forwards selection and slide parameters to the copy operation in edit mode.
-    obj = fixture("HideCancelDialog")
+    # Explicit enum values control registered execution and retain legacy bool support.
+    mode_prop = bpy.ops.ho.shapekeytools_generate_hide_shapekey.get_rna_type().properties['overwrite_mode']
+    assert mode_prop.default == 'OVERWRITE'
+    assert [(item.identifier, item.name) for item in mode_prop.enum_items] == [
+        ('OVERWRITE', "覆盖"), ('NEW', "新建")]
+    for mode in ('OVERWRITE', 'NEW'):
+        obj = fixture("HideEnum" + mode)
+        keys = obj.data.shape_keys.key_blocks
+        old_shape = positions(keys['Hide_Bone'])
+        run_hide(mode='WEIGHT', threshold=0.5, slide_smooth=False,
+                 overwrite_mode=mode, overwrite=(mode == 'NEW'))
+        if mode == 'OVERWRITE':
+            assert len(keys) == 2
+            assert_weight_projection(keys['Hide_Bone'])
+        else:
+            assert len(keys) == 3
+            assert np.array_equal(positions(keys['Hide_Bone']), old_shape)
+            assert_weight_projection(keys['Hide_Bone.001'])
+
+    # Opening and changing the enum in edit mode do not modify data or active state.
+    obj = fixture("HideEditDialog")
     keys = obj.data.shape_keys.key_blocks
     old = positions(keys['Hide_Bone'])
+    active_index = obj.active_shape_key_index
     for vertex in obj.data.vertices:
         vertex.select = vertex.index in (1, 3)
     bpy.ops.object.mode_set(mode='EDIT')
     state = dialog_operator(mode='SELECT', threshold=0.9, slide_smooth=True, slide_factor=0.5)
     context = types.SimpleNamespace(active_object=obj, window_manager=DialogCapture())
     assert operator.invoke(state, context, None) == {'RUNNING_MODAL'}
-    operator.cancel(state, context)
+    state.overwrite_mode = 'NEW'
+    assert obj.mode == 'EDIT'
+    assert list(keys.keys()) == ['Basis', 'Hide_Bone']
+    assert obj.active_shape_key_index == active_index
+    assert np.array_equal(positions(keys['Hide_Bone']), old)
+
+    # Confirming NEW honors selection/slide parameters and restores edit mode.
+    assert operator.execute(state, context) == {'FINISHED'}
     assert obj.mode == 'EDIT'
     bpy.ops.object.mode_set(mode='OBJECT')
-    assert not state._create_copy_on_cancel
     assert obj.active_shape_key.name == 'Hide_Bone.001'
     assert np.array_equal(positions(keys['Hide_Bone']), old)
     assert np.allclose(positions(keys['Hide_Bone.001']),
                        [(-1, 0.25, 0), (0, 1.75, 0), (3, 0.75, 0), (0, 0.5, 0)])
-    operator.cancel(state, context)
     assert len(keys) == 3
 
     # A Basis named like the output must never be overwritten.
@@ -188,6 +239,7 @@ try:
 finally:
     if bpy.context.object and bpy.context.object.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
-    bpy.utils.unregister_class(operator)
+    for cls in reversed(registered):
+        bpy.utils.unregister_class(cls)
 
 print("SHAPEKEY_HIDE_OVERWRITE_OK", bpy.app.version_string)

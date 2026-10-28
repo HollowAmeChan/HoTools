@@ -66,12 +66,13 @@ def dialog_operator(*, auto_rename=True):
         auto_rename=auto_rename, overwrite=True,
         report=lambda *args: None, poll=operator.poll,
         bl_idname=operator.bl_idname,
-        _copy_property_names=operator._copy_property_names,
     )
     for cls in reversed(operator.__mro__):
         for name, value in vars(cls).items():
             if isinstance(value, types.FunctionType):
                 setattr(state, name, types.MethodType(value, state))
+    state.properties = types.SimpleNamespace(
+        is_property_set=lambda name: name == 'overwrite_mode' and hasattr(state, name))
     return state
 
 
@@ -82,6 +83,18 @@ class DialogCapture:
     def invoke_props_dialog(self, state, **kwargs):
         self.calls.append((state, kwargs))
         return {'RUNNING_MODAL'}
+
+
+class LayoutCapture:
+    def __init__(self):
+        self.labels = []
+        self.props = []
+
+    def label(self, **kwargs):
+        self.labels.append(kwargs['text'])
+
+    def prop(self, state, property_name, **kwargs):
+        self.props.append((property_name, kwargs))
 
 
 def callback_context(obj):
@@ -147,7 +160,7 @@ try:
     assert not state.overwrite and not context.window_manager.calls
     assert_mirror(obj.data.shape_keys.key_blocks["SmileRight"])
 
-    # The collision dialog itself leaves all shape coordinates and order intact.
+    # The native dialog exposes one enum and leaves all shapes unchanged.
     obj, source = fixture("MirrorInvokeCollision", existing=True)
     keys = obj.data.shape_keys.key_blocks
     before_order = names(obj)
@@ -155,62 +168,44 @@ try:
     state = dialog_operator()
     context = callback_context(obj)
     assert operator.invoke(state, context, None) == {'RUNNING_MODAL'}
-    assert state.overwrite and state._create_copy_on_cancel
     assert len(context.window_manager.calls) == 1
+    assert state.overwrite_mode == 'OVERWRITE'
+    state.layout = LayoutCapture()
+    operator.draw(state, context)
+    # Keep enum item labels visible in Blender's expanded toggle buttons.
+    assert state.layout.props == [('overwrite_mode', {'expand': True})]
+    assert "SmileRight" in state.layout.labels
+    assert not any("副本" in text for text in state.layout.labels)
+    state.overwrite_mode = 'NEW'
     assert names(obj) == before_order
     for key in keys:
         assert np.array_equal(positions(key), before[key.name])
 
-    # Cancel creates a copy through the registered operator, retaining old data.
-    operator.cancel(state, context)
-    assert not state._create_copy_on_cancel
+    # Confirming NEW retains the existing target and creates the numbered mirror.
+    assert operator.execute(state, context) == {'FINISHED'}
     assert len(names(obj)) == len(before_order) + 1
     assert np.array_equal(positions(keys["SmileRight"]), before["SmileRight"])
     assert_mirror(keys["SmileRight.001"])
-    after_cancel = names(obj)
-    operator.cancel(state, context)
-    assert names(obj) == after_cancel
 
-    # RNA instances expose HO_OT_... names; cancel must dispatch the Python id.
-    obj, source = fixture("MirrorRnaCancel", existing=True)
-    keys = obj.data.shape_keys.key_blocks
-    old_shape = positions(keys["SmileRight"])
-    callback_ids = []
-    original_execute = operator.execute
+    # The enum choices work through the real registered RNA execution path.
+    mode_prop = bpy.ops.ho.generate_mirrored_shapekey.get_rna_type().properties['overwrite_mode']
+    assert mode_prop.default == 'OVERWRITE'
+    assert [(item.identifier, item.name) for item in mode_prop.enum_items] == [
+        ('OVERWRITE', "覆盖"), ('NEW', "新建")]
+    for mode in ('OVERWRITE', 'NEW'):
+        obj, source = fixture("MirrorEnum" + mode, existing=True)
+        keys = obj.data.shape_keys.key_blocks
+        old_shape = positions(keys["SmileRight"])
+        run_mirror(auto_rename=True, overwrite_mode=mode, overwrite=(mode == 'NEW'))
+        if mode == 'OVERWRITE':
+            assert len(names(obj)) == 4
+            assert_mirror(keys["SmileRight"])
+        else:
+            assert len(names(obj)) == 5
+            assert np.array_equal(positions(keys["SmileRight"]), old_shape)
+            assert_mirror(keys["SmileRight.001"])
 
-    def cancel_rna_execution(self, context):
-        callback_ids.append(self.bl_idname)
-        assert self.bl_idname == "HO_OT_generate_mirrored_shapekey"
-        # Background Blender skips invoke callbacks, so trigger cancel from exec.
-        # Restore the real implementation before cancel dispatches the copy op.
-        operator.execute = original_execute
-        self.overwrite = True
-        self._create_copy_on_cancel = True
-        self.cancel(context)
-        return {'CANCELLED'}
-
-    operator.execute = cancel_rna_execution
-    try:
-        result = bpy.ops.ho.generate_mirrored_shapekey(
-            'EXEC_DEFAULT', auto_rename=True)
-        assert result == {'CANCELLED'}, result
-    finally:
-        operator.execute = original_execute
-    assert callback_ids == ["HO_OT_generate_mirrored_shapekey"]
-    assert len(names(obj)) == 5
-    assert np.array_equal(positions(keys["SmileRight"]), old_shape)
-    assert_mirror(keys["SmileRight.001"])
-
-    # Confirm reuses the colliding target.
-    obj, source = fixture("MirrorConfirm", existing=True)
-    state = dialog_operator()
-    context = callback_context(obj)
-    assert operator.invoke(state, context, None) == {'RUNNING_MODAL'}
-    assert operator.execute(state, context) == {'FINISHED'}
-    assert len(names(obj)) == 4
-    assert_mirror(obj.data.shape_keys.key_blocks["SmileRight"])
-
-    # With automatic renaming disabled, the source itself is a collision.
+    # Disabling automatic renaming still warns before changing the source itself.
     obj, source = fixture("MirrorSelfConfirm")
     state = dialog_operator(auto_rename=False)
     context = callback_context(obj)
@@ -218,15 +213,6 @@ try:
     assert operator.execute(state, context) == {'FINISHED'}
     assert len(names(obj)) == 3
     assert_mirror(source)
-
-    obj, source = fixture("MirrorSelfCancel")
-    source_before = positions(source)
-    state = dialog_operator(auto_rename=False)
-    context = callback_context(obj)
-    assert operator.invoke(state, context, None) == {'RUNNING_MODAL'}
-    operator.cancel(state, context)
-    assert np.array_equal(positions(source), source_before)
-    assert_mirror(obj.data.shape_keys.key_blocks["SmileLeft.001"])
 
     # A renamed target matching Basis must produce a safe numbered copy.
     obj, source = fixture("MirrorBasisProtection", basis_name="SmileRight")
