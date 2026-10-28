@@ -160,11 +160,6 @@ def reg_props():
         name="是否自动重命名",
         description="生成的形态键是否自动将Right与Left互相转换",
         default=True)
-    bpy.types.Scene.hoShapekeyTools_isMirrorOverwrite = BoolProperty(
-        name="是否覆盖已有",
-        description="如果这个形态键已经存在,是否不新建而直接使用这个已经有的键",
-        default=False)
-
     bpy.types.Scene.hoShapekeyTools_splitShapeKey_namesuffix_viewLeft = StringProperty(
         description="拆分形态键时,-X方向(我们左手边)形态键的后缀", default="Right")  # UI绘制使用
     bpy.types.Scene.hoShapekeyTools_splitShapeKey_namesuffix_viewRight = StringProperty(
@@ -227,7 +222,6 @@ def ureg_props():
     del bpy.types.Scene.hoShapekeyTools_mirrorAxis
     del bpy.types.Scene.hoShapekeyTools_mirrorTolerance
     del bpy.types.Scene.hoShapekeyTools_isMirrorRename
-    del bpy.types.Scene.hoShapekeyTools_isMirrorOverwrite
     del bpy.types.Scene.hoShapekeyTools_splitShapeKey_namesuffix_viewLeft
     del bpy.types.Scene.hoShapekeyTools_splitShapeKey_namesuffix_viewRight
     del bpy.types.Scene.hoShapekeyTools_copy_is_abs
@@ -771,11 +765,46 @@ class OP_balanceShapekey(Operator):
         self.report({'INFO'}, "Symmetry operation completed.")
         return {'FINISHED'}
 
-class OP_GenerateMirroredShapekey(Operator):
+class _ShapeKeyOverwriteDialogMixin:
+    """生成键重名时统一确认；取消弹窗也通过独立算子保留撤销记录。"""
+
+    _copy_property_names = ()
+
+    def _invoke_overwrite_dialog(self, context, *, title):
+        self.overwrite = True
+        self._create_copy_on_cancel = True
+        return context.window_manager.invoke_props_dialog(
+            self, width=440, title=title, confirm_text="确定（覆盖）")
+
+    def _draw_overwrite_warning(self, context):
+        if not getattr(self, "_create_copy_on_cancel", False):
+            return False
+        layout = self.layout
+        layout.label(text="以下目标形态键已存在：", icon='ERROR')
+        for name in self._existing_target_names(context.active_object):
+            layout.label(text=name, icon='SHAPEKEY_DATA')
+        layout.label(text="确定：覆盖已有键；取消：保留已有键并新建副本。")
+        return True
+
+    def cancel(self, context):
+        if getattr(self, "_create_copy_on_cancel", False) and self.poll(context):
+            self._create_copy_on_cancel = False
+            properties = {
+                name: getattr(self, name) for name in self._copy_property_names
+            }
+            # RNA 实例的 bl_idname 使用 HO_OT_...，类定义保留 Python 调用名称。
+            operator_id = getattr(type(self), 'bl_idname', self.bl_idname)
+            op_module, op_name = operator_id.split('.')
+            operator = getattr(getattr(bpy.ops, op_module), op_name)
+            operator('EXEC_DEFAULT', True, overwrite=False, **properties)
+
+
+class OP_GenerateMirroredShapekey(_ShapeKeyOverwriteDialogMixin, Operator):
     """直接生成活动形态键的镜像形态键,并改名,不使用bl的镜像,而使用hotools的镜像,因此面板中的容差/轴向参数可用"""
     bl_idname = "ho.generate_mirrored_shapekey"
     bl_label = "直接生成活动形态键的镜像形态键,并改名,不使用bl的镜像,而使用hotools的镜像,因此面板中的容差/轴向参数可用"
     bl_options = {'REGISTER', 'UNDO'}
+    _copy_property_names = ('auto_rename',)
 
     auto_rename: BoolProperty(
         name="自动改名",
@@ -786,7 +815,8 @@ class OP_GenerateMirroredShapekey(Operator):
     overwrite: BoolProperty(
         name="直接使用已存在的形态键",
         description="如果目标形态键已存在，则直接使用它而不新建",
-        default=False
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'},
     )  # type: ignore
 
     def rename_shape_key(self, name: str):
@@ -805,25 +835,51 @@ class OP_GenerateMirroredShapekey(Operator):
             obj and
             obj.type == 'MESH' and
             obj.data.shape_keys and
+            obj.active_shape_key is not None and
             obj.data.shape_keys.reference_key != obj.active_shape_key
         )
 
+    def _target_name(self, obj):
+        name = obj.active_shape_key.name
+        return self.rename_shape_key(name) if self.auto_rename else name
+
+    def _existing_target_names(self, obj):
+        name = self._target_name(obj)
+        target = obj.data.shape_keys.key_blocks.get(name)
+        if target is not None and target != obj.data.shape_keys.reference_key:
+            return (name,)
+        return ()
+
+    def invoke(self, context, event):
+        self.overwrite = False
+        self._create_copy_on_cancel = False
+        if self._existing_target_names(context.active_object):
+            return self._invoke_overwrite_dialog(context, title="镜像目标键已存在")
+        return self.execute(context)
+
+    def draw(self, context):
+        if not self._draw_overwrite_warning(context):
+            self.layout.prop(self, "auto_rename")
+
+    def cancel(self, context):
+        _ShapeKeyOverwriteDialogMixin.cancel(self, context)
+
     def execute(self, context):
+        self._create_copy_on_cancel = False
         obj = context.active_object
         active_key = obj.active_shape_key
         source_index = obj.active_shape_key_index
 
         # 生成目标形态键名称
-        new_name = active_key.name
-        if self.auto_rename:
-            new_name = self.rename_shape_key(active_key.name)
+        new_name = self._target_name(obj)
 
         # 检查形态键是否已存在
         key_blocks = obj.data.shape_keys.key_blocks
         target_key = key_blocks.get(new_name)
 
         # 处理形态键
-        if target_key and self.overwrite:
+        if (target_key is not None and self.overwrite
+                and target_key != obj.data.shape_keys.reference_key):
             for i in range(len(active_key.data)):
                 target_key.data[i].co = active_key.data[i].co.copy()
             msg = f"已覆盖: {target_key.name}"
@@ -855,11 +911,12 @@ class OP_GenerateMirroredShapekey(Operator):
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 
-class OP_SplitShapekey(Operator):
+class OP_SplitShapekey(_ShapeKeyOverwriteDialogMixin, Operator):
     """拆分形态键为左右两份"""
     bl_idname = "ho.split_shapekey"
     bl_label = "将形态键拆为左右两份，并改名,对于中线处的顶点会均分到两侧的形态键（以减少断裂感）"
     bl_options = {'REGISTER', 'UNDO'}
+    _copy_property_names = ('suffix_viewLeft', 'suffix_viewRight')
 
     # 添加两个属性供外部传入
     suffix_viewLeft: StringProperty(
@@ -872,6 +929,12 @@ class OP_SplitShapekey(Operator):
         description="拆分形态键时，右侧(+X方向)形态键的后缀",
         default="Right"
     )  # type: ignore
+    overwrite: BoolProperty(
+        name="覆盖已有形态键",
+        description="覆盖同名拆分键；关闭时新建带编号的副本",
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -882,9 +945,41 @@ class OP_SplitShapekey(Operator):
             return False
         if not obj.data.shape_keys:
             return False
+        if obj.active_shape_key is None:
+            return False
         if obj.data.shape_keys.reference_key == obj.active_shape_key:
             return False
         return True
+
+    def _target_names(self, obj):
+        return (
+            obj.active_shape_key.name + self.suffix_viewLeft,
+            obj.active_shape_key.name + self.suffix_viewRight,
+        )
+
+    def _existing_target_names(self, obj):
+        shape_keys = obj.data.shape_keys
+        return tuple(dict.fromkeys(
+            name for name in self._target_names(obj)
+            if (target := shape_keys.key_blocks.get(name)) is not None
+            and target not in (obj.active_shape_key, shape_keys.reference_key)
+        ))
+
+    def invoke(self, context, event):
+        self.overwrite = False
+        self._create_copy_on_cancel = False
+        if not self._existing_target_names(context.active_object):
+            return self.execute(context)
+
+        return self._invoke_overwrite_dialog(context, title="拆分目标键已存在")
+
+    def draw(self, context):
+        if not self._draw_overwrite_warning(context):
+            self.layout.prop(self, "suffix_viewLeft")
+            self.layout.prop(self, "suffix_viewRight")
+
+    def cancel(self, context):
+        _ShapeKeyOverwriteDialogMixin.cancel(self, context)
 
     def execute(self, context):
         obj = context.active_object
@@ -894,15 +989,24 @@ class OP_SplitShapekey(Operator):
         # 获取形态键的名称
         key_name = active_key.name
 
-        # 复制形态键，创建左右两份
-        view_left_key = obj.shape_key_add(
-            name=key_name+self.suffix_viewLeft, from_mix=False)
-        view_right_key = obj.shape_key_add(
-            name=key_name+self.suffix_viewRight, from_mix=False)
-        shapekey_utils.move_shape_key_to_index(
-            obj, view_left_key.name, source_index + 1)
-        shapekey_utils.move_shape_key_to_index(
-            obj, view_right_key.name, source_index + 2)
+        # 覆盖时复用已有键，保留其顺序、设置和动画引用；缺失的一侧照常新建。
+        shape_keys = obj.data.shape_keys
+        existing_targets = [
+            shape_keys.key_blocks.get(name) if self.overwrite else None
+            for name in self._target_names(obj)
+        ]
+        split_keys = []
+        insert_index = source_index + 1
+        for name, target in zip(self._target_names(obj), existing_targets):
+            # 空后缀不能改写源键/基型，相同后缀也必须产生两份独立结果。
+            if (target is None
+                    or target in (active_key, shape_keys.reference_key)
+                    or target in split_keys):
+                target = obj.shape_key_add(name=name, from_mix=False)
+                shapekey_utils.move_shape_key_to_index(obj, target.name, insert_index)
+                insert_index += 1
+            split_keys.append(target)
+        view_left_key, view_right_key = split_keys
 
         # 获取形态键的原始数据
         original_data = active_key.data
@@ -938,6 +1042,8 @@ class OP_SplitShapekey(Operator):
                     view_right_key.data[idx].co = co
                     view_left_key.data[idx].co = vert.co    # 左侧保持基础
 
+        obj.active_shape_key_index = shape_keys.key_blocks.find(view_right_key.name)
+        self._create_copy_on_cancel = False
         self.report(
             {'INFO'},
             f"形态键 '{key_name}' 已拆分为 "
@@ -2746,13 +2852,10 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     split.scale_x = 1.5
     split.prop(context.scene, "hoShapekeyTools_isMirrorRename",
                icon="SORTALPHA", icon_only=True)
-    split.prop(context.scene, "hoShapekeyTools_isMirrorOverwrite",
-               icon="ERROR", icon_only=True)
 
     op = row.operator(OP_GenerateMirroredShapekey.bl_idname,
                       text="生成镜像键", icon="ARROW_LEFTRIGHT",)
     op.auto_rename = context.scene.hoShapekeyTools_isMirrorRename
-    op.overwrite = context.scene.hoShapekeyTools_isMirrorOverwrite
 
     row = layout.row(align=True)
     row.scale_y = 2.0
@@ -2784,12 +2887,20 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
     layout.operator(OP_ShapekeyTools_Apply_ActiveShapekey2Basis.bl_idname,icon="KEY_HLT")
     
 
-class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
+class OP_ShapekeyTools_GenerateHideShapeKey(_ShapeKeyOverwriteDialogMixin, Operator):
     """读取活动顶点组，为其同名骨生成 Hide 形态键"""
     bl_idname = "ho.shapekeytools_generate_hide_shapekey"
     bl_label = "生成Hide形态键"
-    bl_description = "读取【活动顶点组】，找到其同名骨的世界轴线（head→tail），把权重≥阈值（或手动选中）的顶点硬吸附到骨轴线上，形成沿骨方向的一根杆子，生成名为 Hide+骨名 的形态键（已存在则替换）"
+    bl_description = "读取【活动顶点组】，找到其同名骨的世界轴线（head→tail），把权重≥阈值（或手动选中）的顶点硬吸附到骨轴线上，形成沿骨方向的一根杆子；同名键已存在时，确定覆盖，取消则新建副本"
     bl_options = {'REGISTER', 'UNDO'}
+    _copy_property_names = ('mode', 'threshold', 'slide_smooth', 'slide_factor')
+
+    overwrite: BoolProperty(
+        name="覆盖已有形态键",
+        description="覆盖同名 Hide 键；关闭时新建带编号的副本",
+        default=True,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    ) # type: ignore
 
     mode: EnumProperty(
         name="选取模式",
@@ -2836,8 +2947,23 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
         )
 
     def invoke(self, context, event):
+        self.overwrite = True
+        self._create_copy_on_cancel = False
+        if self._existing_target_names(context.active_object):
+            return self._invoke_overwrite_dialog(context, title="Hide 目标键已存在")
         # 执行前弹窗，让用户设置选取模式与权重阈值
         return context.window_manager.invoke_props_dialog(self)
+
+    def _existing_target_names(self, obj):
+        shape_keys = obj.data.shape_keys
+        vg = obj.vertex_groups.active
+        if shape_keys is None or vg is None:
+            return ()
+        name = "Hide_" + vg.name
+        target = shape_keys.key_blocks.get(name)
+        if target is None or target == shape_keys.reference_key:
+            return ()
+        return (name,)
 
     def draw(self, context):
         layout = self.layout
@@ -2866,8 +2992,13 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
         layout.prop(self, "slide_smooth")
         if self.slide_smooth:
             layout.prop(self, "slide_factor")
+        self._draw_overwrite_warning(context)
+
+    def cancel(self, context):
+        _ShapeKeyOverwriteDialogMixin.cancel(self, context)
 
     def execute(self, context):
+        self._create_copy_on_cancel = False
         obj = context.active_object
 
         vg = obj.vertex_groups.active
@@ -2879,6 +3010,10 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
         prev_mode = obj.mode
         if prev_mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
+            # 编辑模式撤销不记录键列表；跨模式生成前保存完整检查点。
+            # 恢复编辑模式后，先撤销模式切换，再撤销键的生成/覆盖。
+            if not bpy.app.background and context.preferences.edit.use_global_undo:
+                bpy.ops.ed.undo_push(message="生成 Hide 形态键前")
         try:
             return self._generate(obj, vg)
         finally:
@@ -2940,10 +3075,10 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
                             hit_verts.add(v.index)
                         break
 
-        # === 找到或创建 Hide 形态键（存在则复用其数据块，实现替换）===
+        # === 覆盖时复用已有 Hide 键，否则由 Blender 为副本分配唯一名称 ===
         key_name = "Hide_" + vg.name
-        key_block = mesh.shape_keys.key_blocks.get(key_name)
-        if key_block is None:
+        key_block = mesh.shape_keys.key_blocks.get(key_name) if self.overwrite else None
+        if key_block is None or key_block == basis_kb:
             key_block = obj.shape_key_add(name=key_name, from_mix=False)
 
         # === 计算命中顶点在骨轴上的投影参数 t（0=head，1=tail）===
@@ -2990,9 +3125,9 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
 
         # 默认关闭，并设为活动形态键便于查看
         key_block.value = 0.0
-        obj.active_shape_key_index = mesh.shape_keys.key_blocks.find(key_name)
+        obj.active_shape_key_index = mesh.shape_keys.key_blocks.find(key_block.name)
 
-        self.report({'INFO'}, f"已生成形态键 {key_name}，硬吸附 {len(hit_verts)} 个顶点")
+        self.report({'INFO'}, f"已生成形态键 {key_block.name}，硬吸附 {len(hit_verts)} 个顶点")
         return {'FINISHED'}
 
 
