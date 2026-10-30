@@ -2261,7 +2261,11 @@ class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
             # 补齐缺失形态键
             for key_name in source_keys:
                 if key_name not in target_sk.key_blocks:
-                    target.shape_key_add(name=key_name)
+                    # Blender 的默认 from_mix=True 会把当前混合结果写进新键。
+                    # 目标可能正处于绝对模式，或已有非零值/相对键，不能依赖
+                    # 当前显示结果；列表补齐的初始形状必须始终是目标 Basis。
+                    new_key = target.shape_key_add(name=key_name, from_mix=False)
+                    shapekey_utils.copy_shape_key_positions(target_basis, new_key)
 
             # 生成新顺序（基型 + 源顺序 + 目标额外键）
             #current_keys与source_keys中均无基型
