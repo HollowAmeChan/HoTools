@@ -200,6 +200,10 @@ if arp_spec:
         # A character's rest axes follow its actual deform bones.
         roll_name = assembly.DEFORM_BONES[slot] if slot.startswith("toes.") else reference_name
         bone.align_roll(template.data.bones[roll_name].matrix_local.to_3x3().col[2])
+        # An imported ankle's roll must not turn the ground pivots upright or
+        # change the foot controller footprint. Use different rolls per side.
+        if slot.startswith("foot."):
+            bone.roll += 1.2 if slot.endswith(".L") else -0.85
         parent = source.data.edit_bones.get(parents.get(slot, ""))
         if parent:
             bone.parent = parent
@@ -229,6 +233,48 @@ if arp_spec:
     rig = source.ho_arp_controller
     assert rig and rig.data.get("has_match_to_rig", False)
     assert len([obj for obj in bpy.data.objects if obj.type == "ARMATURE"]) == count_before + 1
+    footprint_scale = 1.6 * 1.25
+    for side in ("l", "r"):
+        offsets = []
+        for base in assembly.FOOT_HELPER_BASES:
+            name = f"{base}.{side}"
+            bone = rig.data.bones[name]
+            saved = template.data.bones[name]
+            direction = (bone.tail_local - bone.head_local).normalized()
+            saved_direction = (saved.tail_local - saved.head_local).normalized()
+            assert direction.dot(saved_direction) > 0.99999, name
+            assert abs(direction.z) < 1e-5 and direction.y < -0.99999, name
+            assert bone.matrix_local.to_3x3().col[2].dot(
+                saved.matrix_local.to_3x3().col[2]) > 0.99999, name
+            assert abs(bone.length - saved.length * footprint_scale) < 1e-5, name
+            offsets.extend((
+                bone.head_local - saved.head_local * footprint_scale,
+                bone.tail_local - saved.tail_local * footprint_scale,
+            ))
+        assert all((offset - offsets[0]).length < 1e-5 for offset in offsets)
+        heel = rig.data.bones[f"foot_heel_ref.{side}"]
+        saved_heel = template.data.bones[f"foot_heel_ref.{side}"]
+        foot = rig.data.bones[f"foot_ref.{side}"]
+        toes = rig.data.bones[f"toes_ref.{side}"]
+        saved_foot = template.data.bones[f"foot_ref.{side}"]
+        saved_toes = template.data.bones[f"toes_ref.{side}"]
+        low_z = min(p.z for p in (
+            foot.head_local, foot.tail_local, toes.head_local, toes.tail_local))
+        saved_low_z = min(p.z for p in (
+            saved_foot.head_local, saved_foot.tail_local,
+            saved_toes.head_local, saved_toes.tail_local))
+        assert abs((low_z - heel.head_local.z)
+                   - (saved_low_z - saved_heel.head_local.z) * footprint_scale) < 1e-5
+        # ARP sizes/orients the final controller using the heel-to-toe extent.
+        # Verify the generated output as well as the three reference bones.
+        control = rig.data.bones[f"c_foot_ik.{side}"]
+        control_direction = (control.tail_local - control.head_local).normalized()
+        assert abs(control_direction.z) < 1e-5
+        assert control_direction.y < -0.99999
+        assert abs(control.length - (heel.head_local - toes.tail_local).length / 3) < 1e-5
+        assert abs(control.length - template.data.bones[
+            f"c_foot_ik.{side}"].length * footprint_scale) < 1e-5
+    print("ARP_ASSEMBLY_GROUNDED_FOOT_CONTROLS_OK")
     for side in ("l", "r"):
         for finger in ("index", "middle", "ring", "pinky"):
             palm = rig.data.bones[f"{finger}1_base_ref.{side}"]

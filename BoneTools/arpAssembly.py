@@ -64,6 +64,7 @@ REQUIRED_SLOTS = (
 ASSEMBLY_PREFIX = "HoTools_ARP_"
 SNAP_PREFIX = "HoTools_Snap_"
 EPSILON = 1e-7
+FOOT_HELPER_BASES = ("foot_bank_01_ref", "foot_bank_02_ref", "foot_heel_ref")
 
 
 def armature_filter(_self, obj):
@@ -200,6 +201,39 @@ def _copy_rest(edit_bone, source_bone, world):
         world.to_3x3() @ source_bone.matrix_local.to_3x3().col[2])
 
 
+def _align_foot_helpers(bones, original, mapped_refs):
+    """Translate each grounded template footprint; never inherit foot rotation."""
+    leg_names = [
+        f"{part}_ref.{side}" for side in ("l", "r") for part in ("thigh", "leg")
+    ]
+    # The foot bone can have an arbitrary length/roll. Use the character's
+    # overall leg proportion for a common size, not a separate foot-bone frame.
+    scale = (sum(bones[name].length for name in leg_names)
+             / sum(original[name]["length"] for name in leg_names))
+    for side in ("l", "r"):
+        foot_name = f"foot_ref.{side}"
+        names = [f"{base}.{side}" for base in FOOT_HELPER_BASES]
+        old_foot = original[foot_name]
+        foot = bones[foot_name]
+        old_points = [old_foot["head"], old_foot["tail"]]
+        points = [foot.head, foot.tail]
+        toes_name = f"toes_ref.{side}"
+        if toes_name in mapped_refs:
+            old_points.extend((original[toes_name]["head"], original[toes_name]["tail"]))
+            points.extend((bones[toes_name].head, bones[toes_name].tail))
+        offset = foot.head - old_foot["head"] * scale
+        # Preserve the template's sole clearance below the lowest foot/toe
+        # endpoint. Both bank pivots and heel move by the same vector.
+        offset.z = min(point.z for point in points) - min(
+            point.z for point in old_points) * scale
+        for name in names:
+            saved = original[name]
+            bone = bones[name]
+            bone.head = saved["head"] * scale + offset
+            bone.tail = saved["tail"] * scale + offset
+            bone.align_roll(saved["matrix"].to_3x3().col[2])
+
+
 def align_reference_bones(context, main, rig, mapping):
     """Share the character's object axes; bake its scale into new references."""
     activate(context, rig)
@@ -239,10 +273,11 @@ def align_reference_bones(context, main, rig, mapping):
     for name, saved in original.items():
         if name in mapped_refs:
             continue
+        # Foot pivots describe a grounded footprint, not children that should
+        # rotate with the ankle. Fit their complete group separately below.
+        if any(name.startswith(base + ".") for base in FOOT_HELPER_BASES):
+            continue
         anchor = saved["parent"]
-        # Foot banks and heel are siblings of foot_ref, but belong to its frame.
-        if name.startswith(("foot_bank_", "foot_heel_")):
-            anchor = "foot_ref" + name[-2:]
         while anchor and anchor not in mapped_refs:
             anchor = original.get(anchor, {}).get("parent")
         if not anchor:
@@ -255,6 +290,8 @@ def align_reference_bones(context, main, rig, mapping):
         bone.head = transform @ saved["head"]
         bone.tail = transform @ saved["tail"]
         bone.align_roll(transform.to_3x3() @ saved["matrix"].to_3x3().col[2])
+
+    _align_foot_helpers(bones, original, mapped_refs)
 
     palm_count = 0
     for side in ("L", "R"):
