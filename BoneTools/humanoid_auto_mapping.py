@@ -704,6 +704,9 @@ def _score_candidate(
     # 脚趾可能包含完整的手指族名和节段名，不能参与手指匹配（包括模糊匹配）。
     if spec.group == "finger" and _has_toe_marker(bone.name):
         return -999.0, "toe-finger-blocked"
+    # ARP 的额外掌骨不是第一节指骨，不能抢占 proximal 槽位。
+    if re.search(r"(?:index|middle|ring|pinky)1_base_ref", bone.name, re.IGNORECASE):
+        return -999.0, "arp-metacarpal-blocked"
 
     name_score, name_reason = _name_similarity_score(spec, bone)
     topology_bonus, topology_reasons = _topology_score(
@@ -773,7 +776,11 @@ def auto_map_source_names_to_humanoid(source_names: list[str]) -> AutoMappingRes
             )
 
     # 分数高的先占位，避免低分候选抢走正确target
-    all_candidates.sort(key=lambda item: item[0], reverse=True)
+    # 指节模糊加分可能超过精确匹配的 100 分；精确别名必须优先占位。
+    all_candidates.sort(
+        key=lambda item: (item[3].startswith("exact"), item[0]),
+        reverse=True,
+    )
 
     used_sources: set[str] = set()
     used_targets: set[str] = set()

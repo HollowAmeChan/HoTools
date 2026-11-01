@@ -41,6 +41,29 @@ def assert_mapping(source_names, expected, label):
     assert not problems, f"[{label}]\n" + "\n".join(problems)
 
 
+# ARP 掌骨不属于 Humanoid 指节；精确的 *_ref 别名必须优先。
+arp_fingers = [
+    f"{finger}{number}_ref.{side}"
+    for side in ("l", "r")
+    for finger in ("index", "middle", "ring", "pinky")
+    for number in (1, 2, 3)
+]
+arp_palms = [
+    f"{finger}1_base_ref.{side}"
+    for side in ("l", "r") for finger in ("index", "middle", "ring", "pinky")
+]
+arp_result = mapping_for(arp_palms + arp_fingers)
+assert not any(name in arp_result for name in arp_palms)
+for side in ("l", "r"):
+    for finger, semantic in (
+            ("index", "index"), ("middle", "middle"),
+            ("ring", "ring"), ("pinky", "little")):
+        for number, segment in enumerate(("proximal", "intermediate", "distal"), 1):
+            assert arp_result[f"{finger}{number}_ref.{side}"] == (
+                f"{semantic}_{segment}.{side.upper()}")
+assert mapping_for(arp_palms) == {}
+
+
 # ---------------------------------------------------------------------------
 # 1. 完整的一套命名（手掌被手改名为 Left Wrist / Right Wrist）
 # ---------------------------------------------------------------------------
