@@ -325,6 +325,74 @@ if arp_spec:
     assert (driven_world.translation - driver_world.translation).length < 1e-5
     assert driven_world.to_quaternion().rotation_difference(
         driver_world.to_quaternion()).angle < 1e-4
+    # A controller in an excluded collection still exists. Recover only that
+    # object, preserving the collection exclusion and the controller's pose.
+    excluded = bpy.data.collections.new("ExcludedArpController")
+    scene.collection.children.link(excluded)
+    excluded.objects.link(rig)
+    for collection in tuple(rig.users_collection):
+        if collection != excluded:
+            collection.objects.unlink(rig)
+    excluded_layer = bpy.context.view_layer.layer_collection.children[excluded.name]
+    excluded_layer.exclude = True
+    bpy.context.view_layer.update()
+    assert scene.objects.get(rig.name) == rig
+    assert bpy.context.view_layer.objects.get(rig.name) is None
+    before_objects = set(bpy.data.objects)
+    saved_bind = assembly.bind_pairs
+    def fail_bind(*_args):
+        raise ValueError("injected rebind failure")
+    assembly.bind_pairs = fail_bind
+    try:
+        assembly.generate_controller(bpy.context, source)
+        raise AssertionError("Expected the injected rebind failure")
+    except ValueError as error:
+        assert str(error) == "injected rebind failure"
+    finally:
+        assembly.bind_pairs = saved_bind
+    assert scene.collection.objects.get(rig.name) is None
+    assert bpy.context.view_layer.objects.get(rig.name) is None
+    assert source.ho_arp_controller == rig
+    assert excluded_layer.exclude
+    assert bpy.ops.ho.generate_arp_controller() == {"FINISHED"}
+    assert source.ho_arp_controller == rig
+    assert bpy.context.view_layer.objects.get(rig.name) == rig
+    assert excluded_layer.exclude
+    assert set(bpy.data.objects) == before_objects
+    assert abs(rig.pose.bones["c_index2.l"].rotation_euler.x - 0.3) < 1e-6
+
+    # Unlinking/deleting the controller's collection can leave a non-None
+    # pointer to an orphan object. It must not prevent generating a new rig.
+    for collection in tuple(rig.users_collection):
+        collection.objects.unlink(rig)
+    bpy.context.view_layer.update()
+    assert scene.objects.get(rig.name) is None
+    assert source.ho_arp_controller == rig
+    before_objects = set(bpy.data.objects)
+    saved_align = assembly.align_reference_bones
+    def fail_orphan_replacement(*_args):
+        raise ValueError("injected orphan replacement failure")
+    assembly.align_reference_bones = fail_orphan_replacement
+    try:
+        assembly.generate_controller(bpy.context, source)
+        raise AssertionError("Expected the injected replacement failure")
+    except ValueError as error:
+        assert str(error) == "injected orphan replacement failure"
+    finally:
+        assembly.align_reference_bones = saved_align
+    assert set(bpy.data.objects) == before_objects
+    assert source.ho_arp_controller == rig
+    assert all(c.target == rig for bone in source.pose.bones for c in bone.constraints)
+    assert bpy.ops.ho.generate_arp_controller() == {"FINISHED"}
+    replacement = source.ho_arp_controller
+    assert replacement != rig
+    assert scene.objects.get(replacement.name) == replacement
+    assert bpy.context.view_layer.objects.get(replacement.name) == replacement
+    assert scene.objects.get(rig.name) is None
+    assert bpy.data.objects.get(rig.name) == rig
+    assert all(c.target == replacement for bone in source.pose.bones for c in bone.constraints)
+    assert all(len(bone.constraints) == 2 for bone in source.pose.bones)
+    print("ARP_ASSEMBLY_CONTROLLER_RECOVERY_OK")
     # An error after creating a new rig must not leave orphan assemblies.
     failed_source = create_armature("FailedCharacter", specs)
     for slot in assembly.REFERENCE_BONES:

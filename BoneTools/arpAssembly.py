@@ -477,14 +477,35 @@ def generate_controller(context, main):
         mapping = source_mapping(main)
         validate_mapping(main, mapping)
         existing = main.ho_arp_controller
+        # Deleting/unlinking the old rig's collection can leave its datablock
+        # alive through this pointer and the source constraints. Such an object
+        # is not an existing controller in this scene: generate a replacement.
+        # Keep the old pointer until success so failed generation is reversible.
+        if existing and context.scene.objects.get(existing.name) != existing:
+            existing = None
         if existing:
-            if context.view_layer.objects.get(existing.name) != existing:
-                raise ValueError("关联的 ARP 控制器不在当前视图层")
             # A repeat click refreshes the binding without rebuilding an animated
             # controller or adding another complete rig to the scene.
             pairs = [(name, DEFORM_BONES[slot], slot)
                      for slot, name in mapping.items() if slot in DEFORM_BONES]
-            return existing, bind_pairs(main, existing, pairs, ASSEMBLY_PREFIX), 0
+            linked_here = False
+            try:
+                if context.view_layer.objects.get(existing.name) != existing:
+                    # Recover just the controller, not the entire excluded
+                    # collection (which may also contain unrelated characters).
+                    if context.scene.collection.objects.get(existing.name) != existing:
+                        context.scene.collection.objects.link(existing)
+                        linked_here = True
+                    context.view_layer.update()
+                if context.view_layer.objects.get(existing.name) != existing:
+                    raise ValueError("无法将关联的 ARP 控制器链接到当前视图层")
+                count = bind_pairs(main, existing, pairs, ASSEMBLY_PREFIX)
+            except Exception:
+                if linked_here:
+                    context.scene.collection.objects.unlink(existing)
+                    context.view_layer.update()
+                raise
+            return existing, count, 0
         before = _data_inventory()
         rig = None
         try:
