@@ -3,7 +3,6 @@ from bpy.props import PointerProperty
 from bpy.types import Operator
 from mathutils import Vector
 
-from ..BoneTools.boneHumanoid import OP_MoveHumanoidBonesToCollection
 from ..BoneTools.boneOperators import (
     OP_ApplyRestPose,
     drawMergeArmaturesPanel,
@@ -388,7 +387,6 @@ class OP_SnapMatchingBoneHeads(Operator):
 
 def drawWeightPanel(layout, context):
     column = layout.column(align=True)
-    column.operator(OP_MoveHumanoidBonesToCollection.bl_idname,)
     column.operator(
         OP_ApplyRestPose.bl_idname,
         text="强制应用姿态与Mesh",

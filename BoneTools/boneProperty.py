@@ -259,11 +259,6 @@ class PG_Hotools_BoneProps(PropertyGroup):
         description="定义此骨对应Unity-Humannoid标准骨",
         default="",
     )  # type: ignore
-    deformMappingTag: StringProperty(
-        name="DeformMappingTag",
-        description="目标形变骨名称，用于HoTools批量约束映射",
-        default="",
-    )  # type: ignore
     auxBone: PointerProperty(
         name="辅助骨信息",
         description="此骨作为 HoTools 辅助骨时的自描述信息",
@@ -324,7 +319,6 @@ class PT_Hotools_PosebonePanel(Panel):
         layout.prop(props, "generateMCH", toggle=False)
         layout.prop(props, "endBone", toggle=False)
         layout.prop(props, "humanoidMapping", toggle=False)
-        layout.prop(props, "deformMappingTag", toggle=False)
         layout.operator("hotools.register_existing_aim", icon="CON_TRACKTO")
 
         aux = props.auxBone

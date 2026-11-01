@@ -1,11 +1,10 @@
 import bpy
-from bpy.types import Panel, UILayout, Context, Operator
-from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,FloatProperty,EnumProperty
+from bpy.types import UILayout, Context, Operator
+from bpy.props import BoolProperty, IntProperty
 from .humanoid_auto_mapping import auto_map_source_names_to_humanoid,TARGET_LAYOUT
+from . import arpAssembly
 
-import csv
 from math import acos, atan2, cos, degrees, radians, sin
-import os
 import blf
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -13,131 +12,8 @@ from mathutils import Vector
 from bpy_extras import view3d_utils
 from Utils.bone_selection import selected_bone_names
 
-def PF_armature_filter(self, obj):
-    return obj.type == 'ARMATURE'
-
-class HumanoidDeformTagPresetRegistry:
-    preset_dir = os.path.join(
-        os.path.dirname(__file__),
-        "deform_tag_presets",
-    )
-    no_preset_id = "__NONE__"
-
-    @staticmethod
-    def format_name(preset_id):
-        return preset_id.strip()
-
-    @classmethod
-    def load_file(cls, path):
-        tags = {}
-
-        try:
-            with open(path, "r", encoding="utf-8-sig", newline="") as f:
-                reader = csv.reader(f)
-
-                for row in reader:
-                    if len(row) < 2:
-                        continue
-
-                    humanoid_name = row[0].strip()
-                    deform_name = row[1].strip()
-
-                    if not humanoid_name or humanoid_name.startswith("#"):
-                        continue
-
-                    if not deform_name:
-                        continue
-
-                    tags[humanoid_name] = deform_name
-        except Exception as e:
-            print(f"[DeformTag Preset] failed to read {path}: {e}")
-            return None
-
-        if not tags:
-            return None
-
-        preset_id = os.path.splitext(os.path.basename(path))[0]
-        return {
-            "id": preset_id,
-            "name": cls.format_name(preset_id),
-            "path": path,
-            "tags": tags,
-        }
-
-    @classmethod
-    def load_all(cls):
-        presets = {}
-
-        if not os.path.isdir(cls.preset_dir):
-            return presets
-
-        for filename in sorted(os.listdir(cls.preset_dir)):
-            if not filename.endswith(".csv") or filename.startswith("_"):
-                continue
-
-            preset = cls.load_file(
-                os.path.join(cls.preset_dir, filename),
-            )
-            if preset is None:
-                continue
-
-            presets[preset["id"]] = preset
-
-        return presets
-
-    @staticmethod
-    def enum_items(_self, _context):
-        presets = HumanoidDeformTagPresetRegistry.load_all()
-
-        if not presets:
-            return [(
-                HumanoidDeformTagPresetRegistry.no_preset_id,
-                "无DeformTag预设",
-                "没有找到可用的DeformTag预设",
-            )]
-
-        return [
-            (
-                preset_id,
-                preset["name"],
-                preset["path"],
-            )
-            for preset_id, preset in sorted(
-                presets.items(),
-                key=lambda item: item[1]["name"].lower(),
-            )
-        ]
-
-    @classmethod
-    def selected(cls, scene):
-        preset_id = getattr(
-            scene,
-            "bone_humanoid_deform_tag_preset",
-            cls.no_preset_id,
-        )
-
-        if preset_id == cls.no_preset_id:
-            return None
-
-        return cls.load_all().get(preset_id)
-
-    @classmethod
-    def get(cls, preset_id):
-        if not preset_id or preset_id == cls.no_preset_id:
-            return None
-
-        return cls.load_all().get(preset_id)
-
 
 def reg_props():
-    bpy.types.Scene.bone_constraint_resting_armature = PointerProperty(
-        type=bpy.types.Object, poll=PF_armature_filter)
-    bpy.types.Scene.bone_constraint_moving_armature = PointerProperty(
-        type=bpy.types.Object, poll=PF_armature_filter)
-    bpy.types.Scene.bone_humanoid_deform_tag_preset = EnumProperty(
-        name="DeformTag预设",
-        items=HumanoidDeformTagPresetRegistry.enum_items,
-    )
     bpy.types.Scene.bone_humanoid_preview_show_names = BoolProperty(
         name="显示名称",
         default=True,
@@ -148,10 +24,6 @@ def reg_props():
     )
     bpy.types.Scene.bone_humanoid_preview_show_check_details = BoolProperty(
         name="显示检查内容",
-        default=True,
-    )
-    bpy.types.Scene.bone_humanoid_preview_show_deform_tags = BoolProperty(
-        name="显示DeformTag",
         default=True,
     )
     bpy.types.Scene.bone_humanoid_check_precise_limb_ik = BoolProperty(
@@ -182,742 +54,15 @@ def reg_props():
     )
 
 def ureg_props():
-    del bpy.types.Scene.bone_constraint_resting_armature
-    del bpy.types.Scene.bone_constraint_moving_armature
-    del bpy.types.Scene.bone_humanoid_deform_tag_preset
     del bpy.types.Scene.bone_humanoid_preview_show_names
     del bpy.types.Scene.bone_humanoid_preview_show_missing
     del bpy.types.Scene.bone_humanoid_preview_show_check_details
-    del bpy.types.Scene.bone_humanoid_preview_show_deform_tags
     del bpy.types.Scene.bone_humanoid_check_precise_limb_ik
     del bpy.types.Scene.bone_humanoid_check_twist
     del bpy.types.Scene.bone_humanoid_check_ik_bend
     del bpy.types.Scene.bone_humanoid_check_connection
     del bpy.types.Scene.bone_humanoid_preview_font_size
 
-class OP_SwapBoneConstraintArmatures(Operator):
-    bl_idname = "ho.swap_bone_constraint_armatures"
-    bl_label = "交换骨架"
-    bl_description = "交换当前设置的Resting和Moving骨架"
-
-    def execute(self, context):
-        scene = context.scene
-        resting = scene.bone_constraint_resting_armature
-        moving = scene.bone_constraint_moving_armature
-
-        if resting is None and moving is None:
-            self.report({'WARNING'}, "没有设置骨架")
-            return {'CANCELLED'}
-
-        scene.bone_constraint_resting_armature = moving
-        scene.bone_constraint_moving_armature = resting
-
-        self.report({'INFO'}, "已交换骨架")
-        return {'FINISHED'}
-
-class OP_DeformTag_addConstraint(Operator):
-    bl_idname = "ho.deformtag_addconstraint"
-    bl_label = "按DeformTag添加复制位置旋转约束"
-    bl_description = "读取固定骨架骨骼的DeformMappingTag，在移动骨架中按骨名查找形变骨并添加约束；HumanoidMapping 名称包含 twist 的骨只添加复制旋转约束"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    """
-    关于 ARP deform 骨约束的当前结论：
-
-    之前尝试过在添加约束时检测 fixed/base 骨和 target/deform 骨的 rest 轴向差异，
-    然后对轴向变化较大的骨切换 COPY_ROTATION 的坐标空间。这个做法已经确认会引入
-    更多不可控问题，所以这里不再做按骨骼轴向差异切换空间的 hack。
-
-    现在这个操作只负责一件事：根据 DeformMappingTag 找到目标 deform 骨，并添加复制位置 /
-    复制旋转约束。默认空间保持 Pose Space -> Pose Space，这样约束行为可预期，也方便
-    后续定位真正的问题。
-
-    真正需要处理的是 ARP 生成控制器时会自动修正参考骨 / deform 骨本身：
-    - 优先方向是检查输入骨架，尽量在生成前发现会触发 ARP 自动修正的骨骼问题；
-    - 检查项应该放到 Humanoid 映射检查 / 骨骼规范检查里，而不是塞进约束添加逻辑；
-    - 对不可避免的 ARP 修正，需要在预览和检查里明确提示，让用户知道哪些骨可能被修正；
-    - 约束流程要容忍修正后的 deform 骨存在，但不要为了个别修正再引入隐式坐标系分支。
-
-    hips 仍然保留两个明确兼容项：
-    - COPY_LOCATION head_tail=1.0，用来处理 ARP hips deform 骨头尾方向；
-    - COPY_ROTATION 使用 Local With Parent -> Local Space (Owner Orientation)，这是当前实测
-      能处理 hips 旋转基准不一致的必要特例。
-    这两个特例都只绑定到 hips，不恢复按轴向阈值给任意骨切换坐标系的旧逻辑。
-
-    HumanoidMapping 命中 arm_twist / leg_twist 的骨只添加 COPY_ROTATION:
-    - leg_twist 使用 Local Space -> Local Space (Owner Orientation)；
-    - arm_twist 使用 Local With Parent -> Local Space (Owner Orientation)。
-    如果已经存在同目标的 COPY_LOCATION，会在本操作中移除，避免 twist 骨被位置约束拉动。
-    """
-
-    @staticmethod
-    def _is_hips_mapping(fixed_bone, props):
-        humanoid_mapping = getattr(props, "humanoidMapping", "").strip()
-        return humanoid_mapping == "hips" or fixed_bone.name == "hips"
-
-    @staticmethod
-    def _is_arm_twist_mapping(props):
-        humanoid_mapping = getattr(props, "humanoidMapping", "").strip().lower()
-        return "arm" in humanoid_mapping and "twist" in humanoid_mapping
-
-    @staticmethod
-    def _is_leg_twist_mapping(props):
-        humanoid_mapping = getattr(props, "humanoidMapping", "").strip().lower()
-        return "leg" in humanoid_mapping and "twist" in humanoid_mapping
-
-    @classmethod
-    def _configure_constraint(
-        cls,
-        constraint,
-        constraint_type,
-        target_armature,
-        target_bone,
-        is_hips_mapping,
-        is_arm_twist_mapping,
-        is_leg_twist_mapping,
-    ):
-        constraint.target = target_armature
-        constraint.subtarget = target_bone.name
-
-        if constraint_type == 'COPY_ROTATION' and is_arm_twist_mapping:
-            constraint.owner_space = 'LOCAL_WITH_PARENT'
-            constraint.target_space = 'LOCAL_OWNER_ORIENT'
-        elif constraint_type == 'COPY_ROTATION' and is_leg_twist_mapping:
-            constraint.owner_space = 'LOCAL'
-            constraint.target_space = 'LOCAL_OWNER_ORIENT'
-        elif constraint_type == 'COPY_ROTATION' and is_hips_mapping:
-            constraint.owner_space = 'LOCAL_WITH_PARENT'
-            constraint.target_space = 'LOCAL_OWNER_ORIENT'
-        else:
-            constraint.owner_space = 'POSE'
-            constraint.target_space = 'POSE'
-
-        if constraint_type == 'COPY_LOCATION' and hasattr(constraint, "head_tail"):
-            constraint.head_tail = 1.0 if is_hips_mapping else 0.0
-
-        if hasattr(constraint, "mix_mode"):
-            constraint.mix_mode = 'REPLACE'
-
-    def execute(self, context):
-        scene = context.scene
-        fixed_armature = scene.bone_constraint_resting_armature
-        target_armature = scene.bone_constraint_moving_armature
-        constraint_types = ('COPY_LOCATION', 'COPY_ROTATION')
-
-        if not (fixed_armature and target_armature):
-            self.report({'WARNING'}, "需要指定两个骨架")
-            return {'CANCELLED'}
-
-        if fixed_armature.type != 'ARMATURE' or target_armature.type != 'ARMATURE':
-            self.report({'WARNING'}, "指定对象必须都是Armature")
-            return {'CANCELLED'}
-
-        added_count = 0
-        existed_count = 0
-        replaced_count = 0
-        deform_tag_count = 0
-        missing_count = 0
-        skipped_no_props_count = 0
-        skipped_no_deform_tag_count = 0
-        configured_existing_count = 0
-        hips_head_tail_count = 0
-        twist_rotation_only_count = 0
-        arm_twist_count = 0
-        leg_twist_count = 0
-        removed_twist_location_count = 0
-
-        for fixed_bone in fixed_armature.pose.bones:
-            props = getattr(fixed_bone.bone, "hotools_boneprops", None)
-            if props is None:
-                skipped_no_props_count += 1
-                continue
-
-            deform_mapping_tag = getattr(
-                props,
-                "deformMappingTag",
-                "",
-            ).strip()
-
-            if not deform_mapping_tag:
-                skipped_no_deform_tag_count += 1
-                continue
-
-            target_bone = target_armature.pose.bones.get(deform_mapping_tag)
-            if target_bone is None:
-                missing_count += 1
-                print(
-                    f"[Bone Constraint] DeformMappingTag target missing: "
-                    f"fixed={fixed_bone.name}, tag={deform_mapping_tag}"
-                )
-                continue
-
-            deform_tag_count += 1
-            is_hips_mapping = self._is_hips_mapping(fixed_bone, props)
-            is_arm_twist_mapping = self._is_arm_twist_mapping(props)
-            is_leg_twist_mapping = self._is_leg_twist_mapping(props)
-            is_twist_mapping = is_arm_twist_mapping or is_leg_twist_mapping
-            bone_constraint_types = (
-                ('COPY_ROTATION',)
-                if is_twist_mapping
-                else constraint_types
-            )
-
-
-            if is_hips_mapping:
-                hips_head_tail_count += 1
-
-            if is_twist_mapping:
-                twist_rotation_only_count += 1
-                if is_arm_twist_mapping:
-                    arm_twist_count += 1
-                if is_leg_twist_mapping:
-                    leg_twist_count += 1
-
-                old_copy_location_constraints = [
-                    c for c in fixed_bone.constraints
-                    if (
-                        c.type == 'COPY_LOCATION'
-                        and c.target == target_armature
-                        and c.subtarget == target_bone.name
-                    )
-                ]
-
-                for old_constraint in old_copy_location_constraints:
-                    fixed_bone.constraints.remove(old_constraint)
-                    removed_twist_location_count += 1
-
-            old_copy_transforms_constraints = [
-                c for c in fixed_bone.constraints
-                if (
-                    c.type == 'COPY_TRANSFORMS'
-                    and c.target == target_armature
-                    and c.subtarget == target_bone.name
-                    and c.name == f"COPY_TRANSFORMS_{target_bone.name}"
-                )
-            ]
-
-            for old_constraint in old_copy_transforms_constraints:
-                fixed_bone.constraints.remove(old_constraint)
-                replaced_count += 1
-
-            for constraint_type in bone_constraint_types:
-                existing_constraints = [
-                    c for c in fixed_bone.constraints
-                    if (
-                        c.type == constraint_type
-                        and c.target == target_armature
-                        and c.subtarget == target_bone.name
-                    )
-                ]
-
-                if existing_constraints:
-                    existed_count += 1
-                    for existing_constraint in existing_constraints:
-                        self._configure_constraint(
-                            existing_constraint,
-                            constraint_type,
-                            target_armature,
-                            target_bone,
-                            is_hips_mapping,
-                            is_arm_twist_mapping,
-                            is_leg_twist_mapping,
-                        )
-                        configured_existing_count += 1
-
-                    continue
-
-                constraint = fixed_bone.constraints.new(constraint_type)
-                constraint.name = f"{constraint_type}_{target_bone.name}"
-                self._configure_constraint(
-                    constraint,
-                    constraint_type,
-                    target_armature,
-                    target_bone,
-                    is_hips_mapping,
-                    is_arm_twist_mapping,
-                    is_leg_twist_mapping,
-                )
-
-                added_count += 1
-
-
-        msg = (
-            f"添加约束完成："
-            f"新增 {added_count}，"
-            f"已存在 {existed_count}，"
-            f"未找到 {missing_count}"
-        )
-
-        if deform_tag_count:
-            msg += f"，DeformTag {deform_tag_count}"
-
-        if replaced_count:
-            msg += f"，替换复制变换 {replaced_count}"
-
-        if configured_existing_count:
-            msg += f", reconfigured existing {configured_existing_count}"
-
-
-        if hips_head_tail_count:
-            msg += f", hips head_tail=1 {hips_head_tail_count}"
-
-        if twist_rotation_only_count:
-            msg += f"，Twist仅旋转 {twist_rotation_only_count}"
-
-        if arm_twist_count:
-            msg += f"，ArmTwist {arm_twist_count}"
-
-        if leg_twist_count:
-            msg += f"，LegTwist {leg_twist_count}"
-
-        if removed_twist_location_count:
-            msg += f"，移除Twist位置约束 {removed_twist_location_count}"
-
-        if skipped_no_deform_tag_count:
-            msg += f"，无DeformTag {skipped_no_deform_tag_count}"
-
-        if skipped_no_props_count:
-            msg += f"，无属性 {skipped_no_props_count}"
-
-        self.report({'INFO'}, msg)
-        return {'FINISHED'}
-
-   
-class OP_FixedArmature_ClearConstraint(Operator):
-    bl_idname = "ho.fixedarmature_clear_constraint"
-    bl_label = "清理DeformTag约束"
-    bl_description = "只清理固定骨架中映射到 deform 骨的约束：逐骨读取 DeformMappingTag，空的跳过，否则删除该骨上目标骨名与 DeformTag 同名的约束"
-
-    def execute(self, context):
-        scene = context.scene
-        fixed_armature = scene.bone_constraint_resting_armature
-        if not fixed_armature:
-            self.report({'WARNING'}, "需要指定固定骨架")
-            return {'CANCELLED'}
-
-        if fixed_armature.type != 'ARMATURE':
-            self.report({'WARNING'}, "指定对象必须是Armature")
-            return {'CANCELLED'}
-
-        removed_count = 0
-        affected_bones = 0
-        skipped_no_deform_tag = 0
-
-        for fixed_bone in fixed_armature.pose.bones:
-            props = getattr(fixed_bone.bone, "hotools_boneprops", None)
-            deform_mapping_tag = getattr(props, "deformMappingTag", "").strip() if props is not None else ""
-
-            # 没有 DeformTag 的骨不是约束目标，直接跳过，保留其它手动约束
-            if not deform_mapping_tag:
-                skipped_no_deform_tag += 1
-                continue
-
-            # 只删目标骨（subtarget）与 DeformTag 同名的约束
-            to_remove = [
-                c for c in fixed_bone.constraints
-                if getattr(c, "subtarget", "") == deform_mapping_tag
-            ]
-            if not to_remove:
-                continue
-            for constraint in to_remove:
-                fixed_bone.constraints.remove(constraint)
-                removed_count += 1
-            affected_bones += 1
-
-        self.report(
-            {'INFO'},
-            f"已清理 {affected_bones} 根骨上的 {removed_count} 个 DeformTag 约束"
-            f"（跳过 {skipped_no_deform_tag} 根无 DeformTag 的骨）",
-        )
-        return {'FINISHED'}
-
-
-class OP_Humanoid_ForceAlign(Operator):
-    bl_idname = "ho.humanoid_force_align"
-    bl_label = "强制Humanoid对齐"
-    bl_description = "根据Humanoid映射直接修改moving骨架的EditBone Rest Pose"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    align_roll: BoolProperty(name="对齐Roll", default=True)  # type: ignore
-    align_tail: BoolProperty(name="对齐Tail", default=True)  # type: ignore
-    keep_length: BoolProperty(name="保持原长度", default=False)  # type: ignore
-    only_selected: BoolProperty(name="仅处理选中骨骼", default=False)  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        scene = context.scene
-        resting = scene.bone_constraint_resting_armature
-        moving = scene.bone_constraint_moving_armature
-
-        return (
-            resting is not None
-            and moving is not None
-            and resting.type == 'ARMATURE'
-            and moving.type == 'ARMATURE'
-        )
-
-    def _edit_bone_depth(self, eb):
-        depth = 0
-        parent = eb.parent
-        while parent:
-            depth += 1
-            parent = parent.parent
-        return depth
-
-    @staticmethod
-    def _axis_label_parts(axis_label):
-        sign = -1.0 if axis_label.startswith("-") else 1.0
-        axis_name = axis_label[-1].upper()
-
-        return sign, axis_name
-
-    @classmethod
-    def _actual_axis_from_label(cls, edit_bone, axis_label):
-        sign, axis_name = cls._axis_label_parts(axis_label)
-
-        if axis_name == "X":
-            return edit_bone.x_axis.normalized() * sign
-
-        if axis_name == "Z":
-            return edit_bone.z_axis.normalized() * sign
-
-        if axis_name == "Y":
-            return edit_bone.y_axis.normalized() * sign
-
-        return None
-
-    @classmethod
-    def _add_axis_direction_roll_candidate(
-        cls,
-        candidates,
-        label,
-        checked_axis_label,
-        target_axis_local,
-        bone_axis_local,
-    ):
-        sign, axis_name = cls._axis_label_parts(checked_axis_label)
-        projected_axis = (
-            target_axis_local
-            - bone_axis_local * target_axis_local.dot(bone_axis_local)
-        )
-
-        score = projected_axis.length
-        if score < 1e-6:
-            return
-
-        desired_checked_axis = projected_axis.normalized()
-
-        if axis_name == "Z":
-            roll_axis_local = desired_checked_axis * sign
-        elif axis_name == "X":
-            desired_x_axis = desired_checked_axis * sign
-            roll_axis_local = desired_x_axis.cross(bone_axis_local)
-
-            if roll_axis_local.length < 1e-6:
-                return
-
-            roll_axis_local.normalize()
-        else:
-            return
-
-        candidates.append({
-            "label": label,
-            "roll_axis_local": roll_axis_local,
-            "score": score,
-            "checked_axis_label": checked_axis_label,
-            "desired_checked_axis": desired_checked_axis,
-        })
-
-    @classmethod
-    def _build_source_axis_roll_candidates(
-        cls,
-        source,
-        bone_axis_local,
-        moving_rot_inv,
-    ):
-        candidates = []
-
-        source_z_local = moving_rot_inv @ source["z_axis_world"]
-        cls._add_axis_direction_roll_candidate(
-            candidates,
-            "SOURCE:Z",
-            "+Z",
-            source_z_local,
-            bone_axis_local,
-        )
-
-        source_x_local = moving_rot_inv @ source["x_axis_world"]
-        cls._add_axis_direction_roll_candidate(
-            candidates,
-            "SOURCE:X",
-            "+X",
-            source_x_local,
-            bone_axis_local,
-        )
-
-        return candidates
-
-    def execute(self, context):
-        scene = context.scene
-        resting_obj = scene.bone_constraint_resting_armature
-        moving_obj = scene.bone_constraint_moving_armature
-
-        if resting_obj == moving_obj:
-            self.report({'ERROR'}, "不能对同一个骨架执行")
-            return {'CANCELLED'}
-
-        prev_active = context.view_layer.objects.active
-        prev_mode = context.mode
-        moving_selected_names = (
-            set(selected_bone_names(context, moving_obj))
-            if self.only_selected
-            else set()
-        )
-
-        aligned_count = 0
-        missing_count = 0
-        skipped_count = 0
-        roll_aligned_count = 0
-        roll_failed_count = 0
-        roll_skipped_count = 0
-        roll_x_fallback_count = 0
-        roll_items = []
-
-        # --------------------------------------------------
-        # 1. 读取 resting 骨架数据
-        # --------------------------------------------------
-        bpy.ops.object.mode_set(mode='OBJECT')
-        context.view_layer.objects.active = resting_obj
-        resting_obj.select_set(True)
-        bpy.ops.object.mode_set(mode='EDIT')
-
-        resting_data = {}
-
-        resting_world = resting_obj.matrix_world.copy()
-        resting_rot = resting_world.to_3x3()
-
-        for eb in resting_obj.data.edit_bones:
-            bone = resting_obj.data.bones.get(eb.name)
-            if bone is None:
-                continue
-
-            props = getattr(bone, "hotools_boneprops", None)
-            if props is None:
-                continue
-
-            mapping = props.humanoidMapping.strip()
-            if not mapping:
-                continue
-
-            head_world = resting_world @ eb.head
-            tail_world = resting_world @ eb.tail
-            x_axis_world = (resting_rot @ eb.x_axis).normalized()
-            z_axis_world = (resting_rot @ eb.z_axis).normalized()
-
-            if mapping not in resting_data:
-                resting_data[mapping] = {
-                    "name": str(eb.name),
-                    "head_world": head_world.copy(),
-                    "tail_world": tail_world.copy(),
-                    "x_axis_world": x_axis_world.copy(),
-                    "z_axis_world": z_axis_world.copy(),
-                }
-
-        # --------------------------------------------------
-        # 2. 修改 moving 骨架
-        # --------------------------------------------------
-        bpy.ops.object.mode_set(mode='OBJECT')
-        context.view_layer.objects.active = moving_obj
-        moving_obj.select_set(True)
-        bpy.ops.object.mode_set(mode='EDIT')
-
-        moving_world_inv = moving_obj.matrix_world.inverted()
-        moving_rot_inv = moving_world_inv.to_3x3()
-
-        # 关键：全部断开连接，避免小腿/前臂/手指 head 被父骨 tail 拉回去
-        disconnected_count = 0
-        for eb in moving_obj.data.edit_bones:
-            if eb.use_connect:
-                eb.use_connect = False
-                disconnected_count += 1
-
-        moving_edit_bones = sorted(
-            list(moving_obj.data.edit_bones),
-            key=self._edit_bone_depth,
-        )
-
-        for moving_eb in moving_edit_bones:
-            bone = moving_obj.data.bones.get(moving_eb.name)
-            if bone is None:
-                skipped_count += 1
-                continue
-
-            if self.only_selected and moving_eb.name not in moving_selected_names:
-                continue
-
-            if hasattr(bone, "visible") and not bone.visible:
-                continue
-
-            props = getattr(bone, "hotools_boneprops", None)
-            if props is None:
-                skipped_count += 1
-                continue
-
-            mapping = props.humanoidMapping.strip()
-            if not mapping:
-                continue
-
-            source = resting_data.get(mapping)
-            if source is None:
-                missing_count += 1
-                print(f"[Humanoid Force Align] missing mapping: {mapping}")
-                continue
-
-            original_length = moving_eb.length
-
-            head_local = moving_world_inv @ source["head_world"]
-            tail_local = moving_world_inv @ source["tail_world"]
-
-            if (tail_local - head_local).length < 1e-6:
-                skipped_count += 1
-                print(
-                    f"[Humanoid Force Align] skipped zero length: "
-                    f"{moving_eb.name}"
-                )
-                continue
-
-            moving_eb.head = head_local
-
-            if self.align_tail:
-                moving_eb.tail = tail_local
-            else:
-                direction = (moving_eb.tail - moving_eb.head).normalized()
-                moving_eb.tail = moving_eb.head + direction * original_length
-
-            if self.keep_length:
-                direction = (moving_eb.tail - moving_eb.head).normalized()
-                moving_eb.tail = moving_eb.head + direction * original_length
-
-            if self.align_roll:
-                roll_items.append((moving_eb, mapping, source))
-
-            aligned_count += 1
-
-            print(
-                "[Humanoid Force Align] "
-                f"{moving_eb.name} <- {source['name']} "
-                f"mapping={mapping}"
-            )
-
-        if self.align_roll:
-            for moving_eb, mapping, source in roll_items:
-                try:
-                    bone_axis_local = moving_eb.tail - moving_eb.head
-                    if bone_axis_local.length < 1e-6:
-                        roll_skipped_count += 1
-                        print(
-                            f"[Humanoid Force Align] roll skipped zero length: "
-                            f"{moving_eb.name}, mapping={mapping}"
-                        )
-                        continue
-
-                    bone_axis_local.normalize()
-                    roll_candidates = self._build_source_axis_roll_candidates(
-                        source,
-                        bone_axis_local,
-                        moving_rot_inv,
-                    )
-
-                    if not roll_candidates:
-                        roll_skipped_count += 1
-                        print(
-                            f"[Humanoid Force Align] roll skipped parallel: "
-                            f"{moving_eb.name}, mapping={mapping}"
-                        )
-                        continue
-
-                    candidate = max(
-                        roll_candidates,
-                        key=lambda item: item["score"],
-                    )
-                    before_roll = moving_eb.roll
-
-                    moving_eb.align_roll(candidate["roll_axis_local"])
-
-                    actual_axis = self._actual_axis_from_label(
-                        moving_eb,
-                        candidate["checked_axis_label"],
-                    )
-                    desired_axis = candidate["desired_checked_axis"]
-
-                    if actual_axis is not None and desired_axis.length >= 1e-6:
-                        desired_axis = desired_axis.normalized()
-                        roll_error_deg = degrees(acos(max(
-                            -1.0,
-                            min(1.0, actual_axis.dot(desired_axis)),
-                        )))
-                    else:
-                        roll_error_deg = None
-
-                    roll_aligned_count += 1
-                    if candidate["checked_axis_label"].endswith("X"):
-                        roll_x_fallback_count += 1
-
-                    error_text = (
-                        f"{roll_error_deg:.3f}deg"
-                        if roll_error_deg is not None
-                        else "unknown"
-                    )
-                    print(
-                        f"[Humanoid Force Align] roll: "
-                        f"{moving_eb.name}, mapping={mapping}, "
-                        f"axis={candidate['label']}, "
-                        f"{before_roll:.6f} -> {moving_eb.roll:.6f}, "
-                        f"error={error_text}"
-                    )
-
-                except Exception as e:
-                    roll_failed_count += 1
-                    print(
-                        f"[Humanoid Force Align] roll align failed: "
-                        f"{moving_eb.name}, mapping={mapping}, error={e}"
-                    )
-
-        bpy.ops.object.mode_set(mode='OBJECT')
-
-        if prev_active:
-            context.view_layer.objects.active = prev_active
-
-        try:
-            if prev_mode == 'POSE':
-                bpy.ops.object.mode_set(mode='POSE')
-            elif prev_mode == 'EDIT_ARMATURE':
-                bpy.ops.object.mode_set(mode='EDIT')
-            else:
-                bpy.ops.object.mode_set(mode='OBJECT')
-        except Exception:
-            pass
-
-        msg = (
-            f"Humanoid强制对齐完成："
-            f"对齐 {aligned_count}，"
-            f"缺失 {missing_count}，"
-            f"跳过 {skipped_count}，"
-            f"断开连接 {disconnected_count}"
-        )
-
-        if roll_failed_count:
-            msg += f"，Roll失败 {roll_failed_count}"
-
-        if self.align_roll:
-            msg += f"，Roll对齐 {roll_aligned_count}"
-            if roll_skipped_count:
-                msg += f"，Roll跳过 {roll_skipped_count}"
-            if roll_x_fallback_count:
-                msg += f"，Roll使用X轴 {roll_x_fallback_count}"
-
-        self.report({'INFO'}, msg)
-        return {'FINISHED'}
 
 class OP_Humanoid_FixLimbIkRoll(Operator):
     bl_idname = "ho.humanoid_fix_limb_ik_roll"
@@ -1333,131 +478,6 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
             bpy.ops.ho.humanoid_mapping_preview_clear()
             bpy.ops.ho.humanoid_mapping_preview_show()
 
-        return {'FINISHED'}
-
-
-class OP_Mapping_WriteDeformTagsFromHumanoid(Operator):
-    bl_idname = "ho.mapping_write_deform_tags_from_humanoid"
-    bl_label = "按Humanoid填DeformTag"
-    bl_description = "根据当前骨骼的Humanoid映射和选中的DeformTag预设，写入DeformMappingTag"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    preset_id: EnumProperty(
-        name="DeformTag预设",
-        items=HumanoidDeformTagPresetRegistry.enum_items,
-    )  # type: ignore
-
-    only_selected: BoolProperty(
-        name="仅处理选中骨骼",
-        default=False,
-    )  # type: ignore
-
-    overwrite_existing: BoolProperty(
-        name="覆盖已有DeformTag",
-        default=True,
-    )  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        return obj is not None and obj.type == 'ARMATURE'
-
-    def execute(self, context):
-        obj = context.object
-        scene = context.scene
-
-        preset = HumanoidDeformTagPresetRegistry.get(self.preset_id)
-        if preset is None:
-            preset = HumanoidDeformTagPresetRegistry.selected(scene)
-
-        if preset is None:
-            self.report({'ERROR'}, "没有可用的DeformTag预设")
-            return {'CANCELLED'}
-
-        try:
-            scene.bone_humanoid_deform_tag_preset = preset["id"]
-        except Exception:
-            pass
-
-        tags = preset["tags"]
-        processed_count = 0
-        written_count = 0
-        unchanged_count = 0
-        skipped_existing_count = 0
-        skipped_no_props_count = 0
-        skipped_no_humanoid_count = 0
-        missing_preset_count = 0
-        selected_names = set(selected_bone_names(context, obj)) if self.only_selected else set()
-
-        for bone in obj.data.bones:
-            if self.only_selected and bone.name not in selected_names:
-                continue
-
-            processed_count += 1
-            props = getattr(bone, "hotools_boneprops", None)
-
-            if props is None:
-                skipped_no_props_count += 1
-                continue
-
-            humanoid_name = props.humanoidMapping.strip()
-            if not humanoid_name:
-                skipped_no_humanoid_count += 1
-                continue
-
-            deform_tag = tags.get(humanoid_name)
-            if not deform_tag:
-                missing_preset_count += 1
-                print(
-                    f"[DeformTag Preset] missing humanoid entry: "
-                    f"bone={bone.name}, humanoid={humanoid_name}, "
-                    f"preset={preset['id']}"
-                )
-                continue
-
-            current_tag = getattr(props, "deformMappingTag", "").strip()
-            if current_tag and not self.overwrite_existing:
-                skipped_existing_count += 1
-                continue
-
-            if current_tag == deform_tag:
-                unchanged_count += 1
-                continue
-
-            props.deformMappingTag = deform_tag
-            written_count += 1
-
-            print(
-                f"[DeformTag Preset] write: "
-                f"{bone.name}, humanoid={humanoid_name}, "
-                f"deformTag={deform_tag}, preset={preset['id']}"
-            )
-
-        msg = (
-            f"DeformTag填入完成："
-            f"预设 {preset['name']}，"
-            f"处理 {processed_count}，"
-            f"写入 {written_count}，"
-            f"未变化 {unchanged_count}"
-        )
-
-        if skipped_existing_count:
-            msg += f"，保留已有 {skipped_existing_count}"
-
-        if skipped_no_humanoid_count:
-            msg += f"，无Humanoid {skipped_no_humanoid_count}"
-
-        if missing_preset_count:
-            msg += f"，预设缺失 {missing_preset_count}"
-
-        if skipped_no_props_count:
-            msg += f"，无属性 {skipped_no_props_count}"
-
-        if HumanoidMappingPreviewHUD.is_running():
-            bpy.ops.ho.humanoid_mapping_preview_clear()
-            bpy.ops.ho.humanoid_mapping_preview_show()
-
-        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -2409,12 +1429,6 @@ class HumanoidMappingPreviewHUD:
             True,
         ))
 
-    @classmethod
-    def _show_deform_tags(cls):
-        return bool(cls._scene_setting(
-            "bone_humanoid_preview_show_deform_tags",
-            True,
-        ))
 
     @classmethod
     def _check_precise_limb_ik(cls):
@@ -2491,21 +1505,6 @@ class HumanoidMappingPreviewHUD:
 
         return props.humanoidMapping.strip()
 
-    @classmethod
-    def _get_bone_deform_mapping_tag(cls, bone_name: str) -> str:
-        armature = cls._get_armature()
-        if armature is None:
-            return ""
-
-        bone = armature.data.bones.get(bone_name)
-        if bone is None:
-            return ""
-
-        props = getattr(bone, "hotools_boneprops", None)
-        if props is None:
-            return ""
-
-        return getattr(props, "deformMappingTag", "").strip()
 
     @staticmethod
     def _is_editing_armature(armature):
@@ -3181,14 +2180,12 @@ class HumanoidMappingPreviewHUD:
         gpu.state.blend_set('ALPHA')
         show_names = cls._show_names()
         show_check_details = cls._show_check_details()
-        show_deform_tags = cls._show_deform_tags()
         font_size = cls._font_size_value()
         twist_font_size = cls._twist_font_size_value()
 
         for index, item in enumerate(cls._items):
             bone_name = item["bone_name"]
             mapping_name = cls._get_bone_mapping_name(bone_name)
-            deform_mapping_tag = cls._get_bone_deform_mapping_tag(bone_name)
             if not mapping_name:
                 continue
 
@@ -3201,7 +2198,6 @@ class HumanoidMappingPreviewHUD:
             connection_warnings = item.get("connection_warnings") or []
             if (
                 not show_names
-                and not show_deform_tags
                 and not (
                     show_check_details
                     and (twist_issues or connection_warnings)
@@ -3253,23 +2249,8 @@ class HumanoidMappingPreviewHUD:
             line_shader.uniform_float("color", line_color)
             batch.draw(line_shader)
 
-            if show_names or show_deform_tags:
-                if show_names and show_deform_tags:
-                    deform_label = (
-                        deform_mapping_tag
-                        if deform_mapping_tag
-                        else "<NO_DEFORM_TAG>"
-                    )
-                    label = f'{mapping_name} -> {deform_label}  ({bone_name})'
-                elif show_deform_tags:
-                    deform_label = (
-                        deform_mapping_tag
-                        if deform_mapping_tag
-                        else "<NO_DEFORM_TAG>"
-                    )
-                    label = f'DeformTag: {deform_label}'
-                else:
-                    label = f'{mapping_name}  ({bone_name})'
+            if show_names:
+                label = f'{mapping_name}  ({bone_name})'
 
                 label = cls.no_i18n(label)
 
@@ -3416,87 +2397,6 @@ class OP_HumanoidMappingPreview_Clear(Operator):
         return {'FINISHED'}
 
 
-HUMANOID_COLLECTION_NAME = "Humanoid"
-
-
-def find_humanoid_bone_names(armature):
-    source_names = [bone.name for bone in armature.data.bones]
-    result = auto_map_source_names_to_humanoid(source_names)
-    return [match.source_name for match in result.matches], result
-
-
-class OP_MoveHumanoidBonesToCollection(Operator):
-    bl_idname = "ho.move_humanoid_bones_to_collection"
-    bl_label = "整理Humanoid骨骼集合"
-    bl_description = (
-        "自动识别活动骨架中的Humanoid骨骼，并将它们移动到Humanoid骨骼集合；"
-        "不会修改其他骨骼或骨架数据"
-    )
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        return obj is not None and obj.type == 'ARMATURE'
-
-    def execute(self, context):
-        armature = context.object
-        collections = getattr(armature.data, "collections", None)
-        if collections is None:
-            self.report({'ERROR'}, "当前Blender版本不支持骨骼集合")
-            return {'CANCELLED'}
-
-        try:
-            humanoid_names, result = find_humanoid_bone_names(armature)
-        except Exception as error:
-            self.report({'ERROR'}, f"自动识别Humanoid骨骼失败：{error}")
-            return {'CANCELLED'}
-
-        if not humanoid_names:
-            self.report({'WARNING'}, "未识别到Humanoid骨骼")
-            return {'CANCELLED'}
-
-        moved_count = 0
-        unchanged_count = 0
-
-        try:
-            collection = collections.get(HUMANOID_COLLECTION_NAME)
-            if collection is None:
-                collection = collections.new(HUMANOID_COLLECTION_NAME)
-
-            for bone_name in humanoid_names:
-                bone = armature.data.bones.get(bone_name)
-                if bone is None:
-                    continue
-
-                current_collections = list(bone.collections)
-                if (
-                    len(current_collections) == 1
-                    and current_collections[0] == collection
-                ):
-                    unchanged_count += 1
-                    continue
-
-                if collection not in current_collections:
-                    collection.assign(bone)
-                for old_collection in current_collections:
-                    if old_collection != collection:
-                        old_collection.unassign(bone)
-                moved_count += 1
-        except RuntimeError as error:
-            self.report({'ERROR'}, f"无法修改骨骼集合：{error}")
-            return {'CANCELLED'}
-
-        message = (
-            f"Humanoid骨骼集合整理完成：识别 {len(humanoid_names)}，"
-            f"移动 {moved_count}，已在目标集合 {unchanged_count}"
-        )
-        if result.low_confidence_matches:
-            message += f"，低置信度 {len(result.low_confidence_matches)}"
-        self.report({'INFO'}, message)
-        return {'FINISHED'}
-
-
 def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     scene = context.scene
 
@@ -3507,18 +2407,6 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     row = mapping_box.row(align=True)
     row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname, text="自动映射")
     row.operator(OP_Mapping_ClearHumanoidBoneProps.bl_idname, text="", icon="TRASH")
-
-    row = mapping_box.row(align=True)
-    row.prop(scene, "bone_humanoid_deform_tag_preset", text="")
-    op = row.operator(
-        OP_Mapping_WriteDeformTagsFromHumanoid.bl_idname,
-        text="填入DeformTag",
-        icon="PRESET",
-    )
-    op.preset_id = scene.bone_humanoid_deform_tag_preset
-
-    row = mapping_box.row(align=True)
-    row.operator(OP_MoveHumanoidBonesToCollection.bl_idname, text="独立Humanoid骨骼集合")
 
     # ── Humanoid 检查预览 ──────────────────────────────────
     layout.separator(factor=0.8)
@@ -3548,7 +2436,6 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     row = display_col.row(align=True)
     row.prop(scene, "bone_humanoid_preview_show_names", toggle=True)
     row.prop(scene, "bone_humanoid_preview_show_missing", toggle=True)
-    row.prop(scene, "bone_humanoid_preview_show_deform_tags", toggle=True)
 
     row = display_col.row(align=True)
     row.prop(scene, "bone_humanoid_preview_show_check_details", toggle=True)
@@ -3572,42 +2459,14 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
         icon="CON_KINEMATIC",
     )
 
-    # ── Humanoid 映射 ──────────────────────────────────────
     layout.separator(factor=0.8)
-    box = layout.box()
-    box.label(text="Humanoid映射", icon="CON_ARMATURE")
-
-    row = box.row(align=True)
-    row.prop_search(
-        scene, "bone_constraint_resting_armature",
-        scene, "objects",
-        text="固定", icon="ARMATURE_DATA",
-    )
-    row.operator(OP_SwapBoneConstraintArmatures.bl_idname, text="", icon="ARROW_LEFTRIGHT")
-    row.prop_search(
-        scene, "bone_constraint_moving_armature",
-        scene, "objects",
-        text="移动", icon="ARMATURE_DATA",
-    )
-
-    col = box.column(align=True)
-    col.operator(OP_Humanoid_ForceAlign.bl_idname, text="强制Humanoid对齐", icon="CON_ARMATURE")
-
-    row = col.row(align=True)
-    row.operator(OP_DeformTag_addConstraint.bl_idname, text="约束-位置旋转")
-    row.operator(OP_FixedArmature_ClearConstraint.bl_idname, text="", icon="TRASH")
+    arpAssembly.draw_panel(layout, context)
 
 cls = [
-    OP_SwapBoneConstraintArmatures,
-    OP_DeformTag_addConstraint,
-    OP_FixedArmature_ClearConstraint,
     OP_Mapping_WriteHumanoidBoneProps,
-    OP_Mapping_WriteDeformTagsFromHumanoid,
     OP_Mapping_ClearHumanoidBoneProps,
     OP_HumanoidMappingPreview_Show,
     OP_HumanoidMappingPreview_Clear,
-    OP_MoveHumanoidBonesToCollection,
-    OP_Humanoid_ForceAlign,
     OP_Humanoid_FixLimbIkRoll,
 ]
 
@@ -3615,9 +2474,12 @@ def register():
     for i in cls:
         bpy.utils.register_class(i)
     reg_props()
+    arpAssembly.register()
 
 
 def unregister():
+    HumanoidMappingPreviewHUD.clear()
+    arpAssembly.unregister()
     for i in cls:
         bpy.utils.unregister_class(i)
     ureg_props()
