@@ -1,19 +1,14 @@
-"""HoTools release metadata and in-Blender GitHub updater."""
+"""HoTools release metadata and read-only GitHub version checks."""
 
 from __future__ import annotations
 
 import json
 import re
-import shutil
-import sys
-import os
-import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 import bpy
-from bpy.props import BoolProperty
 from bpy.types import Operator
 
 
@@ -44,7 +39,7 @@ def read_version_info(path: Path = VERSION_FILE) -> dict:
 
 
 def is_development_build(metadata: dict | None = None) -> bool:
-    """Return whether this checkout is a local/dev build excluded from updates."""
+    """Return whether this checkout is a local/dev build excluded from checks."""
     metadata = metadata if metadata is not None else read_version_info()
     channel = str(metadata.get("channel") or "").strip().lower()
     version = str(metadata.get("version") or "").strip().lower()
@@ -101,10 +96,6 @@ def is_newer_version(current: str, latest: str) -> bool:
     return current != latest
 
 
-def python_abi() -> str:
-    return f"py{sys.version_info.major}{sys.version_info.minor}"
-
-
 def _request_json(url: str) -> dict:
     request = urllib.request.Request(
         url,
@@ -120,24 +111,6 @@ def _request_json(url: str) -> dict:
     return payload
 
 
-def find_release_asset(release: dict, abi: str | None = None) -> dict | None:
-    abi = abi or python_abi()
-    assets = release.get("assets", ())
-    if not isinstance(assets, list):
-        return None
-    candidates = []
-    for asset in assets:
-        if not isinstance(asset, dict):
-            continue
-        name = str(asset.get("name", ""))
-        url = str(asset.get("browser_download_url", ""))
-        if name.endswith(f"-{abi}.zip") and url.startswith("https://github.com/"):
-            candidates.append(asset)
-    if not candidates:
-        return None
-    return candidates[0]
-
-
 def check_for_update() -> dict:
     """Fetch the latest stable release and return a UI-friendly result."""
     local = read_version_info()
@@ -150,10 +123,7 @@ def check_for_update() -> dict:
             "latest_tag": "",
             "release_name": "",
             "published_at": "",
-            "asset_name": "",
-            "download_url": "",
             "update_available": False,
-            "asset_available": False,
             "development_build": True,
         }
     repository = str(local.get("repository") or DEFAULT_REPOSITORY)
@@ -161,7 +131,6 @@ def check_for_update() -> dict:
     latest_tag = str(release.get("tag_name") or "").strip()
     if not latest_tag:
         raise ValueError("GitHub release has no tag")
-    asset = find_release_asset(release)
     return {
         "current_version": str(local.get("version") or current_tag),
         "current_tag": current_tag,
@@ -169,61 +138,9 @@ def check_for_update() -> dict:
         "latest_tag": latest_tag,
         "release_name": str(release.get("name") or latest_tag),
         "published_at": str(release.get("published_at") or ""),
-        "asset_name": str(asset.get("name")) if asset else "",
-        "download_url": str(asset.get("browser_download_url")) if asset else "",
         "update_available": is_newer_version(current_tag, latest_tag),
-        "asset_available": asset is not None,
         "development_build": False,
     }
-
-
-def download_release(url: str, target: Path) -> None:
-    if not url.startswith("https://github.com/"):
-        raise ValueError("Refusing to download an untrusted release URL")
-    request = urllib.request.Request(url, headers={"User-Agent": "HoTools-updater"})
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(request, timeout=60) as response, target.open("wb") as output:
-        shutil.copyfileobj(response, output)
-    if not target.is_file() or target.stat().st_size == 0:
-        raise ValueError("Downloaded release ZIP is empty")
-
-
-def schedule_package_update(zip_path: Path, plugin_dir: Path = PLUGIN_DIR) -> Path:
-    """Start a background Blender helper that replaces the package after exit."""
-    helper_source = plugin_dir / "update_helper.py"
-    if not helper_source.is_file():
-        raise RuntimeError("HoTools update helper is missing")
-    helper_copy = Path(tempfile.gettempdir()) / f"HoTools-update-helper-{os.getpid()}.py"
-    shutil.copy2(helper_source, helper_copy)
-    config_path = Path(tempfile.gettempdir()) / f"HoTools-update-{os.getpid()}.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "old_pid": os.getpid(),
-                "zip_path": str(zip_path),
-                "plugin_dir": str(plugin_dir),
-                "blender_path": bpy.app.binary_path,
-                "blend_path": bpy.data.filepath or "",
-                "helper_path": str(helper_copy),
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    try:
-        result = bpy.ops.ho.restart_blender(
-            "EXEC_DEFAULT",
-            confirm_restart=True,
-            startup_script=str(helper_copy),
-            startup_script_config=str(config_path),
-        )
-        if "CANCELLED" in result:
-            raise RuntimeError("Blender 拒绝启动更新脚本")
-    except Exception:
-        config_path.unlink(missing_ok=True)
-        helper_copy.unlink(missing_ok=True)
-        raise
-    return config_path
 
 
 def _prefs(context):
@@ -246,96 +163,23 @@ class HO_OT_check_update(Operator):
             self.report({"ERROR"}, f"检查更新失败: {exc}")
             return {"CANCELLED"}
 
-        if prefs and result.get("development_build"):
-            prefs.hoTools_update_current = result["current_tag"]
-            prefs.hoTools_update_latest = ""
-            prefs.hoTools_update_download_url = ""
-            prefs.hoTools_update_asset_name = ""
-            prefs.hoTools_update_status = "本地开发版本，不参与自动更新"
-            self.report({"INFO"}, "当前是本地开发版本，已跳过 GitHub 更新检查")
-            return {"FINISHED"}
-
         if prefs:
             prefs.hoTools_update_current = result["current_tag"]
             prefs.hoTools_update_latest = result["latest_tag"]
-            prefs.hoTools_update_download_url = (
-                result["download_url"]
-                if result["update_available"] and result["asset_available"]
-                else ""
-            )
-            prefs.hoTools_update_asset_name = (
-                result["asset_name"]
-                if result["update_available"] and result["asset_available"]
-                else ""
-            )
-            if result["update_available"] and result["asset_available"]:
-                prefs.hoTools_update_status = f"发现新版本 {result['latest_tag']}"
-            elif result["update_available"]:
-                prefs.hoTools_update_status = (
-                    f"发现 {result['latest_tag']}，没有适用于当前 Python 的安装包"
-                )
-            else:
-                prefs.hoTools_update_status = "当前已是最新版本"
-        if result["update_available"] and result["asset_available"]:
-            self.report({"INFO"}, f"发现新版本 {result['latest_tag']}")
+
+        if result.get("development_build"):
+            message = "当前是本地开发版本，已跳过 GitHub 更新检查"
         elif result["update_available"]:
-            self.report({"WARNING"}, "有新版本，但没有匹配当前 Blender Python 的 ZIP")
+            message = f"发现新版本 {result['latest_tag']}，请获取安装包后手动安装"
         else:
-            self.report({"INFO"}, "HoTools 已是最新版本")
+            message = "HoTools 已是最新版本"
+        if prefs:
+            prefs.hoTools_update_status = message
+        self.report({"INFO"}, message)
         return {"FINISHED"}
 
 
-class HO_OT_install_update(Operator):
-    bl_idname = "ho.install_update"
-    bl_label = "安装 HoTools 更新"
-    bl_description = "下载最新安装包，关闭 Blender 后替换插件并重启"
-    confirm_install: BoolProperty(
-        name="确认安装并重启",
-        description="安装完成后会重启 Blender；当前未保存内容不会自动保存",
-        default=True,
-    )
-
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self)
-
-    def draw(self, context):
-        self.layout.prop(self, "confirm_install")
-
-    def execute(self, context):
-        if not self.confirm_install:
-            self.report({"WARNING"}, "请确认安装并重启 Blender")
-            return {"CANCELLED"}
-        prefs = _prefs(context)
-        url = str(getattr(prefs, "hoTools_update_download_url", "") or "")
-        tag = str(getattr(prefs, "hoTools_update_latest", "") or "")
-        if not url or not tag:
-            self.report({"WARNING"}, "请先检查更新")
-            return {"CANCELLED"}
-
-        safe_tag = re.sub(r"[^A-Za-z0-9._-]+", "_", tag.lstrip("v")) or "latest"
-        temp_path = Path(tempfile.gettempdir()) / f"HoTools-update-{safe_tag}.zip"
-        try:
-            download_release(url, temp_path)
-            schedule_package_update(temp_path)
-        except (OSError, ValueError, RuntimeError, urllib.error.URLError) as exc:
-            try:
-                if prefs:
-                    prefs.hoTools_update_status = f"安装失败: {exc}"
-            except (AttributeError, ReferenceError, RuntimeError):
-                # The addon may already be unregistered after addon_remove.
-                pass
-            self.report({"ERROR"}, f"更新安装失败: {exc}")
-            try:
-                temp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            return {"CANCELLED"}
-
-        # restart_blender owns the delayed quit and the injected helper script.
-        return {"FINISHED"}
-
-
-CLASSES = (HO_OT_check_update, HO_OT_install_update)
+CLASSES = (HO_OT_check_update,)
 
 
 def register():
@@ -351,9 +195,7 @@ def unregister():
 __all__ = [
     "CLASSES",
     "HO_OT_check_update",
-    "HO_OT_install_update",
     "check_for_update",
-    "find_release_asset",
     "is_newer_version",
     "is_development_build",
     "read_version_info",

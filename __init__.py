@@ -438,8 +438,6 @@ class AddonPreference(bpy.types.AddonPreferences):
     hoTools_update_status: bpy.props.StringProperty(name="更新状态", default="尚未检查")  # type: ignore
     hoTools_update_current: bpy.props.StringProperty(name="当前版本", default="")  # type: ignore
     hoTools_update_latest: bpy.props.StringProperty(name="最新版本", default="")  # type: ignore
-    hoTools_update_download_url: bpy.props.StringProperty(name="更新下载地址", default="", options={'HIDDEN'})  # type: ignore
-    hoTools_update_asset_name: bpy.props.StringProperty(name="更新安装包", default="", options={'HIDDEN'})  # type: ignore
 
     hoTools_ExIconSize: FloatProperty(name="图标大小", default=0.5)  # type: ignore
     hoTools_ExiconAlpha: FloatProperty(
@@ -499,9 +497,7 @@ class AddonPreference(bpy.types.AddonPreferences):
         version_row = version_box.row(align=True)
         version_row.enabled = not updater.is_development_build(metadata)
         version_row.operator('ho.check_for_update', icon='FILE_REFRESH')
-        install_row = version_row.row(align=True)
-        install_row.enabled = bool(self.hoTools_update_download_url and self.hoTools_update_latest)
-        install_row.operator('ho.install_update', text='安装更新')
+        version_box.label(text=self.hoTools_update_status)
 
         intro = left.box()
         _draw_asset_library_controls(intro)

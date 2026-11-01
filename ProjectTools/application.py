@@ -4,7 +4,7 @@ import os
 import subprocess
 
 import bpy
-from bpy.props import BoolProperty, StringProperty
+from bpy.props import BoolProperty
 from bpy.types import Operator
 
 
@@ -57,8 +57,6 @@ class OP_RestartBlender(Operator):
         description="重启不会自动保存当前未保存的内容",
         default=True,
     )
-    startup_script: StringProperty(options={"HIDDEN"})
-    startup_script_config: StringProperty(options={"HIDDEN"})
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
@@ -71,16 +69,7 @@ class OP_RestartBlender(Operator):
             self.report({'WARNING'}, "请确认重启 Blender")
             return {'CANCELLED'}
         args = [bpy.app.binary_path]
-        if self.startup_script:
-            args.extend((
-                "--background",
-                "--factory-startup",
-                "--python",
-                self.startup_script,
-            ))
-            if self.startup_script_config:
-                args.extend(("--", self.startup_script_config))
-        elif bpy.data.filepath:
+        if bpy.data.filepath:
             args.append(bpy.data.filepath)
         _launch_detached(args)
         bpy.app.timers.register(_quit_after_operator, first_interval=0.15)
