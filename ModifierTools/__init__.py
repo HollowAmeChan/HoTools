@@ -15,7 +15,7 @@ from ..ShapekeyTools.operators import (
 
 
 _QUICK_MODIFIER_ITEMS = (
-    ("SUBSURF_SIMPLE", "纯细分", "简单细分，不产生平滑形变"),
+    ("SUBSURF_SMOOTH", "磨皮", "两级 Catmull-Clark 细分，关闭折痕"),
     ("SUBSURF", "细分", "Catmull-Clark 细分"),
     ("SOLIDIFY", "实体化", "为表面添加厚度"),
     ("MIRROR", "镜像", "沿 X 轴镜像"),
@@ -26,7 +26,7 @@ _QUICK_MODIFIER_ITEMS = (
 )
 
 _QUICK_MODIFIER_SPECS = {
-    "SUBSURF_SIMPLE": ("SUBSURF", "纯细分", "MOD_SUBSURF"),
+    "SUBSURF_SMOOTH": ("SUBSURF", "磨皮", "MOD_SUBSURF"),
     "SUBSURF": ("SUBSURF", "细分", "MOD_SUBSURF"),
     "SOLIDIFY": ("SOLIDIFY", "实体化", "MOD_SOLIDIFY"),
     "MIRROR": ("MIRROR", "镜像", "MOD_MIRROR"),
@@ -146,8 +146,9 @@ class OP_AddQuickModifier(Operator):
             if modifier_type == "SUBSURF":
                 modifier.levels = 2
                 modifier.render_levels = 2
-                if self.modifier_type == "SUBSURF_SIMPLE":
-                    modifier.subdivision_type = "SIMPLE"
+                if self.modifier_type == "SUBSURF_SMOOTH":
+                    modifier.subdivision_type = "CATMULL_CLARK"
+                    modifier.use_creases = False
         except Exception as error:
             self.report({"ERROR"}, f"添加{modifier_name}失败：{error}")
             return {"CANCELLED"}
