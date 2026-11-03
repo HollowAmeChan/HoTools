@@ -28,10 +28,6 @@ def _targets(scene):
     return scene.ho_face_targets
 
 
-def _object_is_target(scene, obj):
-    return any(item.object == obj and item.enabled for item in _targets(scene))
-
-
 def _clear_object_keys(obj):
     shape_keys = getattr(getattr(obj, "data", None), "shape_keys", None)
     if shape_keys is None:
@@ -45,24 +41,23 @@ def _clear_object_keys(obj):
 
 def _apply_packet(scene, packet):
     global _LAST_SEQUENCE, _PACKETS
-    if packet.get("type") != "hoface.preview" or packet.get("version") != 1:
+    if packet.get("type") != "hoface.preview" or packet.get("version") != 2:
         return False
     weights = packet.get("weights") or {}
     tracked = bool(packet.get("tracked", False))
-    targets = packet.get("targets") or []
-    for target in targets:
-        target_id = target.get("id")
-        slot = target.get("slot") or ""
-        shape = target.get("shape") or ""
-        obj = bpy.data.objects.get(slot)
-        if not target_id or obj is None or not _object_is_target(scene, obj):
+    for item in _targets(scene):
+        obj = item.object
+        if not item.enabled or obj is None or obj.type != "MESH":
             continue
         shape_keys = getattr(getattr(obj, "data", None), "shape_keys", None)
-        key = shape_keys.key_blocks.get(shape) if shape_keys else None
-        if key is None:
+        if shape_keys is None:
             continue
-        value = float(weights.get(target_id, 0.0)) if tracked else 0.0
-        key.value = max(key.slider_min, min(key.slider_max, value))
+        for target_id, weight in weights.items():
+            key = shape_keys.key_blocks.get(target_id)
+            if key is None:
+                continue
+            value = float(weight) if tracked else 0.0
+            key.value = max(key.slider_min, min(key.slider_max, value))
     _LAST_SEQUENCE = int(packet.get("sequence", _LAST_SEQUENCE))
     _PACKETS += 1
     return True
