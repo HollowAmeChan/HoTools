@@ -49,6 +49,12 @@ from .normals import (
 )
 from .parallel_manifold_subdivide import OP_ParallelManifoldSubdivide
 from .offset_edges_modal import OP_SlideCut
+from .resegment import (
+    HO_OT_ResegmentLoops,
+    HO_OT_ResegmentStrip,
+    RESEGMENT_CLASSES,
+    cleanup_resegment_huds,
+)
 
 
 def draw_in_DATA_PT_customdata(self, context):
@@ -87,6 +93,8 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
         layout.operator(HO_OT_SetEdgeCurve.bl_idname, icon='CURVE_BEZCURVE')
         layout.operator(HO_OT_SetEdgeLinear.bl_idname, icon='IPO_LINEAR')
         layout.operator(OP_ParallelManifoldSubdivide.bl_idname, icon='MOD_SUBSURF')
+        layout.operator(HO_OT_ResegmentLoops.bl_idname, icon='MOD_SUBSURF')
+        layout.operator(HO_OT_ResegmentStrip.bl_idname, icon='MOD_SUBSURF')
         layout.operator_context = 'INVOKE_REGION_WIN'
         layout.operator(OP_SlideCut.bl_idname, icon='EDGESEL')
         layout.operator_context = 'INVOKE_DEFAULT'
@@ -107,6 +115,7 @@ _SUPPLEMENTAL_CLASSES = (
     *HO_MESH_CLASSES,
     *HO_CORRECTIVE_CLASSES,
     *HO_SINGULARITY_CLASSES,
+    *RESEGMENT_CLASSES,
     OP_CustomSplitNormals_Export,
     OP_CustomSplitNormals_Import,
     OP_MergeNearestVertexNormals,
@@ -228,6 +237,7 @@ def unregister():
     # handler drawing over a disabled add-on.
     cleanup_corrective_smooth_huds()
     cleanup_singularity_smooth_huds()
+    cleanup_resegment_huds()
     symmetrize.cleanup_symmetrize_huds()
 
     for keymap, keymap_item in addon_keymaps:
