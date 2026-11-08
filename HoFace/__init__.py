@@ -13,7 +13,7 @@ from typing import Optional
 
 import bpy
 from bpy.props import BoolProperty, CollectionProperty, IntProperty, PointerProperty, StringProperty
-from bpy.types import Operator, Panel, PropertyGroup, UIList
+from bpy.types import Operator, PropertyGroup, UIList
 
 
 _SOCKET = None
@@ -208,46 +208,38 @@ class HO_OT_HoFaceClearKeys(Operator):
         return {"FINISHED"}
 
 
-class HO_PT_HoFace(Panel):
-    bl_idname = "HO_PT_hoface"
-    bl_label = "HoFace"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "HoFace"
+def drawHoFacePanel(layout, context):
+    scene = context.scene
+    status = layout.box()
+    status.label(text=_LAST_STATUS, icon="LINKED" if _SOCKET else "UNLINKED")
+    row = status.row(align=True)
+    row.prop(scene, "ho_face_port", text="端口")
+    row.operator(HO_OT_HoFaceStart.bl_idname, text="开始", icon="PLAY")
+    row.operator(HO_OT_HoFaceStop.bl_idname, text="停止", icon="PAUSE")
+    status.label(text="帧 {} · 错误 {}".format(_PACKETS, _INVALID))
 
-    def draw(self, context):
-        layout = self.layout
-        scene = context.scene
-        status = layout.box()
-        status.label(text=_LAST_STATUS, icon="LINKED" if _SOCKET else "UNLINKED")
-        row = status.row(align=True)
-        row.prop(scene, "ho_face_port", text="端口")
-        row.operator(HO_OT_HoFaceStart.bl_idname, text="开始", icon="PLAY")
-        row.operator(HO_OT_HoFaceStop.bl_idname, text="停止", icon="PAUSE")
-        status.label(text="帧 {} · 错误 {}".format(_PACKETS, _INVALID))
+    box = layout.box()
+    box.label(text="驱动物体")
+    box.template_list("HO_UL_HoFaceTargets", "", scene, "ho_face_targets",
+                      scene, "ho_face_target_index", rows=4)
+    row = box.row(align=True)
+    row.operator(HO_OT_HoFaceAddSelected.bl_idname, text="添加选中", icon="ADD")
+    row.operator(HO_OT_HoFaceRemoveTarget.bl_idname, text="", icon="REMOVE")
+    row.operator(HO_OT_HoFaceClearTargets.bl_idname, text="", icon="TRASH")
 
-        box = layout.box()
-        box.label(text="驱动物体")
-        box.template_list("HO_UL_HoFaceTargets", "", scene, "ho_face_targets",
-                          scene, "ho_face_target_index", rows=4)
-        row = box.row(align=True)
-        row.operator(HO_OT_HoFaceAddSelected.bl_idname, text="添加选中", icon="ADD")
-        row.operator(HO_OT_HoFaceRemoveTarget.bl_idname, text="", icon="REMOVE")
-        row.operator(HO_OT_HoFaceClearTargets.bl_idname, text="", icon="TRASH")
-
-        box = layout.box()
-        box.label(text="制作清理")
-        box.operator(HO_OT_HoFaceClearKeys.bl_idname, icon="X")
-        box.prop(scene, "ho_face_base_check", text="基型检查")
-        box.prop(scene, "ho_face_pinning_check", text="钉固检查")
-        if not scene.ho_face_base_check and not scene.ho_face_pinning_check:
-            box.label(text="预检查已关闭，不阻挡实时预览。", icon="INFO")
+    box = layout.box()
+    box.label(text="制作清理")
+    box.operator(HO_OT_HoFaceClearKeys.bl_idname, icon="X")
+    box.prop(scene, "ho_face_base_check", text="基型检查")
+    box.prop(scene, "ho_face_pinning_check", text="钉固检查")
+    if not scene.ho_face_base_check and not scene.ho_face_pinning_check:
+        box.label(text="预检查已关闭，不阻挡实时预览。", icon="INFO")
 
 
 CLASSES = (
     PG_HoFaceTarget, HO_UL_HoFaceTargets, HO_OT_HoFaceStart,
     HO_OT_HoFaceStop, HO_OT_HoFaceAddSelected, HO_OT_HoFaceRemoveTarget,
-    HO_OT_HoFaceClearTargets, HO_OT_HoFaceClearKeys, HO_PT_HoFace,
+    HO_OT_HoFaceClearTargets, HO_OT_HoFaceClearKeys,
 )
 
 

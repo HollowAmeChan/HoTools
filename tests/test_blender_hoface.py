@@ -15,11 +15,14 @@ if str(ADDON_DIR.parent) not in sys.path:
 result = bpy.ops.preferences.addon_enable(module="HoTools")
 assert result == {"FINISHED"}, result
 assert hasattr(bpy.types.Scene, "ho_face_targets")
-assert not hasattr(bpy.types.Scene, "ho_ShapekeyToolsPanel_Mod") or all(
-    item[0] != "PANEL_SHAPEKEYTOOLS_BLENDMATRIX"
-    for item in bpy.types.Scene.ho_ShapekeyToolsPanel_Mod.keywords.get("items", [])
-)
-assert hasattr(bpy.types, "HO_PT_HoFace") or hasattr(bpy.types, "HO_PT_hoface")
+panel_items = {
+    item.identifier
+    for item in bpy.types.Scene.bl_rna.properties["ho_ShapekeyToolsPanel_Mod"].enum_items
+}
+assert "PANEL_SHAPEKEYTOOLS_BLENDMATRIX" not in panel_items
+assert "PANEL_SHAPEKEYTOOLS_HOFACE" in panel_items
+assert not hasattr(bpy.types, "HO_PT_HoFace")
+assert not hasattr(bpy.types, "HO_PT_hoface")
 
 mesh = bpy.data.meshes.new("HoFaceTestMesh")
 mesh.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
@@ -29,6 +32,8 @@ obj.shape_key_add(name="Basis", from_mix=False)
 obj.shape_key_add(name="JawOpen", from_mix=False)
 
 scene = bpy.context.scene
+scene.ho_ShapekeyToolsPanel_Mod = "PANEL_SHAPEKEYTOOLS_HOFACE"
+assert scene.ho_ShapekeyToolsPanel_Mod == "PANEL_SHAPEKEYTOOLS_HOFACE"
 target = scene.ho_face_targets.add()
 target.object = obj
 target.enabled = True
@@ -36,12 +41,11 @@ target.enabled = True
 assert bpy.ops.ho.hoface_start() == {"FINISHED"}
 packet = {
     "type": "hoface.preview",
-    "version": 1,
+    "version": 2,
     "sequence": 1,
     "time": 0.1,
     "tracked": True,
-    "weights": {"jaw": 0.65},
-    "targets": [{"id": "jaw", "slot": "Face", "shape": "JawOpen"}],
+    "weights": {"JawOpen": 0.65},
 }
 sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sender.sendto(json.dumps(packet).encode("utf-8"), ("127.0.0.1", scene.ho_face_port))

@@ -2,6 +2,7 @@ import bpy
 import bmesh
 from bpy.types import Panel
 
+from .. import HoFace
 from . import operators, transfer, manager, multiObjectFlow, rebase
 
 
@@ -11,6 +12,7 @@ def reg_props():
         ('PANEL_SHAPEKEYTOOLS_MANAGER', "管理", ""),
         ('PANEL_SHAPEKEYTOOLS_TRANSFER', "传递", ""),
         ('PANEL_SHAPEKEYTOOLS_REBASE', "变基", ""),
+        ('PANEL_SHAPEKEYTOOLS_HOFACE', "HoFace", ""),
     ]
     bpy.types.Scene.ho_ShapekeyToolsPanel_Mod = bpy.props.EnumProperty(
         name="ShapekeyToolsPanelMod", items=enum_items)
@@ -44,6 +46,8 @@ class ShapekeyTools(Panel):
             manager.drawShapekeyManagerPanel(self.layout, context)
         if context.scene.ho_ShapekeyToolsPanel_Mod == "PANEL_SHAPEKEYTOOLS_REBASE":
             rebase.drawRebasePanel(self.layout, context)
+        if context.scene.ho_ShapekeyToolsPanel_Mod == "PANEL_SHAPEKEYTOOLS_HOFACE":
+            HoFace.drawHoFacePanel(self.layout, context)
 
 cls = [ShapekeyTools]
 # endregion
