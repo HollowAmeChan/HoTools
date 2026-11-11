@@ -288,9 +288,6 @@ operator = SimpleNamespace(
     _descriptor=None,
     _original_selected_edge_keys=None,
     _handle_text=None,
-    _timer=None,
-    _window_manager=None,
-    _preview_dirty=False,
     selection_mode="LOOPS",
     segment_count=1,
     smoothness=0.0,
@@ -305,10 +302,19 @@ assert operator._prepare(bpy.context)
 operator.segment_count = 6
 operator.smoothness = 0.0
 operator._rebuild(bpy.context)
-timer = object()
-operator._timer = timer
-operator._window_manager = SimpleNamespace(event_timer_remove=lambda _timer: None)
 modal_context = SimpleNamespace(active_object=obj, area=None)
+preview_updates = []
+rebuild_preview = operator._rebuild
+
+
+def rebuild_and_record(context):
+    rebuild_preview(context)
+    preview_updates.append((
+        operator.segment_count, operator.smoothness, operator.slide_strength,
+    ))
+
+
+operator._rebuild = rebuild_and_record
 alt_wheel = SimpleNamespace(
     type="WHEELUPMOUSE",
     value="PRESS",
@@ -318,11 +324,29 @@ alt_wheel = SimpleNamespace(
 )
 assert operator.modal(modal_context, alt_wheel) == {"RUNNING_MODAL"}
 assert operator.slide_strength == 0.05
-assert operator._preview_dirty
-timer_event = SimpleNamespace(type="TIMER", timer=timer)
-assert operator.modal(modal_context, timer_event) == {"RUNNING_MODAL"}
-assert not operator._preview_dirty
+assert preview_updates == [(6, 0.0, 0.05)]
+ctrl_wheel = SimpleNamespace(
+    type="WHEELUPMOUSE", value="PRESS", alt=False, ctrl=True, shift=False,
+)
+assert operator.modal(modal_context, ctrl_wheel) == {"RUNNING_MODAL"}
+assert preview_updates[-1] == (6, 0.05, 0.05)
+plain_wheel = SimpleNamespace(
+    type="WHEELDOWNMOUSE", value="PRESS", alt=False, ctrl=False, shift=False,
+)
+assert operator.modal(modal_context, plain_wheel) == {"RUNNING_MODAL"}
+assert preview_updates[-1] == (5, 0.05, 0.05)
+assert operator.modal(
+    modal_context, SimpleNamespace(type="R", value="PRESS"),
+) == {"RUNNING_MODAL"}
+assert preview_updates[-1] == (
+    descriptor.segment_count,
+    resegment._DEFAULT_SMOOTHNESS,
+    resegment._DEFAULT_SLIDE_STRENGTH,
+)
+assert len(preview_updates) == 4
 assert operator._cancel(bpy.context) == {"CANCELLED"}
+assert operator._snapshot is None
+assert operator._descriptor is None
 bm = bmesh.from_edit_mesh(obj.data)
 assert (len(bm.verts), len(bm.edges), len(bm.faces)) == before
 assert sum(edge.select for edge in bm.edges) == 24

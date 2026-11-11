@@ -1709,9 +1709,6 @@ class _ResegmentOperatorBase(Operator):
     _descriptor = None
     _original_selected_edge_keys = None
     _handle_text = None
-    _timer = None
-    _window_manager = None
-    _preview_dirty = False
     _mouse_x = 0.0
     _mouse_y = 0.0
 
@@ -1799,15 +1796,6 @@ class _ResegmentOperatorBase(Operator):
 
     def _cleanup(self):
         self._remove_hud()
-        timer = self._timer
-        self._timer = None
-        if timer is not None and self._window_manager is not None:
-            try:
-                self._window_manager.event_timer_remove(timer)
-            except (AttributeError, ReferenceError, RuntimeError, TypeError):
-                pass
-        self._window_manager = None
-        self._preview_dirty = False
         self._free_snapshot()
         self._source_object = None
         self._descriptor = None
@@ -1833,13 +1821,6 @@ class _ResegmentOperatorBase(Operator):
         return {"CANCELLED"}
 
     def _finish(self, context):
-        if self._preview_dirty:
-            try:
-                self._rebuild(context)
-            except (AttributeError, RuntimeError, TypeError, ValueError,
-                    IndexError, ReferenceError) as error:
-                self.report({"WARNING"}, f"重新分段预览失败：{error}")
-                return self._cancel(context)
         self._cleanup()
         self._tag_redraw(context)
         return {"FINISHED"}
@@ -1871,7 +1852,6 @@ class _ResegmentOperatorBase(Operator):
             _write_preview(self._source_object, work_bm, selected_keys)
         finally:
             work_bm.free()
-        self._preview_dirty = False
         self._tag_redraw(context)
 
     def _prepare(self, context):
@@ -1879,7 +1859,6 @@ class _ResegmentOperatorBase(Operator):
         if active is None:
             self.report({"WARNING"}, "请在网格编辑模式下运行")
             return False
-        self._window_manager = context.window_manager
         try:
             descriptor = _build_descriptor(context, self.selection_mode)
             snapshot = _mesh_snapshot(active)
@@ -1909,13 +1888,6 @@ class _ResegmentOperatorBase(Operator):
             self.report({"WARNING"}, f"重新分段预览失败：{error}")
             return self._cancel(context)
         self._install_hud()
-        try:
-            self._timer = context.window_manager.event_timer_add(
-                0.04,
-                window=context.window,
-            )
-        except (AttributeError, RuntimeError, TypeError):
-            self._timer = None
         context.window_manager.modal_handler_add(self)
         self._tag_redraw(context)
         return {"RUNNING_MODAL"}
@@ -1935,19 +1907,6 @@ class _ResegmentOperatorBase(Operator):
     def modal(self, context, event):
         if context.active_object is not self._source_object:
             return self._cancel(context)
-        if (
-            event.type == "TIMER"
-            and self._timer is not None
-            and event.timer == self._timer
-            and self._preview_dirty
-        ):
-            try:
-                self._rebuild(context)
-            except (AttributeError, RuntimeError, TypeError, ValueError,
-                    IndexError, ReferenceError) as error:
-                self.report({"WARNING"}, f"重新分段预览失败：{error}")
-                return self._cancel(context)
-            return {"RUNNING_MODAL"}
         if event.type in {"ESC", "RIGHTMOUSE"}:
             return self._cancel(context)
         if (
@@ -1989,15 +1948,12 @@ class _ResegmentOperatorBase(Operator):
             changed = True
 
         if changed:
-            self._preview_dirty = True
-            if self._timer is None:
-                try:
-                    self._rebuild(context)
-                except (AttributeError, RuntimeError, TypeError, ValueError,
-                        IndexError, ReferenceError) as error:
-                    self.report({"WARNING"}, f"重新分段预览失败：{error}")
-                    return self._cancel(context)
-            self._tag_redraw(context)
+            try:
+                self._rebuild(context)
+            except (AttributeError, RuntimeError, TypeError, ValueError,
+                    IndexError, ReferenceError) as error:
+                self.report({"WARNING"}, f"重新分段预览失败：{error}")
+                return self._cancel(context)
 
         if event.type in {
             "MIDDLEMOUSE",
