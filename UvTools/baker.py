@@ -3760,6 +3760,11 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
     export_ObjectIDImage: BoolProperty(name="物体", default=True)  # type: ignore
     export_MaterialIDImage: BoolProperty(name="材质", default=True)  # type: ignore
     export_LineImage: BoolProperty(name="线框", default=True)  # type: ignore
+    modified: BoolProperty(
+        name="修改器影响",
+        description="导出线框时使用修改器求值后的UV",
+        default=True,
+    )  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -3770,6 +3775,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
         col.prop(self, "export_ObjectIDImage", toggle=True)
         col.prop(self, "export_MaterialIDImage", toggle=True)
         col.prop(self, "export_LineImage", toggle=True)
+        col.prop(self, "modified")
 
         layout.prop(self, "image_width")
         layout.prop(self, "image_height")
@@ -3876,7 +3882,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
             result = bpy.ops.uv.export_layout(
                 filepath=base_path + "_Wire.png",
                 export_all=False,
-                modified=False,
+                modified=self.modified,
                 mode='PNG',
                 size=(width, height),
                 opacity=0.0,
@@ -3901,7 +3907,8 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     row.operator(OT_UVTools_BakeFaceIDImage.bl_idname, text="面ID")
     row.operator(OT_UVTools_BakeObjectIDImage.bl_idname, text="物体ID")
     row.operator(OT_UVTools_BakeMaterialIDImage.bl_idname, text="材质ID")
-    row.operator("uv.export_layout", text="网格")
+    export_layout = row.operator("uv.export_layout", text="网格")
+    export_layout.modified = True
 
     row = col.row(align=True)
     row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text="活动顶点色")
