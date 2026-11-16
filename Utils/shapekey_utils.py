@@ -388,7 +388,7 @@ def bake_modifiers_keeping_shape_keys(
 
         mesh = obj.data
         shape_keys = getattr(mesh, "shape_keys", None)
-        if shape_keys is None or len(shape_keys.key_blocks) < 2:
+        if shape_keys is None or len(shape_keys.key_blocks) == 0:
             continue
 
         bake_modifiers = [

@@ -11,7 +11,7 @@ Blender 原生「应用」按钮对带形态键的网格一律禁用（形变修
   1. 可见的形变修改器（骨架/波浪/缩裹…）也要画出提示行，按钮可点；
   2. 可见的非形变修改器画出告警行（提示烘焙会重建拓扑）；
   3. 只有视口隐藏的修改器时不画（按钮语义是“应用视图显示中的修改器”）；
-  4. 没有形态键、或只剩基型时不画；
+  4. 没有形态键时不画，只有基型时也要画；
   5. 只要画出这一行，按钮的 poll 就必须通过（不能画一个点不动的按钮）。
 """
 
@@ -171,14 +171,16 @@ try:
         icon="INFO",
     )
 
-    # ── 4. 没有形态键 / 只剩基型：没有共存问题 ──────────────────────────────
+    # ── 4. 没有形态键不画；只剩基型仍需提示（原生应用同样会被阻止） ─────────
     assert_not_drawn(
         build_object("no_keys", [("SOLIDIFY", True)], shape_keys=False),
         "网格没有形态键",
     )
-    assert_not_drawn(
+    assert_drawn(
         build_object("basis_only", [("SOLIDIFY", True)], basis_only=True),
-        "只剩基型，没有可保持的形变",
+        alert=True,
+        label_text=NON_DEFORM_LABEL,
+        icon="ERROR",
     )
     assert_not_drawn(
         build_object("no_modifiers", []),

@@ -105,7 +105,7 @@ def _visible_modifiers(obj) -> tuple:
     if not check_object_shape_keys_with_modifiers(obj):
         return ()
     shape_keys = getattr(getattr(obj, "data", None), "shape_keys", None)
-    if shape_keys is None or len(shape_keys.key_blocks) <= 1:
+    if shape_keys is None:
         return ()
     return tuple(
         modifier

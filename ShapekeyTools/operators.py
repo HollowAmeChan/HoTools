@@ -1186,8 +1186,6 @@ class OP_applyShowingModifiersKeepShapekeys(Operator):
             return False
         if not obj.data.shape_keys:
             return False
-        if len(obj.data.shape_keys.key_blocks) == 1:
-            return False
         if len(obj.modifiers) == 0:
             return False
 

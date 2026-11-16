@@ -12,6 +12,7 @@
   7. 形变类修改器（骨架/波浪这类只动顶点、不改拓扑的）同样能应用：
      它们是“修改器面板要不要画出「保持形态键应用」按钮”的依据，
      Blender 原生应用按钮对带形态键的网格一律禁用，形变修改器也一样。
+  8. 只有基型形态键时也能应用修改器，避免提示行出现但按钮不可用。
 """
 
 import sys
@@ -308,6 +309,25 @@ try:
         for j in range(3)
     )
     assert wave_delta > 0.1, f"形变修改器烘焙后形态键形变丢失（最大差异 {wave_delta}）"
+
+    # ── 8. 只有基型：原生应用仍被形态键阻止，但保持形态键应用可用 ──────────
+    basis_mesh = bpy.data.meshes.new("MeshData_basis_only")
+    basis_mesh.from_pydata(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)],
+        [],
+        [(0, 1, 2, 3)],
+    )
+    basis_only = bpy.data.objects.new("Mesh_basis_only", basis_mesh)
+    bpy.context.scene.collection.objects.link(basis_only)
+    basis_only.shape_key_add(name=BASIS_NAME, from_mix=False)
+    solidify_basis = basis_only.modifiers.new("Solidify", "SOLIDIFY")
+    solidify_basis.thickness = 0.2
+    activate(basis_only)
+    assert shapekey_operators.OP_applyShowingModifiersKeepShapekeys.poll(bpy.context)
+    assert run_button() == {"FINISHED"}
+    assert len(basis_only.data.vertices) == 8, "基型-only 物体的修改器没有被应用"
+    assert [key.name for key in basis_only.data.shape_keys.key_blocks] == [BASIS_NAME]
+    assert [modifier.name for modifier in basis_only.modifiers] == []
 finally:
     bpy.utils.unregister_class(shapekey_operators.OP_applyShowingModifiersKeepShapekeys)
 
