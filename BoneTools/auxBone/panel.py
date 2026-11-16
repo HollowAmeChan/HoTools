@@ -18,7 +18,7 @@ def draw_overview(layout, context):
 
 
 def draw_bs_overview(layout, context):
-    """Read-only BS corrective audit alongside the auxiliary-bone overview."""
+    """Shared BS corrective authoring menu alongside the auxiliary-bone overview."""
     scene = context.scene
     obj = context.object
     if obj is None or obj.type != "ARMATURE":
@@ -31,29 +31,8 @@ def draw_bs_overview(layout, context):
     header.label(text="修型总览", icon="SHAPEKEY_DATA")
     if not expanded:
         return
-    settings = getattr(obj, "hotools_bs_corrective", None)
-    rules = getattr(settings, "rules", None) if settings is not None else None
-    if settings is None or not settings.enabled:
-        box.label(text="BS 修型中控未启用", icon="INFO")
-        return
-    if not rules:
-        box.label(text="暂无修型规则", icon="INFO")
-        return
-    box.label(text=f"共 {len(rules)} 条规则")
-    for index, rule in enumerate(rules):
-        row = box.row(align=True)
-        row.enabled = bool(rule.enabled)
-        target = f" → {rule.mesh.name}/{rule.shape_key or '（未指定形态键）'}" if rule.mesh else ""
-        row.label(text=f"{index + 1}. {rule.bone or '（未指定骨骼）'}{target}", icon="SHAPEKEY_DATA")
-        detail = box.column(align=True)
-        detail.enabled = bool(rule.enabled)
-        detail.label(text=f"表达式：{rule.expression or '（空）'}")
-        if rule.variables:
-            detail.label(text="变量：" + ", ".join(
-                f"{item.name}={item.bone}.{item.channel}" for item in rule.variables
-            ))
-        if rule.comment:
-            detail.label(text=f"注释：{rule.comment}")
+    from ...Rbf.bs_corrective import draw_bs_corrective_menu
+    draw_bs_corrective_menu(box, context)
 
 
 def draw_constraint_controls(layout):

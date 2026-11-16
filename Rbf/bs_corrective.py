@@ -21,21 +21,30 @@ class PG_BsCorrectiveVariable(PropertyGroup):
     channel: EnumProperty(name="通道", items=CHANNELS, default="X")  # type: ignore
 
 
+class PG_BsCorrectiveTarget(PropertyGroup):
+    """One mesh/shape-key output owned by a corrective rule."""
+    mesh: PointerProperty(name="目标网格", type=bpy.types.Object)  # type: ignore
+    shape_key: StringProperty(name="目标形态键", default="")  # type: ignore
+
+
 class PG_BsCorrectiveRule(PropertyGroup):
     id: StringProperty(default="")  # type: ignore
     enabled: BoolProperty(default=True)  # type: ignore
     bone: StringProperty(name="测量骨骼", default="")  # type: ignore
     mesh: PointerProperty(name="目标网格", type=bpy.types.Object)  # type: ignore
     shape_key: StringProperty(name="目标形态键", default="")  # type: ignore
+    targets: CollectionProperty(type=PG_BsCorrectiveTarget)  # type: ignore
     expression: StringProperty(default="clamp(x / 1.57079632679, 0, 1)")  # type: ignore
     comment: StringProperty(default="")  # type: ignore
     variables: CollectionProperty(type=PG_BsCorrectiveVariable)  # type: ignore
+    expanded: BoolProperty(default=True)  # type: ignore
 
 
 class PG_BsCorrectiveSettings(PropertyGroup):
     enabled: BoolProperty(name="启用 BS 修型", default=True)  # type: ignore
     rules: CollectionProperty(type=PG_BsCorrectiveRule)  # type: ignore
     active_index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
+    targets_active_index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
 
 
 def settings_for(armature):
@@ -51,13 +60,24 @@ def _shape_names(mesh):
     return [key.name for key in keys.key_blocks] if keys else []
 
 
+def _rule_targets(rule):
+    """Return the new target list, migrating the legacy single target in memory."""
+    if getattr(rule, "targets", None):
+        return list(rule.targets)
+    return [rule] if getattr(rule, "mesh", None) is not None else []
+
+
 def _validate_rule(armature, rule):
     if not rule.bone or _find_bone(armature, rule.bone) is None:
         raise ValueError(f"测量骨骼不存在：{rule.bone}")
-    if rule.mesh is None or rule.mesh.type != "MESH":
-        raise ValueError("目标网格必须是 Mesh 对象")
-    if rule.shape_key not in _shape_names(rule.mesh):
-        raise ValueError(f"找不到形态键：{rule.shape_key}")
+    targets = _rule_targets(rule)
+    if not targets:
+        raise ValueError("至少指定一个目标网格")
+    for target in targets:
+        if target.mesh is None or target.mesh.type != "MESH":
+            raise ValueError("目标网格必须是 Mesh 对象")
+        if target.shape_key not in _shape_names(target.mesh):
+            raise ValueError(f"找不到形态键：{target.shape_key}")
     names = []
     for variable in rule.variables:
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", variable.name or ""):
@@ -93,14 +113,16 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
         # rest rotation is cleared by HoFBX.  The authored rule remains keyed by
         # the source name, while Unity reads the actual exported cache bone.
         measurement_bone = (measurement_bones or {}).get(rule.bone, rule.bone)
-        result["rules"].append({
+        targets = _rule_targets(rule)
+        entry = {
             "id": rule.id,
             "enabled": bool(rule.enabled),
             "armatureName": armature.name,
             "bone": rule.bone,
             "measurementBone": measurement_bone,
-            "mesh": rule.mesh.name,
-            "shapeKey": rule.shape_key,
+            "mesh": targets[0].mesh.name,
+            "shapeKey": targets[0].shape_key,
+            "targets": [{"mesh": target.mesh.name, "shapeKey": target.shape_key} for target in targets],
             "expression": rule.expression,
             "comment": rule.comment,
             "variables": [
@@ -111,7 +133,8 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
                 }
                 for item in rule.variables
             ],
-        })
+        }
+        result["rules"].append(entry)
     return result
 
 
@@ -137,31 +160,33 @@ def generate_native_drivers(armature):
         if not rule.enabled:
             continue
         _validate_rule(armature, rule)
-        shape_keys = rule.mesh.data.shape_keys
-        key = shape_keys.key_blocks.get(rule.shape_key)
-        if key is None:
-            continue
-        # Drivers cannot carry ID properties in Blender 4.5; use their group as
-        # an ownership marker so refresh/remove never touches authored drivers.
-        fcurve = key.driver_add("value")
-        animation_data = key.id_data.animation_data_create()
-        action = animation_data.action
-        if action is None:
-            action = bpy.data.actions.new(key.id_data.name + "_HoToolsBS")
-            animation_data.action = action
-        group_name = "HoToolsBS:" + rule.id
-        group = action.groups.get(group_name) or action.groups.new(group_name)
-        fcurve.group = group
-        driver = fcurve.driver
-        driver.type = "SCRIPTED"
-        names = [item.name for item in rule.variables]
-        driver.expression = parse(rule.expression, names)
-        source = rule.bone
-        for channel in "XYZ":
-            _set_transform_variable(driver, channel.lower(), armature, source, channel)
-        for item in rule.variables:
-            _set_transform_variable(driver, item.name, armature, item.bone, item.channel)
-        generated += 1
+        targets = _rule_targets(rule)
+        for target_rule in targets:
+            shape_keys = target_rule.mesh.data.shape_keys
+            key = shape_keys.key_blocks.get(target_rule.shape_key) if shape_keys else None
+            if key is None:
+                continue
+            # Drivers cannot carry ID properties in Blender 4.5; use their group as
+            # an ownership marker so refresh/remove never touches authored drivers.
+            fcurve = key.driver_add("value")
+            animation_data = key.id_data.animation_data_create()
+            action = animation_data.action
+            if action is None:
+                action = bpy.data.actions.new(key.id_data.name + "_HoToolsBS")
+                animation_data.action = action
+            group_name = "HoToolsBS:" + rule.id
+            group = action.groups.get(group_name) or action.groups.new(group_name)
+            fcurve.group = group
+            driver = fcurve.driver
+            driver.type = "SCRIPTED"
+            names = [item.name for item in rule.variables]
+            driver.expression = parse(rule.expression, names)
+            source = rule.bone
+            for channel in "XYZ":
+                _set_transform_variable(driver, channel.lower(), armature, source, channel)
+            for item in rule.variables:
+                _set_transform_variable(driver, item.name, armature, item.bone, item.channel)
+            generated += 1
     return generated
 
 
@@ -172,16 +197,17 @@ def remove_native_drivers(armature):
         return 0
     removed = 0
     for rule in settings.rules:
-        if rule.mesh is None or rule.mesh.data.shape_keys is None:
-            continue
-        key = rule.mesh.data.shape_keys.key_blocks.get(rule.shape_key)
-        if key is None or key.id_data.animation_data is None:
-            continue
-        for fcurve in list(key.id_data.animation_data.drivers):
-            if (fcurve.data_path == f'key_blocks["{key.name}"].value' and
-                    fcurve.group is not None and fcurve.group.name == "HoToolsBS:" + rule.id):
-                key.id_data.driver_remove(fcurve.data_path, fcurve.array_index)
-                removed += 1
+        for target in _rule_targets(rule):
+            if target.mesh is None or target.mesh.data.shape_keys is None:
+                continue
+            key = target.mesh.data.shape_keys.key_blocks.get(target.shape_key)
+            if key is None or key.id_data.animation_data is None:
+                continue
+            for fcurve in list(key.id_data.animation_data.drivers):
+                if (fcurve.data_path == f'key_blocks["{key.name}"].value' and
+                        fcurve.group is not None and fcurve.group.name == "HoToolsBS:" + rule.id):
+                    key.id_data.driver_remove(fcurve.data_path, fcurve.array_index)
+                    removed += 1
     return removed
 
 
@@ -220,6 +246,150 @@ class OP_BsCorrectiveRemove(Operator):
         return {"FINISHED"}
 
 
+class OP_BsCorrectiveClearRules(Operator):
+    bl_idname = "hotools.bs_corrective_clear_rules"
+    bl_label = "清空规则"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        settings = settings_for(context.object) if context.object else None
+        return settings is not None and len(settings.rules) > 0
+
+    def execute(self, context):
+        settings_for(context.object).rules.clear()
+        settings_for(context.object).active_index = 0
+        return {"FINISHED"}
+
+
+class OP_BsCorrectiveToggleRule(Operator):
+    bl_idname = "hotools.bs_corrective_toggle_rule"
+    bl_label = "启用/禁用规则"
+    bl_options = {"REGISTER", "UNDO"}
+    index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
+
+    def execute(self, context):
+        settings = settings_for(context.object)
+        if settings is None or self.index >= len(settings.rules):
+            return {"CANCELLED"}
+        settings.rules[self.index].enabled = not settings.rules[self.index].enabled
+        settings.active_index = self.index
+        return {"FINISHED"}
+
+
+class OP_BsCorrectiveMoveRule(Operator):
+    bl_idname = "hotools.bs_corrective_move_rule"
+    bl_label = "移动规则"
+    bl_options = {"REGISTER", "UNDO"}
+    index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
+    direction: bpy.props.IntProperty(default=1)  # type: ignore
+
+    def execute(self, context):
+        settings = settings_for(context.object)
+        target = self.index + self.direction
+        if settings is None or self.index >= len(settings.rules) or not 0 <= target < len(settings.rules):
+            return {"CANCELLED"}
+        settings.rules.move(self.index, target)
+        settings.active_index = target
+        return {"FINISHED"}
+
+
+class OP_BsCorrectiveToggleExpanded(Operator):
+    bl_idname = "hotools.bs_corrective_toggle_expanded"
+    bl_label = "折叠/展开规则"
+    bl_options = {"REGISTER", "UNDO"}
+    index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
+
+    def execute(self, context):
+        settings = settings_for(context.object)
+        if settings is None or self.index >= len(settings.rules):
+            return {"CANCELLED"}
+        settings.rules[self.index].expanded = not settings.rules[self.index].expanded
+        settings.active_index = self.index
+        return {"FINISHED"}
+
+
+class OP_BsCorrectiveAddTarget(Operator):
+    bl_idname = "hotools.bs_corrective_add_target"
+    bl_label = "添加目标"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        settings = settings_for(context.object)
+        if settings is None or not settings.rules:
+            return {"CANCELLED"}
+        rule = settings.rules[min(settings.active_index, len(settings.rules) - 1)]
+        targets = _rule_targets(rule)
+        if not rule.targets and targets:
+            legacy = rule.targets.add()
+            legacy.mesh, legacy.shape_key = targets[0].mesh, targets[0].shape_key
+        rule.targets.add()
+        settings.targets_active_index = len(rule.targets) - 1
+        return {"FINISHED"}
+
+
+class OP_BsCorrectiveRemoveTarget(Operator):
+    bl_idname = "hotools.bs_corrective_remove_target"
+    bl_label = "删除目标"
+    bl_options = {"REGISTER", "UNDO"}
+    index: bpy.props.IntProperty(default=-1, min=-1)  # type: ignore
+
+    def execute(self, context):
+        settings = settings_for(context.object)
+        if settings is None or not settings.rules:
+            return {"CANCELLED"}
+        rule = settings.rules[min(settings.active_index, len(settings.rules) - 1)]
+        if not rule.targets:
+            rule.mesh = None; rule.shape_key = ""
+            return {"FINISHED"}
+        index = self.index if self.index >= 0 else min(settings.targets_active_index, len(rule.targets) - 1)
+        if index < 0 or index >= len(rule.targets):
+            return {"CANCELLED"}
+        rule.targets.remove(index)
+        if not rule.targets:
+            rule.mesh = None
+            rule.shape_key = ""
+        settings.targets_active_index = max(0, index - 1)
+        return {"FINISHED"}
+
+
+class OP_BsCorrectiveClearTargets(Operator):
+    bl_idname = "hotools.bs_corrective_clear_targets"
+    bl_label = "清空目标"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        settings = settings_for(context.object)
+        if settings is None or not settings.rules:
+            return {"CANCELLED"}
+        rule = settings.rules[min(settings.active_index, len(settings.rules) - 1)]
+        rule.targets.clear()
+        rule.mesh = None; rule.shape_key = ""
+        settings.targets_active_index = 0
+        return {"FINISHED"}
+
+
+class OP_BsCorrectiveMoveTarget(Operator):
+    bl_idname = "hotools.bs_corrective_move_target"
+    bl_label = "移动目标"
+    bl_options = {"REGISTER", "UNDO"}
+    index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
+    direction: bpy.props.IntProperty(default=1)  # type: ignore
+
+    def execute(self, context):
+        settings = settings_for(context.object)
+        if settings is None or not settings.rules:
+            return {"CANCELLED"}
+        rule = settings.rules[min(settings.active_index, len(settings.rules) - 1)]
+        index = self.index
+        target = index + self.direction
+        if not 0 <= index < len(rule.targets) or not 0 <= target < len(rule.targets):
+            return {"CANCELLED"}
+        rule.targets.move(index, target)
+        settings.targets_active_index = target
+        return {"FINISHED"}
+
+
 class OP_BsCorrectiveGenerateDrivers(Operator):
     bl_idname = "hotools.bs_corrective_generate_drivers"
     bl_label = "生成 Blender 驱动器"
@@ -254,40 +424,107 @@ class OP_BsCorrectiveRemoveDrivers(Operator):
         return {"FINISHED"}
 
 
-def draw_bs_corrective_panel(layout, context):
-    """Draw the authoring controls inside the RBF panel's 修型 page."""
+def draw_bs_corrective_menu(layout, context):
+    """Shared two-pane authoring menu used by Properties and the N-panel."""
     armature = context.object
     if armature is None or armature.type != "ARMATURE":
         layout.label(text="请选择骨架", icon="INFO")
         return
     settings = settings_for(armature)
-    layout.prop(settings, "enabled")
     row = layout.row(align=True)
-    row.operator(OP_BsCorrectiveAdd.bl_idname, icon="ADD")
-    row.operator(OP_BsCorrectiveRemove.bl_idname, icon="REMOVE")
-    row = layout.row(align=True)
-    row.operator(OP_BsCorrectiveGenerateDrivers.bl_idname, icon="DRIVER")
-    row.operator(OP_BsCorrectiveRemoveDrivers.bl_idname, icon="X")
+    row.operator(OP_BsCorrectiveGenerateDrivers.bl_idname, text="刷新驱动器", icon="FILE_REFRESH")
+    row.operator(OP_BsCorrectiveRemoveDrivers.bl_idname, text="移除驱动器", icon="X")
     if not settings.rules:
         layout.label(text="暂无规则；导出不会生成 BS 元数据", icon="INFO")
         return
+    split = layout.split(factor=0.30)
+    left, right = split.column(), split.column()
+    controls = left.column(align=True)
+    controls.operator(OP_BsCorrectiveAdd.bl_idname, icon="ADD", text="添加")
+    controls.operator(OP_BsCorrectiveRemove.bl_idname, icon="REMOVE", text="删除")
+    controls.operator(OP_BsCorrectiveClearRules.bl_idname, icon="TRASH", text="清空")
+    left.separator()
     for index, rule in enumerate(settings.rules):
-        box = layout.box()
-        box.prop(rule, "enabled", text=f"规则 {index + 1}")
-        box.prop_search(rule, "bone", armature.data, "bones", text="测量骨骼")
-        box.prop(rule, "mesh", text="目标网格")
-        if rule.mesh is not None:
-            keys = _shape_names(rule.mesh)
-            if keys:
-                box.prop_search(rule, "shape_key", rule.mesh.data.shape_keys, "key_blocks", text="目标形态键")
-        box.prop(rule, "shape_key", text="形态键名称")
-        box.prop(rule, "expression", text="表达式")
-        box.prop(rule, "comment", text="注释")
+        row = left.row(align=True)
+        row.alert = index == settings.active_index
+        fold = row.operator(OP_BsCorrectiveToggleExpanded.bl_idname, text="",
+                            icon="TRIA_DOWN" if rule.expanded else "TRIA_RIGHT")
+        fold.index = index
+        toggle = row.operator(OP_BsCorrectiveToggleRule.bl_idname, text="", icon="CHECKMARK" if rule.enabled else "X")
+        toggle.index = index
+        pick = row.operator("hotools.bs_corrective_select_rule", text=f"{index + 1}. {rule.bone or '未指定骨骼'}", emboss=False)
+        pick.index = index
+        up = row.operator(OP_BsCorrectiveMoveRule.bl_idname, text="", icon="TRIA_UP")
+        up.index, up.direction = index, -1
+        down = row.operator(OP_BsCorrectiveMoveRule.bl_idname, text="", icon="TRIA_DOWN")
+        down.index, down.direction = index, 1
+    if not settings.rules:
+        left.label(text="暂无规则", icon="INFO")
+        return
+    rule = settings.rules[min(settings.active_index, len(settings.rules) - 1)]
+    detail = right.box()
+    detail.prop(rule, "expanded", text="", icon="TRIA_DOWN" if rule.expanded else "TRIA_RIGHT", emboss=False)
+    if not rule.expanded:
+        detail.label(text=f"规则 {settings.active_index + 1} 已折叠")
+        return
+    detail.prop(rule, "enabled", text="启用规则")
+    detail.prop_search(rule, "bone", armature.data, "bones", text="测量骨骼")
+    detail.prop(rule, "expression", text="表达式")
+    detail.prop(rule, "comment", text="注释")
+    target_box = detail.box()
+    header = target_box.row(align=True)
+    header.label(text="目标形态键", icon="SHAPEKEY_DATA")
+    header.operator(OP_BsCorrectiveAddTarget.bl_idname, text="", icon="ADD")
+    header.operator(OP_BsCorrectiveRemoveTarget.bl_idname, text="", icon="REMOVE")
+    header.operator(OP_BsCorrectiveClearTargets.bl_idname, text="", icon="TRASH")
+    target_items = list(rule.targets) if rule.targets else []
+    if not target_items and rule.mesh is not None:
+        target_items = [rule]
+    for target_index, target in enumerate(target_items):
+        row = target_box.row(align=True)
+        row.prop(target, "mesh", text="")
+        if target.mesh is not None and target.mesh.data.shape_keys:
+            row.prop_search(target, "shape_key", target.mesh.data.shape_keys, "key_blocks", text="")
+        else:
+            row.prop(target, "shape_key", text="")
+        if rule.targets:
+            remove = row.operator(OP_BsCorrectiveRemoveTarget.bl_idname, text="", icon="X")
+            remove.index = target_index
+            up = row.operator(OP_BsCorrectiveMoveTarget.bl_idname, text="", icon="TRIA_UP")
+            up.index, up.direction = target_index, -1
+            down = row.operator(OP_BsCorrectiveMoveTarget.bl_idname, text="", icon="TRIA_DOWN")
+            down.index, down.direction = target_index, 1
+    var_box = detail.box()
+    var_box.label(text="附加骨骼变量")
+    for variable in rule.variables:
+        row = var_box.row(align=True)
+        row.prop(variable, "name", text="")
+        row.prop_search(variable, "bone", armature.data, "bones", text="")
+        row.prop(variable, "channel", text="")
 
 
-CLASSES = [PG_BsCorrectiveVariable, PG_BsCorrectiveRule, PG_BsCorrectiveSettings,
-           OP_BsCorrectiveAdd, OP_BsCorrectiveRemove, OP_BsCorrectiveGenerateDrivers,
-           OP_BsCorrectiveRemoveDrivers]
+def draw_bs_corrective_panel(layout, context):
+    draw_bs_corrective_menu(layout, context)
+
+
+class OP_BsCorrectiveSelectRule(Operator):
+    bl_idname = "hotools.bs_corrective_select_rule"
+    bl_label = "选择规则"
+    index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
+
+    def execute(self, context):
+        settings = settings_for(context.object)
+        if settings is not None and self.index < len(settings.rules):
+            settings.active_index = self.index
+        return {"FINISHED"}
+
+
+CLASSES = [PG_BsCorrectiveVariable, PG_BsCorrectiveTarget, PG_BsCorrectiveRule, PG_BsCorrectiveSettings,
+           OP_BsCorrectiveAdd, OP_BsCorrectiveRemove, OP_BsCorrectiveClearRules,
+           OP_BsCorrectiveToggleRule, OP_BsCorrectiveMoveRule, OP_BsCorrectiveToggleExpanded,
+           OP_BsCorrectiveSelectRule,
+           OP_BsCorrectiveAddTarget, OP_BsCorrectiveRemoveTarget, OP_BsCorrectiveClearTargets,
+           OP_BsCorrectiveMoveTarget, OP_BsCorrectiveGenerateDrivers, OP_BsCorrectiveRemoveDrivers]
 
 
 def register():

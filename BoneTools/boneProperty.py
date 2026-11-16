@@ -1012,6 +1012,25 @@ class PT_Hotools_ArmatureAuxPanel(Panel):
         draw_aux_overview(self.layout, context)
 
 
+class PT_Hotools_ArmatureBsCorrectivePanel(Panel):
+    """Single Properties-side entry point; the N-panel reuses the same menu."""
+    bl_idname = "DATA_PT_Hotools_ArmatureBsCorrectivePanel"
+    bl_label = "HoTools 修型"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "data"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "ARMATURE"
+
+    def draw(self, context):
+        from ..Rbf.bs_corrective import draw_bs_corrective_menu
+        draw_bs_corrective_menu(self.layout, context)
+
+
 cls = [
     PG_Hotools_BoneRef,
     PG_Hotools_AuxGroupState,
@@ -1027,6 +1046,7 @@ cls = [
     OT_Hotools_AuxRemoveAll,
     PT_Hotools_PosebonePanel,
     PT_Hotools_ArmatureAuxPanel,
+    PT_Hotools_ArmatureBsCorrectivePanel,
 ]
 
 
