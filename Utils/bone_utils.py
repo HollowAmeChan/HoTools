@@ -42,8 +42,9 @@ def clear_edit_bone_local_rotations(edit_bones, bone_names) -> int:
             bone.tail = bone.head + parent_direction.normalized() * original_length
             bone.roll = parent.roll
         else:
-            # Preserve the established vertical convention for roots.
-            bone.tail = bone.head + Vector((0.0, 0.0, original_length))
+            # HoFBX exports bones with Y as the primary axis. A root aligned to
+            # +Y therefore serializes with an identity local rotation as well.
+            bone.tail = bone.head + Vector((0.0, original_length, 0.0))
             bone.roll = 0.0
         changed += 1
     return changed

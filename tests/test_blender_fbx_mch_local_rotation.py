@@ -64,11 +64,19 @@ def read_fbx_local_rotations(filepath, bone_names):
             elem for elem in model.elems if elem.id == b"Properties70"
         )
         rotation = next(
-            elem
-            for elem in properties.elems
-            if elem.id == b"P" and elem.props[0] == b"Lcl Rotation"
+            (
+                elem
+                for elem in properties.elems
+                if elem.id == b"P" and elem.props[0] == b"Lcl Rotation"
+            ),
+            None,
         )
-        rotations[name] = tuple(float(value) for value in rotation.props[-3:])
+        # Blender omits an identity Lcl Rotation property instead of writing
+        # an explicit zero vector.
+        rotations[name] = (
+            tuple(float(value) for value in rotation.props[-3:])
+            if rotation is not None else (0.0, 0.0, 0.0)
+        )
     return rotations
 
 
@@ -481,5 +489,33 @@ for bone_name in ("ManualFirst", "ManualSecond"):
         Matrix.Identity(4),
     )
     assert_identity_local_rotation(manual_armature.pose.bones[bone_name])
+
+# Selected root bones use the same Y-primary zero-rotation convention as HoFBX.
+bpy.ops.object.mode_set(mode="EDIT")
+for bone in manual_data.edit_bones:
+    bone.select = bone.select_head = bone.select_tail = False
+manual_root = manual_data.edit_bones["ManualRoot"]
+manual_root.select = manual_root.select_head = manual_root.select_tail = True
+manual_data.edit_bones.active = manual_root
+assert bpy.ops.ho.force_clear_bone_rotation() == {'FINISHED'}
+manual_root = manual_data.edit_bones["ManualRoot"]
+assert (manual_root.tail - manual_root.head - Vector((0.0, manual_root.length, 0.0))).length < 1e-5
+bpy.ops.object.mode_set(mode="OBJECT")
+with tempfile.TemporaryDirectory(prefix="hotools_force_root_") as temp_dir:
+    fbx_path = Path(temp_dir) / "force_root.fbx"
+    assert bpy.ops.export_scene.fbx(
+        filepath=str(fbx_path),
+        use_selection=True,
+        object_types={'ARMATURE'},
+        add_leaf_bones=False,
+        primary_bone_axis='Y',
+        secondary_bone_axis='X',
+        bake_anim=False,
+        axis_forward='-Z',
+        axis_up='Y',
+    ) == {'FINISHED'}
+    root_rotations = read_fbx_local_rotations(fbx_path, {"ManualRoot"})
+    assert root_rotations.keys() == {"ManualRoot"}
+    assert all(abs(value) < 1e-4 for value in root_rotations["ManualRoot"]), root_rotations
 
 print("FBX_MCH_LOCAL_ROTATION_OK", bpy.app.version_string)
