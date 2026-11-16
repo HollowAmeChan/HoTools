@@ -2,12 +2,13 @@ import bpy
 import bmesh
 from bpy.types import Panel
 
-from  . import transfer
+from . import transfer, bs_corrective
 
 def reg_props():
     # 功能区开关
     enum_items = [
         ('PANEL_RBF_TRANSFER', "传递", ""),
+        ('PANEL_RBF_CORRECTIVE', "修型", "旋转修型规则与 Blender 驱动器"),
     ]
     bpy.types.Scene.ho_RbfPanel_Mod = bpy.props.EnumProperty(
         name="RbfPanelMod", items=enum_items)
@@ -32,6 +33,8 @@ class PL_Rbf(Panel):
         row.prop(context.scene, "ho_RbfPanel_Mod", expand=True,)
         if context.scene.ho_RbfPanel_Mod == "PANEL_RBF_TRANSFER":
             transfer.drawRbfTransferPanel(self.layout, context)
+        elif context.scene.ho_RbfPanel_Mod == "PANEL_RBF_CORRECTIVE":
+            bs_corrective.draw_bs_corrective_panel(self.layout, context)
         return
 
 
@@ -39,6 +42,7 @@ class PL_Rbf(Panel):
 cls = [PL_Rbf]
 
 def register():
+    bs_corrective.register()
     transfer.register()
     for i in cls:
         bpy.utils.register_class(i)
@@ -46,6 +50,7 @@ def register():
 
 
 def unregister():
+    bs_corrective.unregister()
     transfer.unregister()
     for i in cls:
         bpy.utils.unregister_class(i)

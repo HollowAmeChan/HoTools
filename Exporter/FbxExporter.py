@@ -2318,6 +2318,44 @@ class FBXExporter:
             json.dump(manifest, handle, indent=2, ensure_ascii=False)
             handle.write("\n")
         return json_path
+
+    @staticmethod
+    def export_bs_corrective_metadata(armature_objects, fbx_filepath, suffix="_bs_corrective.json", mch_name_maps=None):
+        """Export authored BS rules as one sidecar for the selected FBX.
+
+        The sidecar describes each authored source bone's local rotation
+        directly.  Export preprocessing may substitute an MCH measurement bone
+        when the source bone is configured for MCH conversion.
+        """
+        from ..Rbf.bs_corrective import build_export_config
+
+        rules = []
+        for armature in armature_objects:
+            config = build_export_config(
+                armature,
+                "Y_X",
+                (mch_name_maps or {}).get(armature.name, {}),
+            )
+            if config:
+                rules.extend(config["rules"])
+        if not rules:
+            return None
+        base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
+        json_path = FBXExporter.unity_metadata_path(fbx_filepath, f"{base_name}{suffix}")
+        payload = {
+            "schema": "hotools.bs-corrective",
+            "version": 1,
+            "rotationOrder": "XYZ",
+            "angleUnit": "radian",
+            "rotationSpace": "LOCAL",
+            "fbxBoneAxes": "Y_X",
+            "measurement": "source_local_rotation",
+            "rules": rules,
+        }
+        with open(json_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False, allow_nan=False)
+            handle.write("\n")
+        return json_path
     @staticmethod
     def restore_selection(selection, active_object=None):
         bpy.ops.object.select_all(action='DESELECT')
@@ -2750,6 +2788,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     boneCollectionSuffix:bpy.props.StringProperty(name="集合后缀",description="HoFBX文件夹内的集合JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_collection") # type: ignore
     exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
     humanoidMappingSuffix:bpy.props.StringProperty(name="Humanoid后缀",description="HoFBX文件夹内的Humanoid mapping JSON文件后缀",default="_humanoid") # type: ignore
+    exportBsCorrective:BoolProperty(name="导出BS修型(JSON)",description="从 HoTools BS 修型中控导出源骨骼局部旋转规则；导出预处理仅在需要时应用 MCH 转换",default=True) # type: ignore
+    bsCorrectiveSuffix:bpy.props.StringProperty(name="BS修型后缀",description="HoFBX文件夹内的 BS 修型 JSON 文件后缀",default="_bs_corrective.json") # type: ignore
     exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成Rig约束IR、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
     applyArmaturePose:BoolProperty(name="应用骨架姿态",description="导出前调用 HoTools 的应用骨架姿态操作，将当前选中骨架的 Pose 应用为静置姿态。操作失败时跳过该骨架并提示警告。不留痕",default=True) # type: ignore
     # 保留 RNA 属性名以兼容已保存的预设；界面名称已扩展为同时处理曲线和共享网格对象。
@@ -3138,6 +3178,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             export_constraints = self.exportUnityMetadata or self.exportBoneConstraint
             export_collections = self.exportUnityMetadata or self.exportBoneCollection
             export_humanoid = self.exportUnityMetadata or self.exportHumanoidMapping
+            export_bs_corrective = self.exportUnityMetadata or self.exportBsCorrective
 
             if export_constraints:
                 for ob in armature_objects:
@@ -3184,6 +3225,17 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     exported_json.append(json_path)
                     metadata_entries.append({
                         "kind": "humanoid",
+                        "file": os.path.basename(json_path),
+                    })
+
+            if export_bs_corrective:
+                json_path = FBXExporter.export_bs_corrective_metadata(
+                    selected_armature_objects, self.filepath, self.bsCorrectiveSuffix, mch_name_maps
+                )
+                if json_path:
+                    exported_json.append(json_path)
+                    metadata_entries.append({
+                        "kind": "bsCorrective",
                         "file": os.path.basename(json_path),
                     })
 
@@ -3400,7 +3452,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         if self.exportUnityMetadata:
             info = json_col.row()
             info.enabled = False
-            info.label(text="将自动生成Rig约束IR、集合和Humanoid映射 JSON", icon='INFO')
+            info.label(text="将自动生成Rig约束IR、集合、Humanoid和BS修型 JSON", icon='INFO')
         else:
             json_col.prop(self, "exportBoneConstraint")
             if self.exportBoneConstraint:
@@ -3411,6 +3463,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             json_col.prop(self, "exportHumanoidMapping")
             if self.exportHumanoidMapping:
                 json_col.prop(self, "humanoidMappingSuffix")
+            json_col.prop(self, "exportBsCorrective")
+            if self.exportBsCorrective:
+                json_col.prop(self, "bsCorrectiveSuffix")
 
 def OPF_FinalFBXExport(self, context):
     self.layout.operator_context = 'INVOKE_DEFAULT'
