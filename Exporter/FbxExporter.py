@@ -165,34 +165,6 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
     ]
 
 
-# ── 预设：仅预处理器 ──────────────────────────────────────
-class HO_MT_FBXPreprocessPresets(Menu):
-    """仅预处理器预设菜单"""
-    bl_label = ""
-    preset_subdir = "hotools/fbx_preprocess"
-    preset_operator = "script.execute_preset"
-    draw = Menu.draw_preset
-
-
-class OP_AddFBXPreprocessPreset(AddPresetBase, Operator):
-    """保存/删除 HoTools FBX 仅预处理预设"""
-    bl_idname = "ho.fbx_preprocess_preset_add"
-    bl_label = "添加预处理预设"
-    preset_menu = "HO_MT_FBXPreprocessPresets"
-    preset_subdir = "hotools/fbx_preprocess"
-
-    preset_defines = ["op = bpy.context.active_operator"]
-
-    preset_values = [
-        "op.addLeafBones",
-        "op.generateMCHBones",
-        "op.cleanWeights",
-        "op.fixObjectTransform",
-        "op.ignoreGeometryNodes",
-        "op.ignoreOutlineModifiers",
-    ]
-
-
 def reg_props():
     return
 
@@ -2757,7 +2729,7 @@ class FBXExporter:
 
 class OP_FinalFBXExport(Operator,ExportHelper):
     bl_idname = "ho.final_fbx_export"
-    bl_label = "Hotools导出FBX"
+    bl_label = "HoFbx(.fbx)"
     bl_description = ""
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -3440,197 +3412,15 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             if self.exportHumanoidMapping:
                 json_col.prop(self, "humanoidMappingSuffix")
 
-class OP_FinalFBXExport_only_preprocess(Operator):
-    bl_idname = "ho.final_fbx_export_only_preprocess"
-    bl_label = "Hotools导出FBX(仅预处理)"
-    bl_description = ""
-    bl_options = {'REGISTER', 'UNDO'}
-
-    addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自实现,长度为主体骨的一半)。权重按导出时的求值网格判定(镜像修改器/几何节点生成的权重也算),无权重骨与辅助骨不加,在MCH步骤之前执行;仅预处理模式不撤销,叶骨会留在工程供检视",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨",description="对 generateMCH=True 的骨生成 MCH_ 同级旁路骨、清空主骨变换并写入HoTools_MCH_Parent绑定;仅预处理模式不会自动撤销",default=False) # type: ignore
-    cleanWeights:BoolProperty(name="清理权重",description="清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。仅预处理模式不自动撤销,修改会留在工程里,需手动 Ctrl+Z 还原",default=False) # type: ignore
-    fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
-    ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器（type==NODES），避免几何节点改变导出网格；预处理结束前生效",default=True) # type: ignore
-    ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）；预处理结束前生效",default=True) # type: ignore
-    showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
-    showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
-    showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合直接持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
-
-
-    def export_fbx_preprocess(self,context):
-        global hidden_collections
-        global hidden_objects
-        global disabled_collections
-        global disabled_objects
-
-        root_objects = [item for item in bpy.data.objects if (item.type == "EMPTY" or item.type == "MESH" or item.type == "ARMATURE" or item.type == "FONT" or item.type == "CURVE" or item.type == "SURFACE") and not item.parent]
-        armature_objects = [item for item in bpy.data.objects if item.type == "ARMATURE"]
-        
-        hidden_collections = []
-        hidden_objects = []
-        disabled_collections = []
-        disabled_objects = []
-
-        selection = list(bpy.context.selected_objects)
-        active_object = bpy.context.view_layer.objects.active
-
-        #准备操作，全显场景中的对象与集合，并且全选
-        if bpy.ops.object.mode_set.poll():
-            bpy.ops.object.mode_set(mode="OBJECT")
-
-        FBXExporter.unhide_collections(col=bpy.context.view_layer.layer_collection)
-        FBXExporter.unhide_objects()
-        pose_position_state = FBXExporter.set_armatures_pose_position(armature_objects, "REST")
-        try:
-            if self.ignoreGeometryNodes:
-                removed_gn, failed_gn = FBXExporter.remove_geometry_nodes_modifiers(bpy.context.scene.objects)
-                if failed_gn:
-                    print("[HoTools FBX] Failed to remove geometry nodes modifiers:")
-                    for ob_name, mod_name, exc in failed_gn:
-                        print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
-                    self.report({"WARNING"}, f"{len(failed_gn)} 个几何节点修改器临时删除失败，详见控制台")
-
-            if self.ignoreOutlineModifiers:
-                removed_outline, failed_outline = FBXExporter.remove_outline_modifiers(bpy.context.scene.objects)
-                if failed_outline:
-                    print("[HoTools FBX] Failed to remove outline modifiers:")
-                    for ob_name, mod_name, exc in failed_outline:
-                        print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
-                    self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
-
-            # 形态键 + 待评估修改器：烘焙穿过修改器，避免导出丢 BlendShape（隐式操作）
-            (
-                baked_shape_keys,
-                skipped_shape_keys,
-                failed_shape_keys,
-            ) = FBXExporter.bake_shape_keys_through_modifiers(selection)
-            if baked_shape_keys:
-                print("[HoTools FBX] 形态键烘焙穿过修改器：")
-                for line in baked_shape_keys:
-                    print(f"  {line}")
-            for ob_name, reason in skipped_shape_keys:
-                print(f"[HoTools FBX] 形态键烘焙跳过 {ob_name}：{reason}")
-            for ob_name, exc in failed_shape_keys:
-                print(f"[HoTools FBX] 形态键烘焙失败 {ob_name}：{type(exc).__name__}: {exc}")
-
-            # 清理权重（须在补叶骨之前；仅动骨骼权重组，非骨骼组不碰）
-            if self.cleanWeights:
-                cleaned = FBXExporter.clean_export_weights(bpy.context.scene.objects)
-                print(f"[HoTools FBX] 权重清理：处理了 {cleaned} 个网格")
-
-            # 补叶骨（无子级且有权重的骨），须在 MCH 步骤之前
-            if self.addLeafBones and armature_objects != []:
-                FBXExporter.add_leaf_bones_to_armatures(armature_objects, selection, active_object)
-
-            # 生成 MCH 骨并清零主骨；仅预处理模式不撤销，MCH 留在工程供检视
-            if self.generateMCHBones and armature_objects !=[]:
-                FBXExporter.clear_armatures_bone_rotation(
-                    armature_objects,
-                    selection,
-                    active_object,
-                )
-
-
-            # 修复物体旋转（所有顶级父级物体）
-            if self.fixObjectTransform:
-                for ob in root_objects:
-                    if FBXExporter.object_is_alive(ob):
-                        FBXExporter.fix_object(ob)
-
-            # 刷新场景防止变换没有应用
-            bpy.context.view_layer.update()
-
-            #重置物体与集合的可见可选。
-            # 名单是导出开头记下的，中间可能有物体被副本顶替（见 object_is_alive），
-            # 失效引用直接跳过：否则这一行会抛 ReferenceError 把整个导出打断。
-            for ob in hidden_objects:
-                if FBXExporter.object_is_alive(ob):
-                    ob.hide_set(True)
-            for ob in disabled_objects:
-                if FBXExporter.object_is_alive(ob):
-                    ob.hide_viewport = True
-            for col in hidden_collections:
-                col.hide_viewport = True
-            for col in disabled_collections:
-                col.collection.hide_viewport = True
-
-            # 重置选择状态
-            FBXExporter.restore_selection(selection, active_object)
-        finally:
-            FBXExporter.restore_armatures_pose_position(pose_position_state)
-
-    
-
-    @classmethod
-    def poll(cls, context):
-        return True
-    
-    def execute(self, context):
-        try:
-            self.export_fbx_preprocess(context)
-        except Exception as e:
-            report_exception(self, "预处理失败", e)
-            return {'CANCELLED'}
-        self.report({"INFO"}, "预处理完成")
-        return {'FINISHED'}
-    
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-
-        # 预设行
-        preset_row = layout.row(align=True)
-        preset_row.menu(
-            HO_MT_FBXPreprocessPresets.__name__,
-            text=bpy.types.HO_MT_FBXPreprocessPresets.bl_label or "预处理预设",
-        )
-        preset_row.operator(
-            OP_AddFBXPreprocessPreset.bl_idname,
-            text="",
-            icon='ADD',
-        )
-        op_remove = preset_row.operator(
-            OP_AddFBXPreprocessPreset.bl_idname,
-            text="",
-            icon='REMOVE',
-        )
-        op_remove.remove_active = True
-
-        option_box = layout.box()
-        option_box.label(text="预处理")
-        option_col = option_box.column(align=True)
-        option_col.prop(self, "addLeafBones")
-        option_col.prop(self, "generateMCHBones")
-        option_col.prop(self, "cleanWeights")
-        option_col.prop(self, "fixObjectTransform")
-        option_col.prop(self, "ignoreGeometryNodes")
-        option_col.prop(self, "ignoreOutlineModifiers")
-
-        # MCH 骨列表折叠预览（勾了生成 MCH 才有意义）
-        if self.generateMCHBones:
-            FBXExporter.draw_mch_preview(option_box, self, "showMCHPreview")
-
-        # 次级骨（辅助骨）结构预览，仅展示不交互
-        FBXExporter.draw_aux_preview(option_box, self, "showAuxPreview")
-
-        # 骨骼集合结构预览，仅展示每个集合持有多少骨
-        FBXExporter.draw_collection_preview(option_box, self, "showCollectionPreview")
-
-
 def OPF_FinalFBXExport(self, context):
     self.layout.operator_context = 'INVOKE_DEFAULT'
-    self.layout.operator(OP_FinalFBXExport.bl_idname, text="Hotools-FBX(.fbx)")
-    self.layout.operator(OP_FinalFBXExport_only_preprocess.bl_idname, text="Hotools-FBX(OnlyPreProcess)")
+    self.layout.operator(OP_FinalFBXExport.bl_idname, text="HoFbx(.fbx)")
 
 
 cls = [
     HO_MT_FBXExportPresets,
     OP_AddFBXExportPreset,
-    HO_MT_FBXPreprocessPresets,
-    OP_AddFBXPreprocessPreset,
     OP_FinalFBXExport,
-    OP_FinalFBXExport_only_preprocess,
 ]
 
 

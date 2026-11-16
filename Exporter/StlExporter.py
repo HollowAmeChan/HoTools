@@ -310,7 +310,7 @@ def export_stl(context, filepath, *, ascii_format=False, use_batch=False,
 
 class OP_HoSTLExport(Operator, ExportHelper):
     bl_idname = 'ho.stl_export'
-    bl_label = 'HoSTL导出'
+    bl_label = 'HoStl(.stl)'
     bl_description = '只导出选中物体，GN 实例按所属 Blender 物体合并'
     bl_options = {'PRESET'}
 
@@ -353,17 +353,17 @@ class OP_HoSTLExport(Operator, ExportHelper):
             )
         except Exception as exc:
             traceback.print_exc()
-            self.report({'ERROR'}, f'HoSTL 导出失败：{exc}')
+            self.report({'ERROR'}, f'HoStl 导出失败：{exc}')
             return {'CANCELLED'}
         if skipped:
             self.report({'WARNING'}, '跳过没有三角面的物体：' + '、'.join(skipped))
-        self.report({'INFO'}, f'HoSTL 已导出 {len(written)} 个文件')
+        self.report({'INFO'}, f'HoStl 已导出 {len(written)} 个文件')
         return {'FINISHED'}
 
 
 def menu_export(self, context):
     self.layout.operator_context = 'INVOKE_DEFAULT'
-    self.layout.operator(OP_HoSTLExport.bl_idname, text='HoSTL (.stl)')
+    self.layout.operator(OP_HoSTLExport.bl_idname, text='HoStl(.stl)')
 
 
 def register():
