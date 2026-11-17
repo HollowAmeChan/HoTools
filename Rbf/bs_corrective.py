@@ -720,7 +720,7 @@ class HO_UL_BsCorrectiveRule(UIList):
             row.prop(item, "bone", text="")
         row.prop(item, "rbf_radius", text="")
         rotation = _display_bone_rotation(item, armature)
-        row.label(text=f"当前 {rotation}" if rotation else "当前 --")
+        row.label(text=f"{rotation}" if rotation else "--")
 
 
 
@@ -730,24 +730,23 @@ class HO_UL_BsCorrectiveInfluence(UIList):
 
 
 class HO_UL_BsCorrectivePoint(UIList):
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+    def draw_item(self, context, layout:bpy.types.UILayout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
-        preview = row.row(align=False)
-        preview.enabled = bool(data.bone)
         if item.id == _BASE_POINT:
-            preview.operator("hotools.bs_corrective_pose", text="", icon="MOD_ARMATURE").index = index
-            row.label(text="基准姿态")
-            row.label(text="0° / 0° / 0°")
-            row.label(text="RBF 0.000")
-
+            preview = row.row(align=False)
+            preview.enabled = bool(data.bone)
+            preview.operator("hotools.bs_corrective_pose", text="基准姿态", icon="MOD_ARMATURE").index = index
         else:
             row.prop(item, "enabled", text="")
+            preview = row.row(align=False)
+            preview.enabled = bool(data.bone)
             preview.operator("hotools.bs_corrective_pose", text="", icon="OUTLINER_OB_ARMATURE").index = index
             row.prop(item, "bs_name", text="", emboss=False)
-            row.prop(item, "weight", text="")
             row.label(text=f"{math.degrees(item.x):.1f}° / {math.degrees(item.y):.1f}° / {math.degrees(item.z):.1f}°")
             weight = _display_rbf_weight(data, item, context.object)
             row.label(text=f"RBF {weight:.3f}" if weight is not None else "RBF --")
+            row.prop(item, "weight", text="")
+
 
 
 def _display_rbf_weight(rule, point, armature):
