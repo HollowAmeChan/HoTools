@@ -28,11 +28,6 @@ def draw_bs_overview(layout, context):
     header = box.row(align=True)
     header.prop(scene, "ho_bs_corrective_overview_expanded", text="", emboss=False,
                 icon="TRIA_DOWN" if expanded else "TRIA_RIGHT")
-    header.label(text="修型总览", icon="SHAPEKEY_DATA")
-    if not expanded:
-        return
-    from ...Rbf.bs_corrective import draw_bs_corrective_menu
-    draw_bs_corrective_menu(box, context)
 
 
 def draw_constraint_controls(layout):

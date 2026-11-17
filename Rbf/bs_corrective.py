@@ -150,7 +150,13 @@ class PG_BsCorrectiveRule(PropertyGroup):
     pose_points: CollectionProperty(type=PG_BsCorrectivePosePoint)  # type: ignore
     tasks: CollectionProperty(type=PG_BsCorrectiveTask)  # type: ignore
     comment: StringProperty(default="")  # type: ignore
-    rbf_radius: FloatProperty(name="RBF 半径", default=0.5, min=0.001, max=100.0, unit="ROTATION")  # type: ignore
+    rbf_radius: FloatProperty(
+        name="RBF 半径",
+        default=math.radians(30.0),
+        min=0.001,
+        max=100.0,
+        subtype="ANGLE",
+    )  # type: ignore
     # Compiled RBF data is serialized with the rule so the runtime namespace
     # can be rebuilt after opening a .blend without using custom properties.
     driver_payload: StringProperty(default="")  # type: ignore
@@ -675,6 +681,9 @@ class HO_UL_BsCorrectiveRule(UIList):
         row.prop(item, "enabled", text="")
         row.label(text=f"{index + 1}. {item.bone or '未指定骨骼'}", icon="BONE_DATA")
         row.label(text=str(len(item.tasks)))
+        select = row.row(align=True)
+        select.enabled = bool(item.bone)
+        select.operator("hotools.bs_corrective_select_bone", text="", icon="RESTRICT_SELECT_OFF").index = index
 
 
 class HO_UL_BsCorrectiveInfluence(UIList):
@@ -687,9 +696,12 @@ class HO_UL_BsCorrectivePoint(UIList):
         row = layout.row(align=True)
         if item.id == _BASE_POINT:
             row.label(text="0. 基准姿态 · 0° / 0° / 0°", icon="LOCKED")
-            return
-        task = _task_for_point(data, item.id)
-        row.label(text=f"{index}. {task.bs_name if task else '未关联任务'}", icon="KEY_HLT")
+        else:
+            task = _task_for_point(data, item.id)
+            row.label(text=f"{index}. {task.bs_name if task else '未关联任务'}", icon="KEY_HLT")
+        preview = row.row(align=True)
+        preview.enabled = bool(data.bone)
+        preview.operator("hotools.bs_corrective_pose", text="", icon="HIDE_OFF").index = index
 
 
 class HO_UL_BsCorrectiveTask(UIList):
@@ -744,6 +756,42 @@ class _ArmatureOperator:
     @classmethod
     def poll(cls, context):
         return context.object is not None and context.object.type == "ARMATURE"
+
+
+class OP_BsCorrectiveSelectBone(_ArmatureOperator, Operator):
+    bl_idname = "hotools.bs_corrective_select_bone"
+    bl_label = "选择规则骨骼"
+    bl_description = "选择并激活这条规则的参考骨骼；物体模式下进入姿态模式，Shift 点击加选"
+    bl_options = {"REGISTER", "UNDO"}
+    index: bpy.props.IntProperty(default=-1, min=-1)
+    extend: BoolProperty(default=False, options={"SKIP_SAVE"})
+
+    def invoke(self, context, event):
+        self.extend = bool(event.shift)
+        return self.execute(context)
+
+    def execute(self, context):
+        from ..Utils.bone_selection import select_bones
+
+        armature = context.object
+        settings = settings_for(armature)
+        if settings is None or not 0 <= self.index < len(settings.rules):
+            return {"CANCELLED"}
+        rule = settings.rules[self.index]
+        bones = armature.data.edit_bones if armature.mode == "EDIT" else armature.data.bones
+        bone = bones.get(rule.bone)
+        if bone is None:
+            self.report({"WARNING"}, f"参考骨骼不存在：{rule.bone or '未指定'}")
+            return {"CANCELLED"}
+        context.view_layer.objects.active = armature
+        armature.select_set(True)
+        if armature.mode == "OBJECT":
+            bpy.ops.object.mode_set(mode="POSE")
+        bone.hide = False
+        bone.hide_select = False
+        select_bones(armature, [rule.bone], extend=self.extend)
+        settings.active_index = self.index
+        return {"FINISHED"}
 
 
 class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
@@ -853,15 +901,19 @@ class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
 class OP_BsCorrectivePose(_ArmatureOperator, Operator):
     bl_idname = "hotools.bs_corrective_pose"
     bl_label = "控制点姿态"
-    bl_description = "预览控制点姿态，或用当前骨骼姿态更新活动点；只修改参考骨骼的局部旋转"
+    bl_description = "预览该控制点姿态并定位对应修型任务；只修改参考骨骼的局部旋转"
     bl_options = {"REGISTER", "UNDO"}
+    index: bpy.props.IntProperty(default=-1, min=-1)
     capture: BoolProperty(default=False)
 
     def execute(self, context):
         rule = _active_rule(context)
         if rule is None or not rule.pose_points:
             return {"CANCELLED"}
-        point = rule.pose_points[min(rule.pose_active_index, len(rule.pose_points) - 1)]
+        index = self.index if self.index >= 0 else min(rule.pose_active_index, len(rule.pose_points) - 1)
+        if not 0 <= index < len(rule.pose_points):
+            return {"CANCELLED"}
+        point = rule.pose_points[index]
         bone = context.object.pose.bones.get(rule.bone)
         if bone is None:
             self.report({"ERROR"}, "请先指定参考骨骼")
@@ -885,6 +937,8 @@ class OP_BsCorrectivePose(_ArmatureOperator, Operator):
                 bone.rotation_axis_angle = (angle, *axis)
             else:
                 bone.rotation_euler = rotation.to_quaternion().to_euler(bone.rotation_mode)
+        rule.pose_active_index = index
+        if not self.capture:
             context.view_layer.update()
         return {"FINISHED"}
 
@@ -1017,6 +1071,15 @@ def _draw_list(layout, title, list_type, owner, collection, active, kind, rows=4
     row.template_list(list_type.__name__, kind, owner, collection, owner, active, rows=rows)
 
 
+def draw_bs_corrective_header(layout, context):
+    """Keep the shared enable switch accessible in collapsed overview headers."""
+    armature = context.object
+    if armature is not None and armature.type == "ARMATURE":
+        settings = settings_for(armature)
+        if settings is not None:
+            layout.prop(settings, "enabled", text="")
+
+
 def draw_bs_corrective_menu(layout, context):
     """One native four-list controller shared by Armature Properties and N-panel."""
     armature = context.object
@@ -1024,7 +1087,6 @@ def draw_bs_corrective_menu(layout, context):
         layout.label(text="请选择骨架", icon="INFO")
         return
     settings = settings_for(armature)
-    layout.prop(settings, "enabled", text="启用 BS 修型")
     top = layout.split(factor=0.5)
     left, right = top.column(), top.column()
     _draw_list(left, "规则", HO_UL_BsCorrectiveRule, settings, "rules", "active_index", "RULES")
@@ -1049,11 +1111,6 @@ def draw_bs_corrective_menu(layout, context):
         values.enabled = point.id != _BASE_POINT
         for axis in "xyz":
             values.prop(point, axis, text=axis.upper())
-        row = detail.row(align=True)
-        row.operator(OP_BsCorrectivePose.bl_idname, text="预览姿态", icon="HIDE_OFF")
-        capture = row.row(align=True)
-        capture.enabled = point.id != _BASE_POINT
-        capture.operator(OP_BsCorrectivePose.bl_idname, text="记录当前姿态", icon="REC").capture = True
     task = _active_task(rule)
     if task:
         detail.separator()
@@ -1084,6 +1141,7 @@ def draw_bs_corrective_menu(layout, context):
 
 def draw_bs_corrective_panel(layout, context):
     header, body = layout.panel("hotools_bs_corrective_overview", default_closed=False)
+    draw_bs_corrective_header(header, context)
     header.label(text="修型总览", icon="SHAPEKEY_DATA")
     if body is not None:
         draw_bs_corrective_menu(body, context)
@@ -1093,7 +1151,7 @@ CLASSES = [
     PG_BsCorrectiveInfluenceObject, PG_BsCorrectiveTaskTarget, PG_BsCorrectivePosePoint,
     PG_BsCorrectiveTask, PG_BsCorrectiveRule, PG_BsCorrectiveSettings,
     HO_UL_BsCorrectiveRule, HO_UL_BsCorrectiveInfluence, HO_UL_BsCorrectivePoint, HO_UL_BsCorrectiveTask,
-    OP_BsCorrectiveListEdit, OP_BsCorrectivePose, OP_BsCorrectiveGenerateDrivers,
+    OP_BsCorrectiveSelectBone, OP_BsCorrectiveListEdit, OP_BsCorrectivePose, OP_BsCorrectiveGenerateDrivers,
     OP_BsCorrectiveReset, OP_BsCorrectiveRemoveDrivers, OP_BsCorrectiveClearControls,
 ]
 

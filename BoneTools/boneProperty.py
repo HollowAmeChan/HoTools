@@ -1026,6 +1026,10 @@ class PT_Hotools_ArmatureBsCorrectivePanel(Panel):
         obj = context.object
         return obj is not None and obj.type == "ARMATURE"
 
+    def draw_header(self, context):
+        from ..Rbf.bs_corrective import draw_bs_corrective_header
+        draw_bs_corrective_header(self.layout, context)
+
     def draw(self, context):
         from ..Rbf.bs_corrective import draw_bs_corrective_menu
         draw_bs_corrective_menu(self.layout, context)
