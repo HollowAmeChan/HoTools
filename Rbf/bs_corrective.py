@@ -36,6 +36,7 @@ class PG_BsCorrectiveRule(PropertyGroup):
     targets: CollectionProperty(type=PG_BsCorrectiveTarget)  # type: ignore
     expression: StringProperty(default="clamp(x / 1.57079632679, 0, 1)")  # type: ignore
     comment: StringProperty(default="")  # type: ignore
+    bs_name: StringProperty(name="BS 名称", default="_BSC_pose1")  # type: ignore
     variables: CollectionProperty(type=PG_BsCorrectiveVariable)  # type: ignore
     expanded: BoolProperty(default=True)  # type: ignore
 
@@ -122,6 +123,7 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
             "measurementBone": measurement_bone,
             "mesh": targets[0].mesh.name,
             "shapeKey": targets[0].shape_key,
+            "bsName": rule.bs_name,
             "targets": [{"mesh": target.mesh.name, "shapeKey": target.shape_key} for target in targets],
             "expression": rule.expression,
             "comment": rule.comment,
@@ -211,6 +213,49 @@ def remove_native_drivers(armature):
     return removed
 
 
+def _prepare_generated_shape_keys(armature, overwrite=True):
+    """Create each rule's named output key before attaching native drivers."""
+    settings = settings_for(armature)
+    if settings is None:
+        return 0
+    requested = set()
+    requested_targets = set()
+    targets = []
+    for rule in settings.rules:
+        name = (rule.bs_name or "").strip()
+        if not name:
+            raise ValueError("BS 名称不能为空")
+        if name in requested:
+            raise ValueError(f"规则 BS 名称冲突：{name}")
+        requested.add(name)
+        for target in _rule_targets(rule):
+            if target.mesh is None or target.mesh.type != "MESH":
+                raise ValueError("目标网格必须是 Mesh 对象")
+            target_id = (target.mesh.as_pointer(), name)
+            if target_id in requested_targets:
+                raise ValueError(f"目标 BS 重复：{target.mesh.name}/{name}")
+            requested_targets.add(target_id)
+            targets.append((target, name))
+    for target, name in targets:
+        shape_keys = target.mesh.data.shape_keys
+        existing = shape_keys.key_blocks.get(name) if shape_keys else None
+        if existing is not None:
+            if not overwrite:
+                raise ValueError(f"已存在形态键：{target.mesh.name}/{name}")
+            if existing.name == "Basis":
+                raise ValueError(f"不能覆盖 Basis 形态键：{target.mesh.name}")
+    for target, name in targets:
+        shape_keys = target.mesh.data.shape_keys
+        existing = shape_keys.key_blocks.get(name) if shape_keys else None
+        if existing is not None:
+            shape_keys.key_blocks.remove(existing)
+        if target.mesh.data.shape_keys is None:
+            target.mesh.shape_key_add(name="Basis", from_mix=False)
+        target.mesh.shape_key_add(name=name, from_mix=False)
+        target.shape_key = name
+    return len(targets)
+
+
 class OP_BsCorrectiveAdd(Operator):
     bl_idname = "hotools.bs_corrective_add"
     bl_label = "添加 BS 修型规则"
@@ -224,6 +269,11 @@ class OP_BsCorrectiveAdd(Operator):
         settings = settings_for(context.object)
         rule = settings.rules.add()
         rule.id = uuid.uuid4().hex
+        used = {item.bs_name for item in settings.rules[:-1] if item.bs_name}
+        index = 1
+        while f"_BSC_pose{index}" in used:
+            index += 1
+        rule.bs_name = f"_BSC_pose{index}"
         settings.active_index = len(settings.rules) - 1
         return {"FINISHED"}
 
@@ -409,6 +459,33 @@ class OP_BsCorrectiveGenerateDrivers(Operator):
         return {"FINISHED"}
 
 
+class OP_BsCorrectiveReset(Operator):
+    bl_idname = "hotools.bs_corrective_reset"
+    bl_label = "重置并生成 BS"
+    bl_options = {"REGISTER", "UNDO"}
+    overwrite_existing: BoolProperty(name="覆盖同名形态键", default=True)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and context.object.type == "ARMATURE"
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        try:
+            # Remove drivers while rules still point at their previous keys. This
+            # prevents stale HoTools drivers when a reset changes the BS name.
+            remove_native_drivers(context.object)
+            _prepare_generated_shape_keys(context.object, self.overwrite_existing)
+            count = generate_native_drivers(context.object)
+        except (ValueError, RuntimeError) as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"已重置并生成 {count} 条 Blender BS 驱动器")
+        return {"FINISHED"}
+
+
 class OP_BsCorrectiveRemoveDrivers(Operator):
     bl_idname = "hotools.bs_corrective_remove_drivers"
     bl_label = "移除本工具驱动器"
@@ -432,6 +509,7 @@ def draw_bs_corrective_menu(layout, context):
         return
     settings = settings_for(armature)
     row = layout.row(align=True)
+    row.operator(OP_BsCorrectiveReset.bl_idname, text="重置", icon="FILE_REFRESH")
     row.operator(OP_BsCorrectiveGenerateDrivers.bl_idname, text="刷新驱动器", icon="FILE_REFRESH")
     row.operator(OP_BsCorrectiveRemoveDrivers.bl_idname, text="移除驱动器", icon="X")
     if not settings.rules:
@@ -471,6 +549,7 @@ def draw_bs_corrective_menu(layout, context):
     detail.prop_search(rule, "bone", armature.data, "bones", text="测量骨骼")
     detail.prop(rule, "expression", text="表达式")
     detail.prop(rule, "comment", text="注释")
+    detail.prop(rule, "bs_name", text="BS 名称")
     target_box = detail.box()
     header = target_box.row(align=True)
     header.label(text="目标形态键", icon="SHAPEKEY_DATA")
@@ -524,7 +603,8 @@ CLASSES = [PG_BsCorrectiveVariable, PG_BsCorrectiveTarget, PG_BsCorrectiveRule, 
            OP_BsCorrectiveToggleRule, OP_BsCorrectiveMoveRule, OP_BsCorrectiveToggleExpanded,
            OP_BsCorrectiveSelectRule,
            OP_BsCorrectiveAddTarget, OP_BsCorrectiveRemoveTarget, OP_BsCorrectiveClearTargets,
-           OP_BsCorrectiveMoveTarget, OP_BsCorrectiveGenerateDrivers, OP_BsCorrectiveRemoveDrivers]
+           OP_BsCorrectiveMoveTarget, OP_BsCorrectiveGenerateDrivers, OP_BsCorrectiveReset,
+           OP_BsCorrectiveRemoveDrivers]
 
 
 def register():
