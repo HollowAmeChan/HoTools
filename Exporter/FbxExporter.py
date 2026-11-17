@@ -2348,10 +2348,11 @@ class FBXExporter:
         json_path = FBXExporter.unity_metadata_path(fbx_filepath, f"{base_name}{suffix}")
         payload = {
             "schema": "hotools.bs-corrective",
-            "version": 1,
+            "version": 2,
+            "poseSpace": "LOCAL",
             "rotationOrder": "XYZ",
             "angleUnit": "radian",
-            "rotationSpace": "LOCAL",
+            "kernel": "gaussian",
             "fbxBoneAxes": "Y_X",
             "measurement": "source_local_rotation",
             "rules": rules,
