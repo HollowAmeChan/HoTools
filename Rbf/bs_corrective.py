@@ -6,12 +6,17 @@ import uuid
 import numpy as np
 
 import bpy
+import gpu
 from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, CollectionProperty, FloatProperty, PointerProperty, StringProperty
 from bpy.types import Operator, PropertyGroup, UIList
+from mathutils import Euler, Matrix, Vector
+
+from ..BoneTools.previewUtils import AuxPreviewUtils
+from ..Utils.hud import begin_hud, end_hud, draw_hud_lines
 
 SCHEMA = "hotools.bs-corrective"
-VERSION = 3
+VERSION = 4
 _DRIVER_MARKER = "hotoolsBscMarker"
 _DRIVER_NAMESPACE_FUNCTION = "hotools_bs_rbf"
 _RBF_RUNTIME = {}
@@ -43,6 +48,13 @@ def _update_pose_enabled(self, context):
         _set_pose_enabled(armature, owner, self, context=context)
 
 
+def _update_preview(self, context):
+    if self.preview_enabled:
+        BsCorrectivePreview.show(context, armature=_context_armature(context))
+    else:
+        BsCorrectivePreview.clear()
+
+
 def _current_local_pose(armature, bone_name):
     pose_bone = armature.pose.bones.get(bone_name) if armature and bone_name else None
     if pose_bone is None:
@@ -64,6 +76,29 @@ def _shortest_angle(value):
 def _rule_points(rule):
     """Return the implicit zero pose followed by authored control points."""
     return [(0.0, 0.0, 0.0)] + [(point.x, point.y, point.z) for point in _authored_points(rule)]
+
+
+def _effective_radii(rule, positions=None):
+    """Return one Gaussian width per center, with automatic local narrowing."""
+    positions = positions if positions is not None else np.asarray(_rule_points(rule), dtype=np.float64)
+    default = float(rule.rbf_radius)
+    radii = [default]
+    authored = _authored_points(rule)
+    for index, point in enumerate(authored, start=1):
+        explicit = float(getattr(point, "radius", 0.0))
+        if math.isfinite(explicit) and explicit > 0.0:
+            radii.append(explicit)
+            continue
+        distances = [
+            _rbf_distance(positions[index], positions[other])
+            for other in range(len(positions))
+            if other != index
+        ]
+        nearest = min(distances) if distances else default
+        # The hidden rule value is only a fallback for legacy zero-radius data
+        # and the implicit zero pose; authored rows normally use their own value.
+        radii.append(max(0.001, min(default, nearest)))
+    return np.asarray(radii, dtype=np.float64)
 
 
 def _authored_points(rule):
@@ -95,6 +130,15 @@ class PG_BsCorrectivePosePoint(PropertyGroup):
     enabled: BoolProperty(name="启用", default=True, update=_update_pose_enabled)  # type: ignore
     bs_name: StringProperty(name="BS 名称", default="_BSC_pose1")  # type: ignore
     weight: FloatProperty(name="权重", default=1.0, min=0.0, max=1.0, subtype="FACTOR")  # type: ignore
+    # Every authored pose owns its Gaussian influence radius. Keep zero as an
+    # automatic fallback for data authored before per-pose radii were exposed.
+    radius: FloatProperty(
+        name="影响半径",
+        default=math.radians(30.0),
+        min=0.0,
+        max=100.0,
+        subtype="ANGLE",
+    )  # type: ignore
     x: FloatProperty(name="X", default=0.0, unit="ROTATION")  # type: ignore
     y: FloatProperty(name="Y", default=0.0, unit="ROTATION")  # type: ignore
     z: FloatProperty(name="Z", default=0.0, unit="ROTATION")  # type: ignore
@@ -122,12 +166,41 @@ class PG_BsCorrectiveRule(PropertyGroup):
 
 class PG_BsCorrectiveSettings(PropertyGroup):
     enabled: BoolProperty(name="启用 BS 修型", default=True, update=_update_enabled)  # type: ignore
+    preview_enabled: BoolProperty(name="修型范围预览", default=False, update=_update_preview)  # type: ignore
     rules: CollectionProperty(type=PG_BsCorrectiveRule)  # type: ignore
-    active_index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
+    active_index: bpy.props.IntProperty(default=0, min=0, update=_update_preview)  # type: ignore
 
 
 def settings_for(armature):
     return getattr(armature, "hotools_bs_corrective", None)
+
+
+def _armature_object_poll(_self, obj):
+    return obj is not None and obj.type == "ARMATURE"
+
+
+def _context_armature(context):
+    active = getattr(context, "object", None)
+    if active is not None and getattr(active, "type", None) == "ARMATURE":
+        return active
+    scene = getattr(context, "scene", None)
+    selected = getattr(scene, "hotools_bs_corrective_view_armature", None) if scene else None
+    return selected if selected is not None and getattr(selected, "type", None) == "ARMATURE" else None
+
+
+def _operator_armature(operator, context):
+    name = getattr(operator, "armature_name", "")
+    selected = bpy.data.objects.get(name) if name else None
+    if selected is not None and getattr(selected, "type", None) == "ARMATURE":
+        return selected
+    return _context_armature(context)
+
+
+def _owner_armature(data, context):
+    owner = getattr(data, "id_data", None)
+    if owner is not None and getattr(owner, "type", None) == "ARMATURE":
+        return owner
+    return _context_armature(context)
 
 
 def _find_bone(armature, name):
@@ -190,6 +263,8 @@ def _validate_rule(armature, rule, require_targets=True):
         names.add(name)
         if not math.isfinite(point.weight) or not 0.0 <= point.weight <= 1.0:
             raise ValueError(f"姿势权重必须在 0..1：{name}")
+        if not math.isfinite(point.radius) or point.radius < 0.0:
+            raise ValueError(f"姿势影响半径必须为有限非负数：{name}")
     meshes = _rule_meshes(rule)
     if not meshes:
         raise ValueError(f"规则缺少影响物体：{rule.bone}")
@@ -220,7 +295,7 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
         "poseSpace": "LOCAL",
         "rotationOrder": "XYZ",
         "angleUnit": "radian",
-        "kernel": "gaussian",
+        "kernel": "gaussian-local",
         "fbxBoneAxes": fbx_bone_axes,
         "measurement": "source_local_rotation",
         "rules": [],
@@ -238,6 +313,7 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
                 outputs.add(output)
         if not rule.id:
             rule.id = uuid.uuid4().hex
+        authored_radii = _effective_radii(rule)
         # MCH is the export-time stable cache for a source bone whose authored
         # rest rotation is cleared by HoFBX.  The authored rule remains keyed by
         # the source name, while Unity reads the actual exported cache bone.
@@ -270,8 +346,9 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
                 "includeBase": True,
                 "basePose": [0.0, 0.0, 0.0],
                 "controlPoints": [
-                    {"id": point.id, "pose": [point.x, point.y, point.z]}
-                    for point in _authored_points(rule)
+                    {"id": point.id, "pose": [point.x, point.y, point.z],
+                     "radius": float(authored_radii[index + 1])}
+                    for index, point in enumerate(_authored_points(rule))
                 ],
             },
         }
@@ -303,10 +380,11 @@ def _set_driver_expression(driver, expression):
 
 def _encode_rbf_payload(rule, persist=True):
     """Serialize compiled RBF data into a normal RNA StringProperty."""
-    positions, pose_ids, matrix = _compile_rbf(rule)
+    positions, radii, pose_ids, matrix = _compile_rbf(rule)
     payload = {
         "radius": float(rule.rbf_radius),
         "positions": positions.tolist(),
+        "radii": radii.tolist(),
         "coefficients": {pose_id: matrix[:, index].tolist() for index, pose_id in enumerate(pose_ids)},
     }
     encoded = json.dumps(payload, separators=(",", ":"), allow_nan=False)
@@ -321,11 +399,17 @@ def _compile_rbf(rule):
     positions = np.asarray(_rule_points(rule), dtype=np.float64)
     if not np.isfinite(positions).all() or not math.isfinite(rule.rbf_radius) or rule.rbf_radius <= 0:
         raise ValueError("RBF 输入必须为有限数值，半径必须大于零")
+    radii = _effective_radii(rule, positions)
+    if not np.isfinite(radii).all() or np.any(radii <= 0):
+        raise ValueError("RBF 每个控制点的影响半径必须为有限正数")
     delta = (positions[:, None, :] - positions[None, :, :] + math.pi) % (2 * math.pi) - math.pi
     distance_squared = np.einsum("ijk,ijk->ij", delta, delta)
     if np.any(distance_squared[np.triu_indices(len(positions), 1)] < 1e-10):
         raise ValueError("RBF 控制点过近或重复，无法求解")
-    kernel = np.exp(-distance_squared / (2.0 * rule.rbf_radius ** 2))
+    # Each column is one basis function, so its local radius belongs to the
+    # column center. The resulting matrix is intentionally non-symmetric but
+    # still interpolates every authored sample exactly.
+    kernel = np.exp(-distance_squared / (2.0 * radii[None, :] ** 2))
     kernel.flat[::len(positions) + 1] += 1e-6
     values = np.zeros((len(positions), len(points)), dtype=np.float64)
     indices = {point.id: i + 1 for i, point in enumerate(points)}
@@ -337,43 +421,51 @@ def _compile_rbf(rule):
         coefficients = np.linalg.solve(kernel, values)
     except np.linalg.LinAlgError as exc:
         raise ValueError("RBF 控制点无法求解") from exc
-    return positions, tuple(point.id for point in points), coefficients
+    return positions, radii, tuple(point.id for point in points), coefficients
 
 
 def _decode_rbf_payload(encoded):
     payload = json.loads(encoded)
     positions = payload["positions"]
+    radii = payload["radii"]
     coefficients = payload["coefficients"]
     if not positions or not coefficients:
         raise ValueError("RBF 驱动数据为空或长度不一致")
     if any(len(position) != 3 for position in positions):
         raise ValueError("RBF 驱动姿态必须包含 XYZ 三个值")
+    if len(radii) != len(positions):
+        raise ValueError("RBF 影响半径与控制点数量不一致")
     if any(len(values) != len(positions) for values in coefficients.values()):
         raise ValueError("RBF 系数与控制点数量不一致")
     positions = np.asarray(positions, dtype=np.float64)
+    radii = np.asarray(radii, dtype=np.float64)
     matrix = np.ascontiguousarray(list(coefficients.values()), dtype=np.float64)
     radius = float(payload["radius"])
-    if not np.isfinite(positions).all() or not np.isfinite(matrix).all() or not math.isfinite(radius) or radius <= 0:
+    if (not np.isfinite(positions).all() or not np.isfinite(radii).all() or
+            not np.isfinite(matrix).all() or not math.isfinite(radius) or radius <= 0 or
+            np.any(radii <= 0)):
         raise ValueError("RBF 驱动数据必须为有限数值，半径必须大于零")
     if matrix.size < 64:
         positions = tuple(tuple(float(value) for value in row) for row in positions)
+        radii = tuple(float(value) for value in radii)
         matrix = tuple(tuple(float(value) for value in row) for row in matrix)
-    return positions, {pose_id: index for index, pose_id in enumerate(coefficients)}, matrix, 1.0 / (2 * radius * radius)
+    radius_terms = tuple(1.0 / (2 * value * value) for value in radii) if isinstance(radii, tuple) else 1.0 / (2 * radii * radii)
+    return positions, {pose_id: index for index, pose_id in enumerate(coefficients)}, matrix, radius_terms
 
 
 def _evaluate_rbf_outputs(item, current):
-    positions, _, coefficients, radius_term = item
+    positions, _, coefficients, radius_terms = item
     # Recompute the Gaussian vector only once for ALL output channels. Small
     # rules avoid NumPy setup; larger rules use its bundled vectorized path.
     if isinstance(coefficients, tuple):
         x, y, z = current
         kernels = []
-        for px, py, pz in positions:
+        for center_index, (px, py, pz) in enumerate(positions):
             dx, dy, dz = _shortest_angle(x - px), _shortest_angle(y - py), _shortest_angle(z - pz)
-            kernels.append(math.exp(-(dx * dx + dy * dy + dz * dz) * radius_term))
+            kernels.append(math.exp(-(dx * dx + dy * dy + dz * dz) * radius_terms[center_index]))
         return tuple(min(max(sum(c * k for c, k in zip(row, kernels)), 0.0), 1.0) for row in coefficients)
     delta = (np.asarray(current) - positions + math.pi) % (2 * math.pi) - math.pi
-    kernels = np.exp(-np.einsum("ij,ij->i", delta, delta) * radius_term)
+    kernels = np.exp(-np.einsum("ij,ij->i", delta, delta) * radius_terms)
     return tuple(np.clip(coefficients @ kernels, 0.0, 1.0))
 
 
@@ -532,79 +624,100 @@ def _sync_pose_enabled(armature, rule_indices=None, context=None):
     if context is not None and getattr(context, "view_layer", None) is not None:
         context.view_layer.update()
 
+def generate_native_drivers(armature, rule_indices=None, warnings=None):
+    """Refresh drivers best-effort, optionally collecting per-target warnings.
 
-def _validate_outputs(armature, rule_indices=None):
-    """Reject conflicting outputs and foreign drivers before touching the graph."""
-    settings = settings_for(armature)
-    if settings is not None:
-        _validate_pose_names(settings)
-    requested = set()
-    for _, rule in _selected_rules(armature):
-        if not rule.enabled:
-            continue
-        for _, mesh, shape_key in _rule_outputs(rule):
-            key = (mesh.data.as_pointer(), shape_key)
-            if key in requested:
-                raise ValueError(f"目标形态键被多个规则重复使用：{mesh.name}/{shape_key}")
-            requested.add(key)
-    for _, rule in _selected_rules(armature, rule_indices):
-        if not rule.enabled:
-            continue
-        _validate_rule(armature, rule)
-        for _, mesh, shape_key in _rule_outputs(rule):
-            key = mesh.data.shape_keys.key_blocks[shape_key]
-            animation = key.id_data.animation_data
-            for fcurve in animation.drivers if animation else []:
-                if fcurve.data_path == key.path_from_id("value") and not _owned_driver(fcurve, armature, {rule.id}):
-                    raise ValueError(f"目标已有其他驱动器：{mesh.name}/{shape_key}")
-
-
-def generate_native_drivers(armature, rule_indices=None):
-    """Create Blender drivers and resync every pose's enabled state."""
+    A malformed rule or missing shape key must not prevent unrelated rules and
+    targets from being refreshed. Existing drivers for a skipped rule remain
+    untouched; valid targets are rebuilt independently.
+    """
     settings = settings_for(armature)
     if settings is None:
         return 0
+    warnings = warnings if warnings is not None else []
     _sync_pose_enabled(armature, rule_indices)
     if not settings.enabled:
         return 0
-    _validate_outputs(armature, rule_indices)
+    selected = _selected_rules(armature, rule_indices)
     prepared = {}
-    for _, rule in _selected_rules(armature, rule_indices):
-        if rule.enabled:
+    valid_indices = []
+    for index, rule in selected:
+        if not rule.enabled:
+            # Disabled rules still need their old owned drivers removed.
+            valid_indices.append(index)
+            continue
+        try:
+            _validate_rule(armature, rule, require_targets=False)
             if not rule.id:
                 rule.id = uuid.uuid4().hex
             encoded = _encode_rbf_payload(rule, persist=False)
             prepared[rule.id] = encoded, _decode_rbf_payload(encoded)
-    remove_native_drivers(armature, rule_indices)
+            valid_indices.append(index)
+        except (KeyError, TypeError, ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
+            warnings.append(f"规则「{rule.bone or '未指定骨骼'}」跳过：{exc}")
+
+    if not valid_indices:
+        return 0
+
+    # Detect output conflicts without making one bad target abort the batch.
+    owners = {}
+    for index, rule in enumerate(settings.rules):
+        if not rule.enabled:
+            continue
+        for _, mesh, shape_key in _rule_outputs(rule):
+            owners.setdefault((mesh.data.as_pointer(), shape_key), []).append(index)
+
+    remove_native_drivers(armature, valid_indices)
     _register_driver_namespace(rebuild=False)
     generated = 0
     try:
-        for _, rule in _selected_rules(armature, rule_indices):
-            if not rule.enabled:
+        for index, rule in selected:
+            if index not in valid_indices or not rule.enabled:
                 continue
             rule.driver_payload, _RBF_RUNTIME[rule.id] = prepared[rule.id]
             _RBF_CACHE.pop(rule.id, None)
             for point, mesh, shape_key in _rule_outputs(rule):
+                target_id = (mesh.data.as_pointer(), shape_key)
+                if len(owners.get(target_id, ())) > 1:
+                    warnings.append(f"目标形态键冲突，跳过：{mesh.name}/{shape_key}")
+                    continue
                 shape_keys = mesh.data.shape_keys
                 key = shape_keys.key_blocks.get(shape_key) if shape_keys else None
                 if key is None:
+                    warnings.append(f"找不到形态键，跳过：{mesh.name}/{shape_key}")
                     continue
-                # Use the X transform variable as the ownership marker; driver
-                # FCurves are not reliably attached to Action groups in Blender 4.5.
-                driver = _shape_key_driver_add(key)
-                _set_driver_marker(driver, armature, rule.bone)
-                expression = _rbf_namespace_expression(rule, point)
-                _set_driver_expression(driver, expression)
-                for channel in "YZ":
-                    _set_transform_variable(driver, channel.lower(), armature, rule.bone, channel)
-                generated += 1
-        _sync_pose_enabled(armature, rule_indices)
+                animation = key.id_data.animation_data
+                foreign = any(
+                    fcurve.data_path == key.path_from_id("value") and
+                    not _owned_driver(fcurve, armature, {rule.id})
+                    for fcurve in (animation.drivers if animation else [])
+                )
+                if foreign:
+                    warnings.append(f"目标已有其他驱动器，跳过：{mesh.name}/{shape_key}")
+                    continue
+                try:
+                    # Use the X transform variable as the ownership marker;
+                    # FCurves are not reliably attached to Action groups.
+                    driver = _shape_key_driver_add(key)
+                    _set_driver_marker(driver, armature, rule.bone)
+                    expression = _rbf_namespace_expression(rule, point)
+                    _set_driver_expression(driver, expression)
+                    for channel in "YZ":
+                        _set_transform_variable(driver, channel.lower(), armature, rule.bone, channel)
+                    generated += 1
+                except Exception as exc:
+                    try:
+                        key.id_data.driver_remove(key.path_from_id("value"), 0)
+                    except (AttributeError, RuntimeError, ValueError):
+                        pass
+                    warnings.append(f"驱动生成失败，跳过：{mesh.name}/{shape_key}（{exc}）")
+        _sync_pose_enabled(armature, valid_indices)
     except Exception:
-        # Do not leave a truncated or half-generated driver graph behind.
-        remove_native_drivers(armature, rule_indices)
+        # A fatal graph error should still remove only this controller's
+        # generated drivers; per-target validation errors are handled above.
+        remove_native_drivers(armature, valid_indices)
         raise
     return generated
-
 
 def remove_native_drivers(armature, rule_indices=None):
     """Remove only drivers generated by this controller, preserving user drivers."""
@@ -712,13 +825,16 @@ class HO_UL_BsCorrectiveRule(UIList):
         row.prop(item, "enabled", text="")
         select = row.row(align=True)
         select.enabled = bool(item.bone)
-        select.operator("hotools.bs_corrective_select_bone", text="", icon="RESTRICT_SELECT_OFF").index = index
-        armature = context.object if context.object and context.object.type == "ARMATURE" else None
+        operator = select.operator("hotools.bs_corrective_select_bone", text="", icon="RESTRICT_SELECT_OFF")
+        operator.index = index
+        owner = _owner_armature(data, context)
+        if owner is not None:
+            operator.armature_name = owner.name
+        armature = _owner_armature(data, context)
         if armature is not None:
             row.prop_search(item, "bone", armature.data, "bones", text="")
         else:
             row.prop(item, "bone", text="")
-        row.prop(item, "rbf_radius", text="")
         rotation = _display_bone_rotation(item, armature)
         row.label(text=f"{rotation}" if rotation else "--")
 
@@ -735,15 +851,24 @@ class HO_UL_BsCorrectivePoint(UIList):
         if item.id == _BASE_POINT:
             preview = row.row(align=False)
             preview.enabled = bool(data.bone)
-            preview.operator("hotools.bs_corrective_pose", text="基准姿态", icon="MOD_ARMATURE").index = index
+            operator = preview.operator("hotools.bs_corrective_pose", text="基准姿态", icon="MOD_ARMATURE")
+            operator.index = index
+            owner = _owner_armature(data, context)
+            if owner is not None:
+                operator.armature_name = owner.name
         else:
             row.prop(item, "enabled", text="")
             preview = row.row(align=False)
             preview.enabled = bool(data.bone)
-            preview.operator("hotools.bs_corrective_pose", text="", icon="OUTLINER_OB_ARMATURE").index = index
+            operator = preview.operator("hotools.bs_corrective_pose", text="", icon="OUTLINER_OB_ARMATURE")
+            operator.index = index
+            owner = _owner_armature(data, context)
+            if owner is not None:
+                operator.armature_name = owner.name
             row.prop(item, "bs_name", text="", emboss=False)
             row.label(text=f"{math.degrees(item.x):.1f}° / {math.degrees(item.y):.1f}° / {math.degrees(item.z):.1f}°")
-            weight = _display_rbf_weight(data, item, context.object)
+            row.prop(item, "radius", text="")
+            weight = _display_rbf_weight(data, item, _owner_armature(data, context))
             row.label(text=f"RBF {weight:.3f}" if weight is not None else "RBF --")
             row.prop(item, "weight", text="")
 
@@ -760,17 +885,19 @@ def _display_rbf_weight(rule, point, armature):
     signature = (
         rule.as_pointer(),
         rule.id,
+        bool(rule.enabled),
         tuple((p.id, float(p.x), float(p.y), float(p.z)) for p in _authored_points(rule)),
+        tuple((p.id, float(p.radius), float(p.weight), bool(p.enabled)) for p in _authored_points(rule)),
         float(rule.rbf_radius),
         current,
     )
     cache_key = (armature.as_pointer(), signature)
     cached = _RBF_UI_CACHE.get(cache_key)
     if cached is None:
-        item = _RBF_RUNTIME.get(rule.id)
         try:
-            if item is None:
-                item = _decode_rbf_payload(_encode_rbf_payload(rule, persist=False))
+            # UI preview follows the authored rule immediately; the serialized
+            # driver payload is intentionally updated only by the refresh action.
+            item = _decode_rbf_payload(_encode_rbf_payload(rule, persist=False))
             values = _evaluate_rbf_outputs(item, current)
             cached = {pose_id: float(values[index]) for pose_id, index in item[1].items()}
         except (KeyError, TypeError, ValueError, RuntimeError, np.linalg.LinAlgError):
@@ -791,8 +918,175 @@ def _display_bone_rotation(rule, armature):
     return " / ".join(f"{math.degrees(value):.1f}°" for value in pose)
 
 
+class BsCorrectivePreview:
+    """3D range preview for the active corrective rule."""
+
+    _handler_3d = None
+    _handler_2d = None
+    _armature_name = ""
+
+    @classmethod
+    def show(cls, context, armature=None):
+        armature = armature if armature is not None else getattr(context, "object", None)
+        settings = settings_for(armature) if armature is not None else None
+        if armature is None or armature.type != "ARMATURE" or settings is None:
+            cls.clear()
+            return
+        cls._armature_name = armature.name
+        AuxPreviewUtils.ensure_handlers(cls, cls._draw_3d, cls._draw_2d)
+        AuxPreviewUtils.tag_redraw()
+
+    @classmethod
+    def clear(cls):
+        cls._armature_name = ""
+        AuxPreviewUtils.remove_handlers(cls)
+        AuxPreviewUtils.tag_redraw()
+
+    @classmethod
+    def shutdown(cls):
+        cls.clear()
+
+    @staticmethod
+    def _color(weight, enabled, authored_weight=1.0):
+        authored = max(0.0, min(1.0, float(authored_weight)))
+        if not enabled:
+            return (0.20 + authored * 0.16, 0.22 + authored * 0.16, 0.30 + authored * 0.18,
+                    0.24 + authored * 0.18)
+        value = max(0.0, min(1.0, float(weight)))
+        # Current RBF influence shifts blue toward orange; authored weight keeps
+        # low-current points visible and independently changes their opacity.
+        return (
+            0.18 + 0.82 * value,
+            0.62 - 0.34 * value,
+            1.00 - 0.82 * value,
+            0.18 + 0.48 * value + 0.28 * authored,
+        )
+
+    @staticmethod
+    def _append_cone(target, origin, direction, up, length, radius):
+        direction = AuxPreviewUtils.safe_normalized_vector(direction)
+        up = AuxPreviewUtils.safe_normalized_vector(up)
+        if direction is None:
+            return
+        side = AuxPreviewUtils.safe_normalized_vector(direction.cross(up)) if up is not None else None
+        if side is None:
+            side = AuxPreviewUtils.safe_normalized_vector(direction.cross(Vector((0.0, 0.0, 1.0))))
+        if side is None:
+            side = AuxPreviewUtils.safe_normalized_vector(direction.cross(Vector((0.0, 1.0, 0.0))))
+        if side is None:
+            return
+        up = AuxPreviewUtils.safe_normalized_vector(side.cross(direction))
+        if up is None:
+            return
+        depth = max(length, 1e-4)
+        angle = max(0.01, min(float(radius), math.radians(80.0)))
+        ring_center = origin + direction * depth
+        ring_radius = math.tan(angle) * depth
+        AuxPreviewUtils.append_circle(target, ring_center, side, up, ring_radius, segments=32)
+        for axis in (side, up, -side, -up):
+            target.extend((tuple(origin), tuple(ring_center + axis * ring_radius)))
+
+    @classmethod
+    def _draw_3d(cls):
+        if not cls._armature_name:
+            return
+        armature = bpy.data.objects.get(cls._armature_name)
+        settings = settings_for(armature)
+        if armature is None or settings is None or not settings.preview_enabled:
+            return
+        rule = settings.rules[min(settings.active_index, len(settings.rules) - 1)] if settings.rules else None
+        if rule is None or not rule.enabled or not rule.bone:
+            return
+        bone = armature.pose.bones.get(rule.bone)
+        if bone is None:
+            return
+
+        head = armature.matrix_world @ bone.head
+        tail = armature.matrix_world @ bone.tail
+        length = max((tail - head).length, 0.05)
+        current = bone.matrix_basis.to_3x3()
+        try:
+            current_inverse = current.inverted()
+        except (ValueError, RuntimeError):
+            current_inverse = Matrix.Identity(3)
+        armature_rotation = armature.matrix_world.to_3x3()
+        actual_direction = AuxPreviewUtils.safe_normalized_vector(tail - head)
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("NONE")
+        gpu.state.line_width_set(2.0)
+        try:
+            shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+            actual_lines = [tuple(head), tuple(tail)]
+            AuxPreviewUtils.draw_lines(shader, actual_lines, (0.95, 0.95, 0.95, 0.9))
+            if actual_direction is not None:
+                AuxPreviewUtils.draw_points(shader, [tuple(head)], (1.0, 0.75, 0.15, 1.0), size=9.0)
+
+            authored = _authored_points(rule)
+            radii = _effective_radii(rule)
+            for point_index, point in enumerate(authored, start=1):
+                try:
+                    weight = _display_rbf_weight(rule, point, armature)
+                    if weight is None:
+                        weight = 0.0
+                    authored_weight = max(0.0, min(1.0, float(point.weight)))
+                    radius = radii[point_index]
+                    pose_rotation = Euler((point.x, point.y, point.z), "XYZ").to_matrix()
+                    ghost_rotation = armature_rotation @ bone.matrix.to_3x3() @ current_inverse @ pose_rotation
+                    direction = ghost_rotation @ Vector((0.0, 1.0, 0.0))
+                    up = ghost_rotation @ Vector((0.0, 0.0, 1.0))
+                    enabled = bool(settings.enabled and rule.enabled and point.enabled)
+                    color = cls._color(weight, enabled, authored_weight)
+                    lines = []
+                    cls._append_cone(lines, head, direction, up, length * 1.05, radius)
+                    lines.extend((tuple(head), tuple(head + direction.normalized() * length * 1.35)))
+                    gpu.state.line_width_set(1.0 + 1.5 * authored_weight + 1.5 * min(max(weight, 0.0), 1.0))
+                    AuxPreviewUtils.draw_lines(shader, lines, color)
+                    marker_size = 5.0 + 5.0 * authored_weight + 5.0 * min(max(weight, 0.0), 1.0)
+                    AuxPreviewUtils.draw_points(
+                        shader,
+                        [tuple(head + direction.normalized() * length * 1.35)],
+                        color,
+                        size=marker_size,
+                    )
+                except (AttributeError, ValueError, RuntimeError, IndexError, TypeError):
+                    continue
+        finally:
+            gpu.state.line_width_set(1.0)
+            gpu.state.depth_test_set("LESS_EQUAL")
+            gpu.state.blend_set("NONE")
+
+    @classmethod
+    def _draw_2d(cls):
+        armature = bpy.data.objects.get(cls._armature_name) if cls._armature_name else None
+        settings = settings_for(armature)
+        if armature is None or settings is None or not settings.rules:
+            return
+        rule = settings.rules[min(settings.active_index, len(settings.rules) - 1)]
+        if not settings.preview_enabled:
+            return
+        lines = [("BS 修型范围预览  ", rule.bone or "未指定骨骼")]
+        radii = _effective_radii(rule)
+        for point_index, point in enumerate(_authored_points(rule), start=1):
+            weight = _display_rbf_weight(rule, point, armature)
+            state = "启用" if point.enabled and (weight or 0.0) > 0.001 else "待命"
+            lines.append(
+                (f"{point.bs_name}  ",
+                 f"{state}  范围 {math.degrees(radii[point_index]):.1f}°  "
+                 f"目标 {point.weight:.2f}  当前 RBF {(weight or 0.0):.3f}")
+            )
+        font_id = 0
+        begin_hud(font_id, size=14, shadow=True)
+        draw_hud_lines(font_id, 20.0, 42.0, lines, line_height=20)
+        end_hud(font_id, shadow=True)
+
+
 def _active_rule(context):
-    settings = settings_for(context.object) if context.object else None
+    return _active_rule_for_armature(getattr(context, "object", None))
+
+
+def _active_rule_for_armature(armature):
+    settings = settings_for(armature) if armature else None
     return settings.rules[min(settings.active_index, len(settings.rules) - 1)] if settings and settings.rules else None
 
 
@@ -816,6 +1110,7 @@ def _add_point(armature, rule, pose):
     point = rule.pose_points.add()
     point.id = uuid.uuid4().hex
     point.x, point.y, point.z = pose
+    point.radius = math.radians(30.0)
     point.bs_name = ""
     point.bs_name = _next_bs_name(settings_for(armature))
     rule.pose_active_index = len(rule.pose_points) - 1
@@ -825,7 +1120,7 @@ def _add_point(armature, rule, pose):
 class _ArmatureOperator:
     @classmethod
     def poll(cls, context):
-        return context.object is not None and context.object.type == "ARMATURE"
+        return _context_armature(context) is not None
 
 
 class OP_BsCorrectiveSelectBone(_ArmatureOperator, Operator):
@@ -835,6 +1130,7 @@ class OP_BsCorrectiveSelectBone(_ArmatureOperator, Operator):
     bl_options = {"REGISTER", "UNDO"}
     index: bpy.props.IntProperty(default=-1, min=-1) # type: ignore
     extend: BoolProperty(default=False, options={"SKIP_SAVE"}) # type: ignore
+    armature_name: StringProperty(default="", options={"SKIP_SAVE"})  # type: ignore
 
     def invoke(self, context, event):
         self.extend = bool(event.shift)
@@ -843,7 +1139,7 @@ class OP_BsCorrectiveSelectBone(_ArmatureOperator, Operator):
     def execute(self, context):
         from ..Utils.bone_selection import select_bones
 
-        armature = context.object
+        armature = _operator_armature(self, context)
         settings = settings_for(armature)
         if settings is None or not 0 <= self.index < len(settings.rules):
             return {"CANCELLED"}
@@ -872,6 +1168,7 @@ class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
     kind: bpy.props.EnumProperty(items=[(x, x, "") for x in ("RULES", "OBJECTS", "POINTS")]) # type: ignore
     action: bpy.props.EnumProperty(items=[(x, x, "") for x in ("ADD", "REMOVE", "CLEAR", "UP", "DOWN", "ENABLE", "DISABLE")]) # type: ignore
     index: bpy.props.IntProperty(default=-1) # type: ignore
+    armature_name: StringProperty(default="", options={"SKIP_SAVE"})  # type: ignore
 
     @classmethod
     def description(cls, context, properties):
@@ -883,9 +1180,9 @@ class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
         return action + kind
 
     def execute(self, context):
-        armature = context.object
+        armature = _operator_armature(self, context)
         settings = settings_for(armature)
-        rule = _active_rule(context)
+        rule = _active_rule_for_armature(armature)
         if self.kind != "RULES" and rule is None:
             return {"CANCELLED"}
         collection, owner, index_property = {
@@ -903,7 +1200,10 @@ class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
                 if self.kind == "RULES":
                     item = collection.add()
                     item.id = uuid.uuid4().hex
-                    bone = context.active_pose_bone or context.active_bone
+                    bone = (
+                        context.active_pose_bone or context.active_bone
+                        if getattr(context, "object", None) is armature else None
+                    )
                     if bone:
                         item.bone = bone.name
                     _ensure_base_point(item)
@@ -963,16 +1263,18 @@ class OP_BsCorrectivePose(_ArmatureOperator, Operator):
     bl_description = "预览该修型姿势；只修改参考骨骼的局部旋转"
     bl_options = {"REGISTER", "UNDO"}
     index: bpy.props.IntProperty(default=-1, min=-1) # type: ignore
+    armature_name: StringProperty(default="", options={"SKIP_SAVE"})  # type: ignore
 
     def execute(self, context):
-        rule = _active_rule(context)
+        armature = _operator_armature(self, context)
+        rule = _active_rule_for_armature(armature)
         if rule is None or not rule.pose_points:
             return {"CANCELLED"}
         index = self.index if self.index >= 0 else min(rule.pose_active_index, len(rule.pose_points) - 1)
         if not 0 <= index < len(rule.pose_points):
             return {"CANCELLED"}
         point = rule.pose_points[index]
-        bone = context.object.pose.bones.get(rule.bone)
+        bone = armature.pose.bones.get(rule.bone)
         if bone is None:
             self.report({"ERROR"}, "请先指定参考骨骼")
             return {"CANCELLED"}
@@ -1006,7 +1308,9 @@ class _BatchRuleOperator(_ArmatureOperator):
             self.layout.label(text="关闭覆盖将保留已有 BS 的修型数据。")
 
     def indices(self, context):
-        return None if self.all_rules else [settings_for(context.object).active_index]
+        armature = _operator_armature(self, context)
+        settings = settings_for(armature)
+        return None if self.all_rules else [settings.active_index]
 
 
 class OP_BsCorrectiveGenerateDrivers(_BatchRuleOperator, Operator):
@@ -1015,13 +1319,20 @@ class OP_BsCorrectiveGenerateDrivers(_BatchRuleOperator, Operator):
     bl_description = "只更新已有目标形态键的驱动器；Shift 点击确认批量处理全部规则"
     bl_options = {"REGISTER", "UNDO"}
     all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
+    armature_name: StringProperty(default="", options={"SKIP_SAVE"})  # type: ignore
 
     def execute(self, context):
+        armature = _operator_armature(self, context)
+        warnings = []
         try:
-            count = generate_native_drivers(context.object, self.indices(context))
+            count = generate_native_drivers(armature, self.indices(context), warnings)
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
+        for warning in warnings[:8]:
+            self.report({"WARNING"}, warning)
+        if len(warnings) > 8:
+            self.report({"WARNING"}, f"另有 {len(warnings) - 8} 条刷新警告，详见控制台")
         self.report({"INFO"}, f"已刷新 {count} 条 BS 驱动器")
         return {"FINISHED"}
 
@@ -1048,10 +1359,12 @@ class OP_BsCorrectiveReset(_BatchRuleOperator, Operator):
     bl_options = {"REGISTER", "UNDO"}
     all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
     overwrite_existing: BoolProperty(name="覆盖同名形态键", default=True) # type: ignore
+    armature_name: StringProperty(default="", options={"SKIP_SAVE"})  # type: ignore
 
     def execute(self, context):
+        armature = _operator_armature(self, context)
         try:
-            count = reset_correctives(context.object, self.overwrite_existing, self.indices(context))
+            count = reset_correctives(armature, self.overwrite_existing, self.indices(context))
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
@@ -1059,57 +1372,89 @@ class OP_BsCorrectiveReset(_BatchRuleOperator, Operator):
         return {"FINISHED"}
 
 
-def _list_button(layout, kind, action, icon, index=-1):
+def _list_button(layout, kind, action, icon, index=-1, armature=None):
     operator = layout.operator(OP_BsCorrectiveListEdit.bl_idname, text="", icon=icon)
     operator.kind, operator.action, operator.index = kind, action, index
+    if armature is not None:
+        operator.armature_name = armature.name
     return operator
 
 
-def _draw_list(layout, list_type, owner, collection, active, kind, rows=4):
+def _draw_list(layout, list_type, owner, collection, active, kind, rows=4, armature=None):
     row = layout.row()
     row.template_list(list_type.__name__, kind, owner, collection, owner, active, rows=rows)
     buttons = row.column(align=True)
-    _list_button(buttons, kind, "ADD", "ADD")
-    _list_button(buttons, kind, "REMOVE", "REMOVE")
-    _list_button(buttons, kind, "CLEAR", "TRASH")
+    _list_button(buttons, kind, "ADD", "ADD", armature=armature)
+    _list_button(buttons, kind, "REMOVE", "REMOVE", armature=armature)
+    _list_button(buttons, kind, "CLEAR", "TRASH", armature=armature)
     if kind == "RULES":
         buttons.separator()
-        _list_button(buttons, kind, "ENABLE", "CHECKBOX_HLT")
-        _list_button(buttons, kind, "DISABLE", "CHECKBOX_DEHLT")
+        _list_button(buttons, kind, "ENABLE", "CHECKBOX_HLT", armature=armature)
+        _list_button(buttons, kind, "DISABLE", "CHECKBOX_DEHLT", armature=armature)
     buttons.separator()
-    _list_button(buttons, kind, "UP", "TRIA_UP")
-    _list_button(buttons, kind, "DOWN", "TRIA_DOWN")
+    _list_button(buttons, kind, "UP", "TRIA_UP", armature=armature)
+    _list_button(buttons, kind, "DOWN", "TRIA_DOWN", armature=armature)
 
 
-def draw_bs_corrective_header(layout, context):
+def draw_bs_corrective_header(layout, context, armature=None):
     """Keep the shared enable switch accessible in collapsed overview headers."""
-    armature = context.object
+    armature = armature if armature is not None else context.object
     if armature is not None and armature.type == "ARMATURE":
         settings = settings_for(armature)
         if settings is not None:
             layout.prop(settings, "enabled", text="")
 
 
-def draw_bs_corrective_menu(layout, context):
+def draw_bs_corrective_menu(layout:bpy.types.UILayout, context, armature=None):
     """One native three-list controller shared by Armature Properties and N-panel."""
-    armature = context.object
+    armature = armature if armature is not None else context.object
     if armature is None or armature.type != "ARMATURE":
         layout.label(text="请选择骨架", icon="INFO")
         return
     settings = settings_for(armature)
-    rule = _active_rule(context)
+    rule = _active_rule_for_armature(armature)
     actions = layout.row(align=True)
     actions.enabled = rule is not None
-    actions.operator(OP_BsCorrectiveReset.bl_idname, text="重置规则", icon="FILE_REFRESH")
-    actions.operator(OP_BsCorrectiveGenerateDrivers.bl_idname, text="刷新驱动", icon="DRIVER")
+    eye = actions.row(align=True)
+    if settings.preview_enabled:
+        eye.alert = True
+    eye.prop(
+        settings,
+        "preview_enabled",
+        text="",
+        icon="HIDE_OFF" if settings.preview_enabled else "HIDE_ON",
+        emboss=False,
+    )
+    eye.alert = False
+
+    reset = actions.operator(OP_BsCorrectiveReset.bl_idname, text="重置规则", icon="FILE_REFRESH")
+    reset.armature_name = armature.name
+    refresh = actions.operator(OP_BsCorrectiveGenerateDrivers.bl_idname, text="刷新驱动", icon="DRIVER")
+    refresh.armature_name = armature.name
     top = layout.split(factor=0.72)
     left, right = top.column(), top.column()
-    _draw_list(left, HO_UL_BsCorrectiveRule, settings, "rules", "active_index", "RULES", rows=7)
+    _draw_list(left, HO_UL_BsCorrectiveRule, settings, "rules", "active_index", "RULES", rows=7, armature=armature)
     if rule is None:
         right.label(text="添加规则后，摆姿态并添加修型姿势。", icon="INFO")
         return
-    _draw_list(right, HO_UL_BsCorrectiveInfluence, rule, "influence_objects", "influence_active_index", "OBJECTS", rows=7)
-    _draw_list(layout, HO_UL_BsCorrectivePoint, rule, "pose_points", "pose_active_index", "POINTS")
+    _draw_list(right, HO_UL_BsCorrectiveInfluence, rule, "influence_objects", "influence_active_index", "OBJECTS", rows=7, armature=armature)
+    _draw_list(layout, HO_UL_BsCorrectivePoint, rule, "pose_points", "pose_active_index", "POINTS", armature=armature)
+
+
+def draw_bs_corrective_npanel(layout, context):
+    """Draw the RBF N-panel against an explicitly selected armature object."""
+    armature = getattr(context.scene, "hotools_bs_corrective_view_armature", None)
+    header, body = layout.panel("hotools_bs_corrective_npanel", default_closed=False)
+    draw_bs_corrective_header(header, context, armature=armature)
+    header.label(text="修型总览", icon="SHAPEKEY_DATA")
+    selector = header.row(align=True)
+    selector.label(text="查看骨架")
+    selector.prop(context.scene, "hotools_bs_corrective_view_armature", text="", icon="ARMATURE_DATA")
+    if body is not None:
+        if armature is None or getattr(armature, "type", None) != "ARMATURE":
+            body.label(text="请选择骨架", icon="INFO")
+            return
+        draw_bs_corrective_menu(body, context, armature=armature)
 
 
 def draw_bs_corrective_panel(layout, context):
@@ -1133,6 +1478,9 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Object.hotools_bs_corrective = PointerProperty(type=PG_BsCorrectiveSettings)
+    bpy.types.Scene.hotools_bs_corrective_view_armature = PointerProperty(
+        name="查看骨架", type=bpy.types.Object, poll=_armature_object_poll
+    )
     for handlers in (bpy.app.handlers.load_post, bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
         if _restore_driver_namespace not in handlers:
             handlers.append(_restore_driver_namespace)
@@ -1140,11 +1488,14 @@ def register():
 
 
 def unregister():
+    BsCorrectivePreview.shutdown()
     for handlers in (bpy.app.handlers.load_post, bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
         if _restore_driver_namespace in handlers:
             handlers.remove(_restore_driver_namespace)
     _unregister_driver_namespace()
     if hasattr(bpy.types.Object, "hotools_bs_corrective"):
         del bpy.types.Object.hotools_bs_corrective
+    if hasattr(bpy.types.Scene, "hotools_bs_corrective_view_armature"):
+        del bpy.types.Scene.hotools_bs_corrective_view_armature
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

@@ -57,9 +57,9 @@ def run(point_count, copies):
             return hit[1]
         value = 0
         counts[0] += 1
-        for p, c in zip(legacy_positions, legacy_rows[task_id]):
+        for index, (p, c) in enumerate(zip(legacy_positions, legacy_rows[task_id])):
             distance = sum(bs._shortest_angle(current[i] - p[i]) ** 2 for i in range(3))
-            value += c * math.exp(-distance * item[3])
+            value += c * math.exp(-distance * item[3][index])
         value = min(max(float(value), 0), 1)
         legacy_cache[task_id] = (current, value)
         return value

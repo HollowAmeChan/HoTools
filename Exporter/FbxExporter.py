@@ -2352,7 +2352,7 @@ class FBXExporter:
             "poseSpace": "LOCAL",
             "rotationOrder": "XYZ",
             "angleUnit": "radian",
-            "kernel": "gaussian",
+            "kernel": "gaussian-local",
             "fbxBoneAxes": "Y_X",
             "measurement": "source_local_rotation",
             "rules": rules,

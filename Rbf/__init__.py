@@ -34,7 +34,7 @@ class PL_Rbf(Panel):
         if context.scene.ho_RbfPanel_Mod == "PANEL_RBF_TRANSFER":
             transfer.drawRbfTransferPanel(self.layout, context)
         elif context.scene.ho_RbfPanel_Mod == "PANEL_RBF_CORRECTIVE":
-            bs_corrective.draw_bs_corrective_panel(self.layout, context)
+            bs_corrective.draw_bs_corrective_npanel(self.layout, context)
         return
 
 

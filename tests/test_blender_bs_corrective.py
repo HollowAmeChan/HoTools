@@ -8,6 +8,7 @@ import math
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 from pathlib import Path
 
 import bpy
@@ -61,9 +62,16 @@ def list_edit(kind, action, **kwargs):
 
 
 arm, coat, trim = build_scene()
+view_context = SimpleNamespace(object=coat, scene=bpy.context.scene)
+bpy.context.scene.hotools_bs_corrective_view_armature = arm
+assert bs._context_armature(view_context) is arm
+assert bs._operator_armature(SimpleNamespace(armature_name=arm.name), view_context) is arm
 assert list_edit("RULES", "ADD") == {"FINISHED"}
 settings = arm.hotools_bs_corrective
 rule = settings.rules[0]
+assert bs._owner_armature(settings, view_context) is arm
+assert bs._owner_armature(rule, view_context) is arm
+assert bs.BsCorrectivePreview._color(0.0, True, 0.8)[3] > bs.BsCorrectivePreview._color(0.0, True, 0.1)[3]
 rule.bone = "Main"
 for mesh in (coat, trim):
     assert list_edit("OBJECTS", "ADD") == {"FINISHED"}
@@ -75,6 +83,8 @@ p1 = bs._add_point(arm, rule, (0.8, 0.15, -0.1))
 p2 = bs._add_point(arm, rule, (-0.5, 0.4, 0.2))
 first_id, second_id, rule_id = p1.id, p2.id, rule.id
 assert p1.bs_name == "_BSC_pose1" and p2.bs_name == "_BSC_pose2"
+assert abs(p1.radius - math.radians(30.0)) < 1e-6
+assert abs(p2.radius - math.radians(30.0)) < 1e-6
 rule.pose_active_index = 2
 assert rule.pose_active_index == 2
 assert bs.reset_correctives(arm) == 4
@@ -122,9 +132,22 @@ rule.rbf_radius = 1.0
 bs.generate_native_drivers(arm)
 updated = bs._driver_namespace_rbf(rule_id, first_id, 0.4, 0.1, 0)
 assert abs(updated - previous) > 1e-4, (updated, previous)
+# Explicit point radii narrow/widen individual Gaussian centers and invalidate
+# the serialized driver payload without changing the authored rule radius.
+p1.radius, p2.radius = math.radians(12), math.radians(42)
+bs.generate_native_drivers(arm)
+local_payload = bs._decode_rbf_payload(rule.driver_payload)
+assert abs(local_payload[0][1][0] - p1.x) < 1e-8
+assert abs(1.0 / math.sqrt(2.0 * local_payload[3][1]) - p1.radius) < 1e-8
+local_value = bs._driver_namespace_rbf(rule_id, first_id, 0.4, 0.1, 0)
+p1.radius = math.radians(25)
+bs.generate_native_drivers(arm)
+changed_local_value = bs._driver_namespace_rbf(rule_id, first_id, 0.4, 0.1, 0)
+assert abs(changed_local_value - local_value) > 1e-4, (changed_local_value, local_value)
 bs._evaluate_rbf_outputs = original_evaluate
 bs._RBF_RUNTIME["wrap-test"] = bs._decode_rbf_payload(json.dumps({
     "positions": [[0, 0, 0], [math.radians(179), 0, 0]],
+    "radii": [math.radians(10), math.radians(10)],
     "coefficients": {"wrap-task": [0, 1]}, "radius": math.radians(10),
 }))
 assert bs._driver_namespace_rbf("wrap-test", "wrap-task", math.radians(-179), 0, 0) > 0.95
@@ -189,15 +212,26 @@ assert len(coat.data.shape_keys.animation_data.drivers) == 2
 p2.bs_name = name
 pose2 = (p2.x, p2.y, p2.z)
 p2.x, p2.y, p2.z = p1.x, p1.y, p1.z
-raises(lambda: bs.generate_native_drivers(arm), "duplicate RBF point accepted")
+warnings = []
+assert bs.generate_native_drivers(arm, warnings=warnings) == 0
+assert warnings and "控制点过近" in warnings[0]
 assert len(coat.data.shape_keys.animation_data.drivers) == 2
 p2.x, p2.y, p2.z = pose2
+# A missing key only skips that target; the other rule meshes still refresh.
+broken = mesh_object("Broken")
+rule.influence_objects.add().mesh = broken
+warnings = []
+assert bs.generate_native_drivers(arm, warnings=warnings) == 4
+assert any("找不到形态键" in warning for warning in warnings)
+rule.influence_objects.remove(len(rule.influence_objects) - 1)
 # Refresh protects foreign drivers; reset with overwrite explicitly replaces them.
 foreign = coat.shape_key_add(name="Foreign")
 foreign.driver_add("value").driver.expression = "0.25"
 old_shape = p1.bs_name
 p1.bs_name = "Foreign"
-raises(lambda: bs.generate_native_drivers(arm), "foreign driver accepted")
+warnings = []
+assert bs.generate_native_drivers(arm, warnings=warnings) == 2
+assert any("其他驱动器" in warning for warning in warnings)
 assert bs.reset_correctives(arm, overwrite=True) == 4
 p1.bs_name = old_shape
 assert bs.reset_correctives(arm, overwrite=True) == 4
@@ -218,19 +252,20 @@ p1.enabled = False
 p2.weight = 0.4
 config = bs.build_export_config(arm, measurement_bones={"Main": "MCH_Main"})
 exported = config["rules"][0]
-assert config["version"] == 3 and config["poseSpace"] == "LOCAL"
+assert config["version"] == 4 and config["poseSpace"] == "LOCAL"
 assert exported["measurementBone"] == "MCH_Main"
 assert exported["rbf"]["includeBase"] and exported["rbf"]["basePose"] == [0, 0, 0]
 assert len(exported["rbf"]["controlPoints"]) == 2
 assert len(exported["tasks"]) == 2
 assert {task["pointId"] for task in exported["tasks"]} == {point["id"] for point in exported["rbf"]["controlPoints"]}
 assert all("enabled" in task and "weight" in task for task in exported["tasks"])
+assert abs(exported["rbf"]["controlPoints"][0]["radius"] - p1.radius) < 1e-6
 assert next(task for task in exported["tasks"] if task["pointId"] == p1.id)["enabled"] is False
 close(next(task for task in exported["tasks"] if task["pointId"] == p2.id)["weight"], 0.4)
 assert len(exported["influenceObjects"]) == 2
 p1.enabled = True
 p2.weight = 1.0
-raises(lambda: bs._decode_rbf_payload('{"positions":[[0,0,0]],"coefficients":{"x":[1,2]},"radius":1}'), "bad coefficient length accepted")
+raises(lambda: bs._decode_rbf_payload('{"positions":[[0,0,0]],"radii":[1],"coefficients":{"x":[1,2]},"radius":1}'), "bad coefficient length accepted")
 
 # The namespace and its serialized coefficients survive a real .blend reload.
 bs.generate_native_drivers(arm)
@@ -265,8 +300,8 @@ start = time.perf_counter()
 for pose in rng.uniform(-math.pi, math.pi, (100, 3)):
     expected = []
     for row in item[2]:
-        expected.append(min(max(sum(c * math.exp(-sum(bs._shortest_angle(a-b)**2 for a,b in zip(pose,p)) * item[3])
-                                   for p,c in zip(item[0], row)), 0), 1))
+        expected.append(min(max(sum(c * math.exp(-sum(bs._shortest_angle(a-b)**2 for a,b in zip(pose,p)) * item[3][index])
+                                   for index, (p,c) in enumerate(zip(item[0], row))), 0), 1))
     actual = [bs._driver_namespace_rbf(large.id, point.id, *pose) for point in bs._authored_points(large)]
     assert np.max(np.abs(np.asarray(actual) - expected)) < 1e-10
 print("RBF_SHARED_CACHE_24_OUTPUTS_OK", round((time.perf_counter()-start)*1000, 2), "ms including scalar reference")
@@ -290,7 +325,6 @@ bs.remove_native_drivers(arm, [0])
 assert rule.id not in bs._RBF_RUNTIME and "batch-test" in bs._RBF_RUNTIME
 assert bpy.ops.hotools.bs_corrective_generate_drivers(all_rules=True) == {"FINISHED"}
 assert rule.id in bs._RBF_RUNTIME and "batch-test" in bs._RBF_RUNTIME
-from types import SimpleNamespace
 dialogs = []
 fake_context = SimpleNamespace(window_manager=SimpleNamespace(invoke_props_dialog=lambda op, **kw: dialogs.append(op.all_rules) or {"RUNNING_MODAL"}))
 for operator_type in (bs.OP_BsCorrectiveReset, bs.OP_BsCorrectiveGenerateDrivers):
