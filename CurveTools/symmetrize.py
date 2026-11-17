@@ -296,95 +296,64 @@ def _mirror_curve_record(record, spline_type, component):
     return mirrored
 
 
-def _prune_unpaired_curve_targets(obj, direction, threshold):
-    """Remove target-side controls that have no source counterpart.
+def _mirrored_center_record(point, spline_type, component):
+    """Normalize a center control and make its handles tangent-symmetric."""
+    record = _curve_point_record(point, spline_type)
+    record['co'][component] = 0.0
+    if spline_type == 'BEZIER':
+        left = record['handle_left']
+        right = record['handle_right']
+        record['handle_left'] = _mirror_vector(right, component)
+        record['handle_right'] = _mirror_vector(left, component)
+        record['handle_left_type'], record['handle_right_type'] = (
+            record['handle_right_type'],
+            record['handle_left_type'],
+        )
+    return record
 
-    Blender's default mesh symmetrize replaces the target side, so an extra
-    target vertex is removed instead of being left as an unmatched duplicate.
-    Curve collections have no point-level remove API; rebuild only when such
-    extras exist, preserving all spline and point settings.
+
+def _mixed_curve_records(spline, points, source_indices, target_indices,
+                         center_indices, component):
+    """Build one spline whose target controls are a reflected source copy.
+
+    A curve has no point-level remove/insert API. Rebuilding the mixed spline
+    lets symmetry replace an existing target half even when its control count
+    differs from the source half, which is the behavior users expect from a
+    mesh symmetrize operation.
     """
-    direction_name, axis = direction.split('_', 1)
-    component = 'XYZ'.index(axis)
-    source_sign = 1 if direction_name == 'POSITIVE' else -1
-    snapshots = []
-    changed = False
-    for spline in list(obj.data.splines):
-        spline_type = spline.type
-        if spline_type == 'BEZIER':
-            points = list(spline.bezier_points)
-        elif spline_type in {'POLY', 'NURBS'}:
-            points = list(spline.points)
-        else:
-            continue
+    source_records = {
+        index: _curve_point_record(points[index], spline.type)
+        for index in source_indices
+    }
+    source = [source_records[index] for index in source_indices]
+    mirrored = [
+        _mirror_curve_record(source_records[index], spline.type, component)
+        for index in reversed(source_indices)
+    ]
+    centers = [
+        _mirrored_center_record(points[index], spline.type, component)
+        for index in center_indices
+    ]
 
-        source_indices = [
-            index for index, point in enumerate(points)
-            if float(point.co[component]) * source_sign > threshold
-        ]
-        target_sources = {}
-        for source_index in source_indices:
-            target_index = len(points) - 1 - source_index
-            if target_index == source_index:
-                continue
-            target = points[target_index]
-            if float(target.co[component]) * source_sign <= threshold:
-                target_sources[target_index] = source_index
+    if spline.use_cyclic_u:
+        # Cyclic paths have no fixed beginning. Keep the source run in its
+        # current order and append its reflected run as the other half.
+        return source + centers + mirrored
 
-        remove_indices = {
-            index
-            for index, point in enumerate(points)
-            if float(point.co[component]) * source_sign < -threshold
-            and index not in target_sources
-        }
-        if not remove_indices:
-            snapshots.append({
-                'type': spline_type,
-                'points': [_curve_point_record(point, spline_type) for point in points],
-                'active': spline == obj.data.splines.active,
-                'settings': {
-                    name: getattr(spline, name)
-                    for name in _SPLINE_SETTINGS
-                    if hasattr(spline, name)
-                },
-            })
-            continue
+    first_source = min(source_indices)
+    first_target = min(target_indices)
+    last_source = max(source_indices)
+    last_target = max(target_indices)
+    if last_target < first_source:
+        return mirrored + centers + source
+    if last_source < first_target:
+        return source + centers + mirrored
 
-        changed = True
-        records = []
-        source_records = {
-            index: _curve_point_record(points[index], spline_type)
-            for index in source_indices
-        }
-        for index, point in enumerate(points):
-            if index in remove_indices:
-                continue
-            source_index = target_sources.get(index)
-            if source_index is not None:
-                records.append(
-                    _mirror_curve_record(
-                        source_records[source_index], spline_type, component
-                    )
-                )
-            else:
-                record = _curve_point_record(point, spline_type)
-                if abs(float(point.co[component])) <= threshold:
-                    record['co'][component] = 0.0
-                records.append(record)
-        snapshots.append({
-            'type': spline_type,
-            'points': records,
-            'active': spline == obj.data.splines.active,
-            'settings': {
-                name: getattr(spline, name)
-                for name in _SPLINE_SETTINGS
-                if hasattr(spline, name)
-            },
-        })
-
-    if changed:
-        _rebuild_curve_splines(obj.data, snapshots)
-    return changed
+    # Non-contiguous side labels are unusual, but preserving the first side's
+    # order gives a deterministic result for hand-edited or self-crossing paths.
+    if first_source < first_target:
+        return source + centers + mirrored
+    return mirrored + centers + source
 
 
 def _curve_symmetrize(obj, direction, threshold, partial, remove):
@@ -406,9 +375,7 @@ def _curve_symmetrize(obj, direction, threshold, partial, remove):
     skipped = []
     opposite_only_splines = []
 
-    if not partial:
-        _prune_unpaired_curve_targets(obj, direction, threshold)
-
+    mixed_snapshots = []
     for spline in list(obj.data.splines):
         spline_type = spline.type
         if spline_type == 'BEZIER':
@@ -418,51 +385,33 @@ def _curve_symmetrize(obj, direction, threshold, partial, remove):
         else:
             continue
 
-        snapshots = []
         source_indices = []
+        target_indices = []
+        center_indices = []
         opposite_count = 0
         for index, point in enumerate(points):
             value = float(point.co[component])
             if abs(value) <= threshold:
-                point.co[component] = 0.0
-                if spline_type == 'BEZIER':
-                    left = point.handle_left.copy()
-                    right = point.handle_right.copy()
-                    left_type = point.handle_left_type
-                    point.handle_left = _mirror_vector(right, component)
-                    point.handle_right = _mirror_vector(left, component)
-                    point.handle_left_type = point.handle_right_type
-                    point.handle_right_type = left_type
+                center_indices.append(index)
                 continue
             if value * source_sign <= 0.0:
                 if value * source_sign < -threshold:
                     opposite_count += 1
+                    target_indices.append(index)
                 continue
             if partial and not _curve_point_selected(point, spline_type):
                 continue
             source_indices.append(index)
-            target_index = len(points) - 1 - index
-            if target_index == index:
-                continue
-            target = points[target_index]
-            target_value = float(target.co[component])
-            if target_value * source_sign > threshold:
-                skipped.append((spline, index))
-                continue
-            if spline_type == 'BEZIER':
-                snapshots.append(
-                    (
-                        index,
-                        target_index,
-                        point.co.copy(),
-                        point.handle_left.copy(),
-                        point.handle_right.copy(),
-                        point.handle_left_type,
-                        point.handle_right_type,
-                    )
+
+        # Mixed full-mode splines are rebuilt below so their center records
+        # can be copied once. Every other path keeps the historical in-place
+        # center normalization.
+        if partial or not (source_indices and target_indices):
+            for index in center_indices:
+                record = _mirrored_center_record(
+                    points[index], spline_type, component
                 )
-            else:
-                snapshots.append((index, target_index, point.co.copy()))
+                _restore_curve_point(points[index], spline_type, record)
 
         if source_indices and opposite_count == 0:
             _mirror_curve_spline(
@@ -484,6 +433,58 @@ def _curve_symmetrize(obj, direction, threshold, partial, remove):
             affected.extend((spline, index) for index, point in enumerate(points)
                             if float(point.co[component]) * source_sign < -threshold)
             continue
+
+        if not partial and source_indices and target_indices:
+            records = _mixed_curve_records(
+                spline,
+                points,
+                source_indices,
+                target_indices,
+                center_indices,
+                component,
+            )
+            mixed_snapshots.append({
+                'key': spline.as_pointer(),
+                'type': spline_type,
+                'points': records,
+                'active': spline == obj.data.splines.active,
+                'settings': {
+                    name: getattr(spline, name)
+                    for name in _SPLINE_SETTINGS
+                    if hasattr(spline, name)
+                },
+            })
+            affected.extend((spline, index) for index in source_indices)
+            continue
+
+        # Partial mode keeps the existing topology and updates only selected
+        # source controls. It is intentionally separate from the full rebuild
+        # above so unselected target controls remain untouched.
+        snapshots = []
+        for index in source_indices:
+            target_index = len(points) - 1 - index
+            if target_index == index:
+                continue
+            target = points[target_index]
+            target_value = float(target.co[component])
+            if target_value * source_sign > threshold:
+                skipped.append((spline, index))
+                continue
+            point = points[index]
+            if spline_type == 'BEZIER':
+                snapshots.append(
+                    (
+                        index,
+                        target_index,
+                        point.co.copy(),
+                        point.handle_left.copy(),
+                        point.handle_right.copy(),
+                        point.handle_left_type,
+                        point.handle_right_type,
+                    )
+                )
+            else:
+                snapshots.append((index, target_index, point.co.copy()))
 
         for snapshot in snapshots:
             if spline_type == 'BEZIER':
@@ -508,8 +509,38 @@ def _curve_symmetrize(obj, direction, threshold, partial, remove):
                 target.co = _mirror_vector(source_co, component)
             affected.append((spline, target_index))
 
-    for spline in opposite_only_splines:
-        obj.data.splines.remove(spline)
+    if mixed_snapshots:
+        replacements = {snapshot['key']: snapshot for snapshot in mixed_snapshots}
+        snapshots = []
+        opposite_keys = {spline.as_pointer() for spline in opposite_only_splines}
+        for spline in list(obj.data.splines):
+            spline_key = spline.as_pointer()
+            if spline_key in opposite_keys:
+                continue
+            replacement = replacements.get(spline_key)
+            if replacement is not None:
+                snapshots.append(replacement)
+                continue
+            spline_type = spline.type
+            points = (
+                list(spline.bezier_points)
+                if spline_type == 'BEZIER'
+                else list(spline.points)
+            )
+            snapshots.append({
+                'type': spline_type,
+                'points': [_curve_point_record(point, spline_type) for point in points],
+                'active': spline == obj.data.splines.active,
+                'settings': {
+                    name: getattr(spline, name)
+                    for name in _SPLINE_SETTINGS
+                    if hasattr(spline, name)
+                },
+            })
+        _rebuild_curve_splines(obj.data, snapshots)
+    else:
+        for spline in opposite_only_splines:
+            obj.data.splines.remove(spline)
 
     obj.data.update_tag()
     return {
