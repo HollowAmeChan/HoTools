@@ -128,3 +128,103 @@ bpy.data.objects.remove(obj, do_unlink=True)
 bpy.data.meshes.remove(mesh)
 
 print("SLIDE_CUT_OK")
+
+# Default sliding must not inspect an unselected opposite rail.  The Boolean
+# seam below has sharp adjacent normals, which used to trigger that lookup even
+# with the edge-rail option disabled.
+rail_mesh = bpy.data.meshes.new("SlideCutSharpRail")
+rail_mesh.from_pydata(
+    [
+        (-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0),
+        (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1),
+    ],
+    [],
+    [
+        (0, 1, 2, 3), (4, 7, 6, 5),
+        (0, 4, 5, 1), (1, 5, 6, 2),
+        (2, 6, 7, 3), (3, 7, 4, 0),
+    ],
+)
+rail_keys = {(4, 5), (5, 6), (6, 7), (4, 7)}
+original_get_edge_rail = cut.get_edge_rail
+rail_calls = []
+
+
+def record_edge_rail(*args, **kwargs):
+    rail_calls.append(True)
+    return original_get_edge_rail(*args, **kwargs)
+
+
+cut.get_edge_rail = record_edge_rail
+try:
+    cut._build_offset_infos(
+        rail_mesh,
+        None,
+        rail_keys,
+        True,
+        False,
+        False,
+        0.05,
+    )
+finally:
+    cut.get_edge_rail = original_get_edge_rail
+    bpy.data.meshes.remove(rail_mesh)
+assert not rail_calls, "默认滑切不应吸附未选中的对侧边轨"
+
+# A Boolean union produces a deliberately ugly seam: triangles, quads and
+# n-gons meet along the same sharp edge component.  The support cut may create
+# geometry on both sides of the seam, but the selected result must expose one
+# connected loop; the opposite side must not be selected as a second loop.
+bpy.ops.wm.read_factory_settings(use_empty=True)
+
+
+def boolean_sphere(name, location):
+    bpy.ops.mesh.primitive_uv_sphere_add(
+        segments=16,
+        ring_count=10,
+        location=location,
+    )
+    obj = bpy.context.object
+    obj.name = name
+    return obj
+
+
+left = boolean_sphere("SlideCutBooleanLeft", (-0.65, 0.0, 0.0))
+right = boolean_sphere("SlideCutBooleanRight", (0.65, 0.0, 0.0))
+bpy.context.view_layer.objects.active = left
+modifier = left.modifiers.new("BooleanUnion", "BOOLEAN")
+modifier.operation = "UNION"
+modifier.solver = "EXACT"
+modifier.object = right
+bpy.ops.object.modifier_apply(modifier=modifier.name)
+bpy.data.objects.remove(right, do_unlink=True)
+
+boolean_bm = bmesh.new()
+boolean_bm.from_mesh(left.data)
+cut._ensure_tables(boolean_bm)
+sharp_edges = [
+    edge for edge in boolean_bm.edges
+    if len(edge.link_faces) == 2
+    and edge.link_faces[0].normal.angle(edge.link_faces[1].normal) > 0.5
+]
+assert sharp_edges, "Boolean union did not produce a sharp seam"
+selected_component = max(cut._edge_components(sharp_edges), key=len)
+boolean_keys = {cut._edge_key(edge) for edge in selected_component}
+boolean_specs = cut._collect_inner_specs(boolean_bm, boolean_keys)
+boolean_bm.free()
+boolean_cache = cut._build_inner_cut_cache(left.data, boolean_specs, 0.5)
+try:
+    generated_components = selected_components(boolean_cache["bm"])
+    assert len(generated_components) == 1, "Boolean seam cut must select one connected loop"
+    generated = generated_components[0]
+    generated_vertices = {vertex for edge in generated for vertex in edge.verts}
+    assert all(
+        sum(edge in generated for edge in vertex.link_edges) == 2
+        for vertex in generated_vertices
+    ), "Boolean seam cut must be a closed loop without forks"
+    assert all(edge.is_manifold for edge in generated), "Boolean seam cut must split real faces"
+finally:
+    cut._free_inner_cut_cache(boolean_cache)
+    bpy.data.objects.remove(left, do_unlink=True)
+
+print("SLIDE_CUT_BOOLEAN_OK")

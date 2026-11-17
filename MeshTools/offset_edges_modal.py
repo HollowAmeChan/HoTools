@@ -213,9 +213,11 @@ def get_directions(loop, upward, normal_fallback, _mirror_pairs, **options):
         tangent = (tangent_right + tangent_left).normalized()
         normal = (normal_right + normal_left).normalized()
         rail = None
-        if two_normals or edge_rail:
-            if two_normals or not edge_rail_only_end or endpoint:
-                rail = get_edge_rail(vert, selected_edges)
+        # The default preserve-edge path must not borrow an unselected rail
+        # from the opposite side of a sharp Boolean face.  That rail is only
+        # allowed when the user explicitly enables the edge-rail constraint.
+        if edge_rail and (not edge_rail_only_end or endpoint):
+            rail = get_edge_rail(vert, selected_edges)
         if rail is None and two_normals:
             rail = get_cross_rail(
                 tangent, edge_right, edge_left, normal_right, normal_left
@@ -484,55 +486,79 @@ def _find_edge(bm, key):
     )
 
 
+def _edge_components(edges):
+    """Return connected components of an edge collection."""
+    remaining = {edge for edge in edges if edge.is_valid}
+    components = []
+    while remaining:
+        seed = min(remaining, key=lambda edge: edge.index)
+        remaining.remove(seed)
+        component = {seed}
+        pending = [seed]
+        while pending:
+            edge = pending.pop()
+            linked = {
+                other
+                for vertex in edge.verts
+                for other in vertex.link_edges
+                if other in remaining
+            }
+            remaining.difference_update(linked)
+            component.update(linked)
+            pending.extend(linked)
+        components.append(component)
+    return components
+
+
 def _collect_inner_specs(bm, selected_keys):
     specs = []
     visited = set()
     pending = []
     rim_vertices = {index for key in selected_keys for index in key}
     for face in sorted(bm.faces, key=lambda item: item.index):
-        if not face.is_valid or face.hide or len(face.verts) not in {3, 4}:
+        if not face.is_valid or face.hide or len(face.verts) < 3:
             continue
-        selected = [edge for edge in face.edges if _edge_key(edge) in selected_keys]
-        if len(selected) != 1:
+        face_edges = tuple(face.edges)
+        selected_flags = tuple(_edge_key(edge) in selected_keys for edge in face_edges)
+        if not any(selected_flags):
             continue
-        anchor = selected[0]
-        if len(face.verts) == 3:
-            # 三角面没有对边；拆分另外两条边并连接新点，补出支撑边。
-            cross = [edge for edge in face.edges if edge is not anchor]
-        else:
-            opposite = next(
-                (
-                    edge for edge in face.edges
-                    if edge is not anchor
-                    and not any(vertex in anchor.verts for vertex in edge.verts)
-                ),
-                None,
-            )
-            if opposite is None:
+        # Split the face into contiguous runs of selected edges.  A Boolean
+        # face can contain two or more selected edges; treating only the
+        # single-edge case leaves a gap at that corner.  Each run gets one
+        # support segment between the two unselected edges at its ends.
+        edge_count = len(face_edges)
+        runs = []
+        for start in range(edge_count):
+            previous = (start - 1) % edge_count
+            if selected_flags[start] and not selected_flags[previous]:
+                run = []
+                index = start
+                while selected_flags[index]:
+                    run.append(index)
+                    index = (index + 1) % edge_count
+                runs.append((start, index, run))
+        for start, end, _run in runs:
+            before = face_edges[(start - 1) % edge_count]
+            after = face_edges[end % edge_count]
+            if before is after or _edge_key(before) in selected_keys or _edge_key(after) in selected_keys:
                 continue
-            cross = [edge for edge in face.edges if edge not in {anchor, opposite}]
-        if len(cross) != 2:
-            continue
-        cross_specs = []
-        valid = True
-        for edge in cross:
-            endpoint = next(
-                (vertex for vertex in edge.verts if vertex in anchor.verts),
+            start_vertex = next(
+                (vertex for vertex in before.verts if vertex in face_edges[start].verts),
                 None,
             )
-            if endpoint is None:
-                valid = False
-                break
-            cross_specs.append((_edge_key(edge), endpoint.index))
-        if valid:
-            visited.add(face)
-            pending.extend(cross_specs)
-            specs.append(
-                {
-                    "face_ids": tuple(vertex.index for vertex in face.verts),
-                    "cross": tuple(cross_specs),
-                }
+            end_vertex = next(
+                (vertex for vertex in after.verts if vertex in face_edges[(end - 1) % edge_count].verts),
+                None,
             )
+            if start_vertex is None or end_vertex is None:
+                continue
+            visited.add(face)
+            cross_specs = ((_edge_key(before), start_vertex.index), (_edge_key(after), end_vertex.index))
+            pending.extend(cross_specs)
+            specs.append({
+                "face_ids": tuple(vertex.index for vertex in face.verts),
+                "cross": cross_specs,
+            })
 
     # Two rim edges can meet at a fan of triangles or quad corners. Those faces
     # touch the rim only at that vertex, so the edge-adjacent pass above misses
@@ -544,7 +570,7 @@ def _collect_inner_specs(bm, selected_keys):
             continue
         anchor = bm.verts[anchor_id]
         for face in sorted(edge.link_faces, key=lambda item: item.index):
-            if (face in visited or face.hide or len(face.verts) not in {3, 4}
+            if (face in visited or face.hide or len(face.verts) < 3
                     or anchor not in face.verts):
                 continue
             if any(_edge_key(item) in selected_keys for item in face.edges):
@@ -628,6 +654,17 @@ def _build_inner_cut_cache(snapshot, specs, factor):
 
         if not generated:
             raise RuntimeError("no inner loop was created")
+
+        # A closed crease can have one support loop on each side.  Keep both
+        # in the mesh for edge preservation, but select only one connected
+        # loop for the next operation; selecting both makes Blender report a
+        # broken loop on triangulated Boolean surfaces.
+        generated_all = tuple(edge for edge in generated if edge.is_valid)
+        _ensure_tables(bm)
+        components = _edge_components(generated_all)
+        if len(components) > 1:
+            components.sort(key=lambda component: (-len(component), min(edge.index for edge in component)))
+            generated = list(components[0])
         for vertex in bm.verts:
             vertex.select_set(False)
         for face in bm.faces:
@@ -637,7 +674,10 @@ def _build_inner_cut_cache(snapshot, specs, factor):
         for edge in generated:
             edge.select_set(edge.is_valid)
         bm.normal_update()
-        cache = {"bm": bm, "points": tuple(point_sources.values())}
+        cache = {
+            "bm": bm,
+            "points": tuple(point_sources.values()),
+        }
         success = True
         return cache
     finally:
