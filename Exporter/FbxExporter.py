@@ -2328,10 +2328,10 @@ class FBXExporter:
         when the source bone is configured for MCH conversion.
         """
         try:
-            from ..Rbf.bs_corrective import build_export_config
+            from ..Rbf.bs_corrective import build_export_config, SCHEMA, VERSION
         except ImportError:
             # Partial exporter tests load this module as top-level ``Exporter``.
-            from HoTools.Rbf.bs_corrective import build_export_config
+            from HoTools.Rbf.bs_corrective import build_export_config, SCHEMA, VERSION
 
         rules = []
         for armature in armature_objects:
@@ -2347,8 +2347,8 @@ class FBXExporter:
         base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
         json_path = FBXExporter.unity_metadata_path(fbx_filepath, f"{base_name}{suffix}")
         payload = {
-            "schema": "hotools.bs-corrective",
-            "version": 2,
+            "schema": SCHEMA,
+            "version": VERSION,
             "poseSpace": "LOCAL",
             "rotationOrder": "XYZ",
             "angleUnit": "radian",

@@ -1015,7 +1015,7 @@ class PT_Hotools_ArmatureAuxPanel(Panel):
 class PT_Hotools_ArmatureBsCorrectivePanel(Panel):
     """Single Properties-side entry point; the N-panel reuses the same menu."""
     bl_idname = "DATA_PT_Hotools_ArmatureBsCorrectivePanel"
-    bl_label = "HoTools 修型"
+    bl_label = "HoTools 修型总览"
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
     bl_context = "data"
