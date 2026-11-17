@@ -1,4 +1,4 @@
-"""Blender 4.5 integration tests for the four-list BS corrective workflow.
+"""Blender 4.5 integration tests for the pose-centric BS corrective workflow.
 
 Run with --background --factory-startup --enable-autoexec --python this_file.py.
 The tests create their own rig, meshes and .blend; they never touch a user scene.
@@ -65,23 +65,19 @@ assert list_edit("RULES", "ADD") == {"FINISHED"}
 settings = arm.hotools_bs_corrective
 rule = settings.rules[0]
 rule.bone = "Main"
-rule.comment = "Coat corrective · multi-object task"
 for mesh in (coat, trim):
     assert list_edit("OBJECTS", "ADD") == {"FINISHED"}
     rule.influence_objects[-1].mesh = mesh
 assert list_edit("OBJECTS", "UP") == {"FINISHED"}
 assert list_edit("OBJECTS", "DOWN") == {"FINISHED"}
 assert len(rule.pose_points) == 1 and rule.pose_points[0].id == bs._BASE_POINT
-p1, task1 = bs._add_point(arm, rule, (0.8, 0.15, -0.1))
-p2, task2 = bs._add_point(arm, rule, (-0.5, 0.4, 0.2))
-first_id, second_id, rule_id = task1.id, task2.id, rule.id
-assert p1.task_id == first_id and task1.point_id == p1.id
-rule.pose_active_index = 1
-assert rule.task_active_index == 0
-rule.task_active_index = 1
+p1 = bs._add_point(arm, rule, (0.8, 0.15, -0.1))
+p2 = bs._add_point(arm, rule, (-0.5, 0.4, 0.2))
+first_id, second_id, rule_id = p1.id, p2.id, rule.id
+assert p1.bs_name == "_BSC_pose1" and p2.bs_name == "_BSC_pose2"
+rule.pose_active_index = 2
 assert rule.pose_active_index == 2
 assert bs.reset_correctives(arm) == 4
-assert len(rule.tasks[0].targets) == 2
 assert len(arm.data.bones) == 2, "BS must not generate ADIR or other authoring bones"
 for mesh in (coat, trim):
     for fcurve in mesh.data.shape_keys.animation_data.drivers:
@@ -101,7 +97,7 @@ for pose, expected in [((0, 0, 0), (0, 0)), ((p1.x, p1.y, p1.z), (1, 0)), ((p2.x
         bpy.context.view_layer.update()
         for mesh in (coat, trim):
             for index, value in enumerate(expected):
-                close(mesh.data.shape_keys.key_blocks[rule.tasks[index].bs_name].value, value)
+                close(mesh.data.shape_keys.key_blocks[rule.pose_points[index + 1].bs_name].value, value)
             assert all(fc.driver.is_valid for fc in mesh.data.shape_keys.animation_data.drivers)
 
 # Same input, different output drivers: one solve/evaluation of the complete rule.
@@ -113,8 +109,8 @@ def count_evaluate(item, current):
     return original_evaluate(item, current)
 bs._evaluate_rbf_outputs = count_evaluate
 for _ in range(3):
-    for task in rule.tasks:
-        bs._driver_namespace_rbf(rule_id, task.id, 0.4, 0.1, 0)
+    for point in bs._authored_points(rule):
+        bs._driver_namespace_rbf(rule_id, point.id, 0.4, 0.1, 0)
 assert len(calls) == 1, calls
 previous = bs._driver_namespace_rbf(rule_id, first_id, 0.4, 0.1, 0)
 rule.rbf_radius = 1.0
@@ -140,33 +136,26 @@ assert all(fc.mute for fc in coat.data.shape_keys.animation_data.drivers)
 rule.enabled = True
 
 # Reset reuses key identity; unchecked overwrite preserves authored vertex data.
-key = coat.data.shape_keys.key_blocks[task1.bs_name]
+key = coat.data.shape_keys.key_blocks[p1.bs_name]
 key.data[1].co.x = 1.4
 pointer = key.as_pointer()
 assert bs.reset_correctives(arm, overwrite=False) == 4
-key = coat.data.shape_keys.key_blocks[task1.bs_name]
+key = coat.data.shape_keys.key_blocks[p1.bs_name]
 assert key.as_pointer() == pointer
 close(key.data[1].co.x, 1.4)
 assert bs.reset_correctives(arm, overwrite=True) == 4
 close(key.data[1].co.x, 1)
 
-# A task can drive multiple keys on the SAME mesh, plus another mesh.
-coat.shape_key_add(name='Manual "quoted" \\ extra')
-extra = task1.targets.add()
-extra.mesh, extra.shape_key = coat, 'Manual "quoted" \\ extra'
-assert bs.generate_native_drivers(arm) == 5
-assert bs.build_export_config(arm)["rules"][0]["tasks"][0]["targets"][-1]["shapeKey"] == extra.shape_key
-# Retargeting then refreshing must remove the old generated driver.
-task1.targets.remove(len(task1.targets) - 1)
+# Every authored pose drives the same named output on every rule mesh.
 assert bs.generate_native_drivers(arm) == 4
 assert len(coat.data.shape_keys.animation_data.drivers) == 2
 
 # Conflicting names/points must fail before altering keys or existing drivers.
-name = task2.bs_name
-task2.bs_name = task1.bs_name
+name = p2.bs_name
+p2.bs_name = p1.bs_name
 raises(lambda: bs.reset_correctives(arm), "duplicate BS name accepted")
 assert len(coat.data.shape_keys.animation_data.drivers) == 2
-task2.bs_name = name
+p2.bs_name = name
 pose2 = (p2.x, p2.y, p2.z)
 p2.x, p2.y, p2.z = p1.x, p1.y, p1.z
 raises(lambda: bs.generate_native_drivers(arm), "duplicate RBF point accepted")
@@ -175,19 +164,17 @@ p2.x, p2.y, p2.z = pose2
 # Foreign drivers are never overwritten.
 foreign = coat.shape_key_add(name="Foreign")
 foreign.driver_add("value").driver.expression = "0.25"
-old_shape = task1.targets[0].shape_key
-task1.targets[0].shape_key = "Foreign"
+old_shape = p1.bs_name
+p1.bs_name = "Foreign"
 raises(lambda: bs.generate_native_drivers(arm), "foreign driver accepted")
-task1.targets[0].shape_key = old_shape
+p1.bs_name = old_shape
 
 # Virtual reference sample is a native UIList row but cannot be removed/moved.
 rule.pose_active_index = 0
-assert rule.task_active_index == -1 and bs._active_task(rule) is None
 assert list_edit("POINTS", "REMOVE") == {"CANCELLED"}
 assert list_edit("POINTS", "DOWN") == {"CANCELLED"}
 rule.pose_active_index = 1
 assert list_edit("POINTS", "DOWN") == {"FINISHED"}
-assert bs._point_for_task(rule, task1).id == task1.point_id
 assert list_edit("POINTS", "UP") == {"FINISHED"}
 
 # Export carries links; the zero baseline is fixed and not duplicated in samples.
@@ -237,7 +224,7 @@ for pose in rng.uniform(-math.pi, math.pi, (100, 3)):
     for row in item[2]:
         expected.append(min(max(sum(c * math.exp(-sum(bs._shortest_angle(a-b)**2 for a,b in zip(pose,p)) * item[3])
                                    for p,c in zip(item[0], row)), 0), 1))
-    actual = [bs._driver_namespace_rbf(large.id, task.id, *pose) for task in large.tasks]
+    actual = [bs._driver_namespace_rbf(large.id, point.id, *pose) for point in bs._authored_points(large)]
     assert np.max(np.abs(np.asarray(actual) - expected)) < 1e-10
 print("RBF_SHARED_CACHE_24_OUTPUTS_OK", round((time.perf_counter()-start)*1000, 2), "ms including scalar reference")
 settings.rules.remove(1)
@@ -264,10 +251,10 @@ for operator_type in (bs.OP_BsCorrectiveReset, bs.OP_BsCorrectiveGenerateDrivers
     assert bs._BatchRuleOperator.invoke(op, fake_context, SimpleNamespace(shift=True)) == {"RUNNING_MODAL"}
 assert dialogs == [True] * 4
 
-# Clear points/tasks in a batch; keep sculpted keys and foreign drivers.
+# Clear authored poses in a batch; keep sculpted keys and foreign drivers.
 bpy.context.view_layer.objects.active = arm
 assert bpy.ops.hotools.bs_corrective_clear_controls(all_rules=True) == {"FINISHED"}
-assert len(rule.tasks) == 0 and len(rule.pose_points) == 1
+assert len(rule.pose_points) == 1
 assert rule.pose_points[0].id == bs._BASE_POINT
 assert not bs._RBF_RUNTIME and not bs._RBF_CACHE
 assert len(coat.data.shape_keys.animation_data.drivers) == 1

@@ -17,46 +17,6 @@ _DRIVER_NAMESPACE_FUNCTION = "hotools_bs_rbf"
 _RBF_RUNTIME = {}
 _RBF_CACHE = {}
 _BASE_POINT = "BASE"
-_SYNCING_SELECTION = False
-
-
-def _sync_point_selection(rule, context):
-    global _SYNCING_SELECTION
-    if _SYNCING_SELECTION or not rule.pose_points:
-        return
-    point = rule.pose_points[min(rule.pose_active_index, len(rule.pose_points) - 1)]
-    if point.id == _BASE_POINT:
-        _SYNCING_SELECTION = True
-        try:
-            rule.task_active_index = -1
-        finally:
-            _SYNCING_SELECTION = False
-        return
-    for index, task in enumerate(rule.tasks):
-        if task.point_id == point.id:
-            _SYNCING_SELECTION = True
-            try:
-                rule.task_active_index = index
-            finally:
-                _SYNCING_SELECTION = False
-            break
-
-
-def _sync_task_selection(rule, context):
-    global _SYNCING_SELECTION
-    if _SYNCING_SELECTION or not rule.tasks or rule.task_active_index < 0:
-        return
-    task = rule.tasks[min(rule.task_active_index, len(rule.tasks) - 1)]
-    for index, point in enumerate(rule.pose_points):
-        if point.id == task.point_id:
-            _SYNCING_SELECTION = True
-            try:
-                rule.pose_active_index = index
-            finally:
-                _SYNCING_SELECTION = False
-            break
-
-
 def _update_enabled(self, context):
     armature = self.id_data
     settings = settings_for(armature)
@@ -111,7 +71,7 @@ def _ensure_base_point(rule):
         rule.pose_points.move(bases[0], 0)
     point = rule.pose_points[0]
     point.x = point.y = point.z = 0.0
-    point.task_id = ""
+    point.bs_name = ""
 
 
 class PG_BsCorrectiveInfluenceObject(PropertyGroup):
@@ -119,27 +79,13 @@ class PG_BsCorrectiveInfluenceObject(PropertyGroup):
     mesh: PointerProperty(name="目标网格", type=bpy.types.Object, poll=lambda self, obj: obj.type == "MESH")  # type: ignore
 
 
-class PG_BsCorrectiveTaskTarget(PropertyGroup):
-    """One mesh/shape-key output owned by a corrective task."""
-    mesh: PointerProperty(name="目标网格", type=bpy.types.Object, poll=lambda self, obj: obj.type == "MESH")  # type: ignore
-    shape_key: StringProperty(name="目标形态键", default="")  # type: ignore
-
-
 class PG_BsCorrectivePosePoint(PropertyGroup):
-    """One authored local-rotation sample for an RBF rule."""
+    """One authored pose and its generated shape-key name."""
     id: StringProperty(default="")  # type: ignore
+    bs_name: StringProperty(name="BS 名称", default="_BSC_pose1")  # type: ignore
     x: FloatProperty(name="X", default=0.0, unit="ROTATION")  # type: ignore
     y: FloatProperty(name="Y", default=0.0, unit="ROTATION")  # type: ignore
     z: FloatProperty(name="Z", default=0.0, unit="ROTATION")  # type: ignore
-    task_id: StringProperty(name="修型任务", default="")  # type: ignore
-
-
-class PG_BsCorrectiveTask(PropertyGroup):
-    """An output channel linked to exactly one RBF pose point."""
-    id: StringProperty(default="")  # type: ignore
-    bs_name: StringProperty(name="BS 名称", default="_BSC_pose1")  # type: ignore
-    point_id: StringProperty(name="控制点", default="")  # type: ignore
-    targets: CollectionProperty(type=PG_BsCorrectiveTaskTarget)  # type: ignore
 
 
 class PG_BsCorrectiveRule(PropertyGroup):
@@ -148,8 +94,6 @@ class PG_BsCorrectiveRule(PropertyGroup):
     bone: StringProperty(name="测量骨骼", default="")  # type: ignore
     influence_objects: CollectionProperty(type=PG_BsCorrectiveInfluenceObject)  # type: ignore
     pose_points: CollectionProperty(type=PG_BsCorrectivePosePoint)  # type: ignore
-    tasks: CollectionProperty(type=PG_BsCorrectiveTask)  # type: ignore
-    comment: StringProperty(default="")  # type: ignore
     rbf_radius: FloatProperty(
         name="RBF 半径",
         default=math.radians(30.0),
@@ -161,8 +105,7 @@ class PG_BsCorrectiveRule(PropertyGroup):
     # can be rebuilt after opening a .blend without using custom properties.
     driver_payload: StringProperty(default="")  # type: ignore
     influence_active_index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
-    pose_active_index: bpy.props.IntProperty(default=0, min=0, update=_sync_point_selection)  # type: ignore
-    task_active_index: bpy.props.IntProperty(default=-1, min=-1, update=_sync_task_selection)  # type: ignore
+    pose_active_index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
 
 
 class PG_BsCorrectiveSettings(PropertyGroup):
@@ -184,27 +127,36 @@ def _shape_names(mesh):
     return [key.name for key in keys.key_blocks] if keys else []
 
 
-def _task_for_point(rule, point_id):
-    for task in rule.tasks:
-        if task.point_id == point_id:
-            return task
-    return None
-
-
-def _point_for_task(rule, task):
-    for point in rule.pose_points:
-        if point.id == task.point_id:
-            return point
-    return None
+def _rule_meshes(rule):
+    """Return the unique mesh scope owned by a rule."""
+    meshes = []
+    seen = set()
+    for item in rule.influence_objects:
+        mesh = item.mesh
+        if mesh is None:
+            continue
+        pointer = mesh.as_pointer()
+        if pointer not in seen:
+            seen.add(pointer)
+            meshes.append(mesh)
+    return meshes
 
 
 def _rule_outputs(rule):
-    for task in rule.tasks:
-        point = _point_for_task(rule, task)
-        if point is None:
-            continue
-        for target in task.targets:
-            yield task, point, target
+    """Yield each authored pose expanded to every mesh in the rule scope."""
+    for point in _authored_points(rule):
+        for mesh in _rule_meshes(rule):
+            yield point, mesh, point.bs_name.strip()
+
+
+def _validate_pose_names(settings):
+    names = set()
+    for rule in settings.rules:
+        for point in _authored_points(rule):
+            name = (point.bs_name or "").strip()
+            if name in names:
+                raise ValueError(f"修型姿势 BS 名称重复：{name}")
+            names.add(name)
 
 
 def _validate_rule(armature, rule, require_targets=True):
@@ -216,28 +168,29 @@ def _validate_rule(armature, rule, require_targets=True):
     point_ids = {point.id for point in points if point.id}
     if len(point_ids) != len(points):
         raise ValueError("控制点 id 为空或重复")
-    task_ids = {task.id for task in rule.tasks if task.id}
-    if len(task_ids) != len(rule.tasks):
-        raise ValueError("修型任务 id 为空或重复")
-    used_points = set()
-    for task in rule.tasks:
-        if not task.bs_name.strip():
-            raise ValueError("修型任务 BS 名称不能为空")
-        point = _point_for_task(rule, task)
-        if point is None or point.id == _BASE_POINT or task.point_id in used_points or point.task_id != task.id:
-            raise ValueError("每个修型任务必须唯一链接一个控制点")
-        used_points.add(task.point_id)
-        if require_targets and not task.targets:
-            raise ValueError(f"修型任务缺少目标：{task.bs_name}")
-        for target in task.targets if require_targets else []:
-            if target.mesh is None or target.mesh.type != "MESH":
-                raise ValueError("目标网格必须是 Mesh 对象")
-            if target.shape_key not in _shape_names(target.mesh):
-                raise ValueError(f"找不到形态键：{target.shape_key}")
-            if not target.mesh.data.shape_keys.use_relative:
-                raise ValueError(f"BS 修型仅支持相对形态键：{target.mesh.name}")
-    if used_points != point_ids:
-        raise ValueError("每个控制点必须对应一个修型任务")
+    names = set()
+    for point in points:
+        name = (point.bs_name or "").strip()
+        if not name:
+            raise ValueError("姿势 BS 名称不能为空")
+        if name in names:
+            raise ValueError(f"规则内姿势 BS 名称重复：{name}")
+        names.add(name)
+    meshes = _rule_meshes(rule)
+    if not meshes:
+        raise ValueError(f"规则缺少影响物体：{rule.bone}")
+    if len(meshes) != sum(1 for item in rule.influence_objects if item.mesh):
+        raise ValueError("规则影响物体不能重复")
+    for mesh in meshes:
+        if mesh.type != "MESH":
+            raise ValueError("影响物体必须是 Mesh 对象")
+        if mesh.data.shape_keys and not mesh.data.shape_keys.use_relative:
+            raise ValueError(f"BS 修型仅支持相对形态键：{mesh.name}")
+        if require_targets:
+            for point in points:
+                shape_key = point.bs_name.strip()
+                if shape_key not in _shape_names(mesh):
+                    raise ValueError(f"找不到形态键：{mesh.name}/{shape_key}")
     if not math.isfinite(rule.rbf_radius) or rule.rbf_radius <= 0:
         raise ValueError("RBF 半径必须为正数")
 
@@ -258,20 +211,17 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
         "measurement": "source_local_rotation",
         "rules": [],
     }
-    names, outputs = set(), set()
+    outputs = set()
+    _validate_pose_names(settings)
     for rule in settings.rules:
         _validate_rule(armature, rule)
         _compile_rbf(rule)
-        for task in rule.tasks:
-            if task.bs_name in names:
-                raise ValueError(f"修型任务 BS 名称重复：{task.bs_name}")
-            names.add(task.bs_name)
-            for target in task.targets:
-                output = (target.mesh.data.as_pointer(), target.shape_key)
-                if rule.enabled and output in outputs:
-                    raise ValueError(f"目标形态键重复：{target.mesh.name}/{target.shape_key}")
-                if rule.enabled:
-                    outputs.add(output)
+        for _, mesh, shape_key in _rule_outputs(rule):
+            output = (mesh.data.as_pointer(), shape_key)
+            if rule.enabled and output in outputs:
+                raise ValueError(f"目标形态键重复：{mesh.name}/{shape_key}")
+            if rule.enabled:
+                outputs.add(output)
         if not rule.id:
             rule.id = uuid.uuid4().hex
         # MCH is the export-time stable cache for a source bone whose authored
@@ -285,19 +235,20 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
             "bone": rule.bone,
             "measurementBone": measurement_bone,
             "influenceObjects": [item.mesh.name for item in rule.influence_objects if item.mesh],
+            # The task-shaped records are generated at the export boundary;
+            # authoring stores only one output name on each pose.
             "tasks": [
                 {
-                    "id": task.id,
-                    "bsName": task.bs_name,
-                    "pointId": task.point_id,
+                    "id": point.id,
+                    "bsName": point.bs_name.strip(),
+                    "pointId": point.id,
                     "targets": [
-                        {"mesh": target.mesh.name, "shapeKey": target.shape_key}
-                        for target in task.targets
+                        {"mesh": mesh.name, "shapeKey": point.bs_name.strip()}
+                        for mesh in _rule_meshes(rule)
                     ],
                 }
-                for task in rule.tasks
+                for point in _authored_points(rule)
             ],
-            "comment": rule.comment,
             "rbf": {
                 "radius": rule.rbf_radius,
                 "includeBase": True,
@@ -336,11 +287,11 @@ def _set_driver_expression(driver, expression):
 
 def _encode_rbf_payload(rule, persist=True):
     """Serialize compiled RBF data into a normal RNA StringProperty."""
-    positions, task_ids, matrix = _compile_rbf(rule)
+    positions, pose_ids, matrix = _compile_rbf(rule)
     payload = {
         "radius": float(rule.rbf_radius),
         "positions": positions.tolist(),
-        "coefficients": {task_id: matrix[:, index].tolist() for index, task_id in enumerate(task_ids)},
+        "coefficients": {pose_id: matrix[:, index].tolist() for index, pose_id in enumerate(pose_ids)},
     }
     encoded = json.dumps(payload, separators=(",", ":"), allow_nan=False)
     if persist:
@@ -349,7 +300,7 @@ def _encode_rbf_payload(rule, persist=True):
 
 
 def _compile_rbf(rule):
-    """Factor the shared kernel once, solving all task channels together."""
+    """Factor the shared kernel once, solving all pose channels together."""
     points = _authored_points(rule)
     positions = np.asarray(_rule_points(rule), dtype=np.float64)
     if not np.isfinite(positions).all() or not math.isfinite(rule.rbf_radius) or rule.rbf_radius <= 0:
@@ -360,17 +311,17 @@ def _compile_rbf(rule):
         raise ValueError("RBF 控制点过近或重复，无法求解")
     kernel = np.exp(-distance_squared / (2.0 * rule.rbf_radius ** 2))
     kernel.flat[::len(positions) + 1] += 1e-6
-    values = np.zeros((len(positions), len(rule.tasks)), dtype=np.float64)
+    values = np.zeros((len(positions), len(points)), dtype=np.float64)
     indices = {point.id: i + 1 for i, point in enumerate(points)}
-    for column, task in enumerate(rule.tasks):
-        if task.point_id not in indices:
-            raise ValueError("修型任务引用了不存在的控制点")
-        values[indices[task.point_id], column] = 1.0
+    for column, point in enumerate(points):
+        if point.id not in indices:
+            raise ValueError("姿势引用了不存在的控制点")
+        values[indices[point.id], column] = 1.0
     try:
         coefficients = np.linalg.solve(kernel, values)
     except np.linalg.LinAlgError as exc:
         raise ValueError("RBF 控制点无法求解") from exc
-    return positions, tuple(task.id for task in rule.tasks), coefficients
+    return positions, tuple(point.id for point in points), coefficients
 
 
 def _decode_rbf_payload(encoded):
@@ -391,7 +342,7 @@ def _decode_rbf_payload(encoded):
     if matrix.size < 64:
         positions = tuple(tuple(float(value) for value in row) for row in positions)
         matrix = tuple(tuple(float(value) for value in row) for row in matrix)
-    return positions, {task_id: index for index, task_id in enumerate(coefficients)}, matrix, 1.0 / (2 * radius * radius)
+    return positions, {pose_id: index for index, pose_id in enumerate(coefficients)}, matrix, 1.0 / (2 * radius * radius)
 
 
 def _evaluate_rbf_outputs(item, current):
@@ -410,14 +361,14 @@ def _evaluate_rbf_outputs(item, current):
     return tuple(np.clip(coefficients @ kernels, 0.0, 1.0))
 
 
-def _driver_namespace_rbf(rule_id, task_id, x, y, z):
-    """Evaluate one serialized rule from Blender's driver namespace."""
+def _driver_namespace_rbf(rule_id, pose_id, x, y, z):
+    """Evaluate one serialized rule output from Blender's driver namespace."""
     rule_id = str(rule_id)
-    task_id = str(task_id)
+    pose_id = str(pose_id)
     item = _RBF_RUNTIME.get(rule_id)
     if item is None:
         return 0.0
-    index = item[1].get(task_id)
+    index = item[1].get(pose_id)
     if index is None:
         return 0.0
     current = (float(x), float(y), float(z))
@@ -478,12 +429,12 @@ def _set_driver_marker(driver, armature, bone_name):
     _set_transform_variable(driver, _DRIVER_MARKER, armature, bone_name, "X")
 
 
-def _rbf_namespace_expression(rule, task):
+def _rbf_namespace_expression(rule, point):
     if not rule.id:
         rule.id = uuid.uuid4().hex
     # The rule id is persisted in the controller; only the function itself
     # must be restored into bpy.app.driver_namespace after opening a file.
-    return f'{_DRIVER_NAMESPACE_FUNCTION}({json.dumps(rule.id)},{json.dumps(task.id)},{_DRIVER_MARKER},y,z)'
+    return f'{_DRIVER_NAMESPACE_FUNCTION}({json.dumps(rule.id)},{json.dumps(point.id)},{_DRIVER_MARKER},y,z)'
 
 
 def _shape_key_driver_add(key):
@@ -507,26 +458,28 @@ def _owned_driver(fcurve, armature, rule_ids):
 
 def _validate_outputs(armature, rule_indices=None):
     """Reject conflicting outputs and foreign drivers before touching the graph."""
+    settings = settings_for(armature)
+    if settings is not None:
+        _validate_pose_names(settings)
     requested = set()
     for _, rule in _selected_rules(armature):
         if not rule.enabled:
             continue
-        for _, _, target in _rule_outputs(rule):
-            if target.mesh:
-                key = (target.mesh.data.as_pointer(), target.shape_key)
-                if key in requested:
-                    raise ValueError(f"目标形态键被多个任务重复使用：{target.mesh.name}/{target.shape_key}")
-                requested.add(key)
+        for _, mesh, shape_key in _rule_outputs(rule):
+            key = (mesh.data.as_pointer(), shape_key)
+            if key in requested:
+                raise ValueError(f"目标形态键被多个规则重复使用：{mesh.name}/{shape_key}")
+            requested.add(key)
     for _, rule in _selected_rules(armature, rule_indices):
         if not rule.enabled:
             continue
         _validate_rule(armature, rule)
-        for _, _, target in _rule_outputs(rule):
-            key = target.mesh.data.shape_keys.key_blocks[target.shape_key]
+        for _, mesh, shape_key in _rule_outputs(rule):
+            key = mesh.data.shape_keys.key_blocks[shape_key]
             animation = key.id_data.animation_data
             for fcurve in animation.drivers if animation else []:
                 if fcurve.data_path == key.path_from_id("value") and not _owned_driver(fcurve, armature, {rule.id}):
-                    raise ValueError(f"目标已有其他驱动器：{target.mesh.name}/{target.shape_key}")
+                    raise ValueError(f"目标已有其他驱动器：{mesh.name}/{shape_key}")
 
 
 def generate_native_drivers(armature, rule_indices=None):
@@ -551,16 +504,16 @@ def generate_native_drivers(armature, rule_indices=None):
                 continue
             rule.driver_payload, _RBF_RUNTIME[rule.id] = prepared[rule.id]
             _RBF_CACHE.pop(rule.id, None)
-            for task, _, target_rule in _rule_outputs(rule):
-                shape_keys = target_rule.mesh.data.shape_keys
-                key = shape_keys.key_blocks.get(target_rule.shape_key) if shape_keys else None
+            for point, mesh, shape_key in _rule_outputs(rule):
+                shape_keys = mesh.data.shape_keys
+                key = shape_keys.key_blocks.get(shape_key) if shape_keys else None
                 if key is None:
                     continue
                 # Use the X transform variable as the ownership marker; driver
                 # FCurves are not reliably attached to Action groups in Blender 4.5.
                 driver = _shape_key_driver_add(key)
                 _set_driver_marker(driver, armature, rule.bone)
-                expression = _rbf_namespace_expression(rule, task)
+                expression = _rbf_namespace_expression(rule, point)
                 _set_driver_expression(driver, expression)
                 for channel in "YZ":
                     _set_transform_variable(driver, channel.lower(), armature, rule.bone, channel)
@@ -579,8 +532,8 @@ def remove_native_drivers(armature, rule_indices=None):
         return 0
     removed = 0
     rule_ids = {rule.id for _, rule in _selected_rules(armature, rule_indices) if rule.id}
-    # Search by ownership, not by the current targets: editing a target or
-    # deleting a task must not strand the old generated driver.
+    # Search by ownership, not by the current mesh scope: editing a rule must
+    # not strand an old generated driver.
     for keys in bpy.data.shape_keys:
         animation = keys.animation_data
         for fcurve in list(animation.drivers) if animation else []:
@@ -596,34 +549,29 @@ def remove_native_drivers(armature, rule_indices=None):
 
 
 def _collect_generated_targets(armature, overwrite=True, rule_indices=None):
-    """Validate reset names and return the target/name pairs to create."""
+    """Validate reset names and return the rule pose/name pairs to create."""
     settings = settings_for(armature)
     if settings is None:
         return []
-    requested = set()
     requested_targets = set()
     targets = []
     selected = set(rule_indices) if rule_indices is not None else None
     untouched_outputs = {
-        (target.mesh.data.as_pointer(), target.shape_key)
+        (mesh.data.as_pointer(), shape_key)
         for index, other in enumerate(settings.rules)
         if selected is not None and index not in selected
-        for _, _, target in _rule_outputs(other) if target.mesh
+        for _, mesh, shape_key in _rule_outputs(other)
     }
     for rule_index, rule in enumerate(settings.rules):
         if selected is not None and rule_index not in selected:
             continue
-        for task in rule.tasks:
-            name = (task.bs_name or "").strip()
+        meshes = _rule_meshes(rule)
+        if not meshes:
+            raise ValueError(f"规则缺少影响物体：{rule.bone}")
+        for point in _authored_points(rule):
+            name = (point.bs_name or "").strip()
             if not name:
                 raise ValueError("BS 名称不能为空")
-            if name in requested:
-                raise ValueError(f"规则 BS 名称冲突：{name}")
-            requested.add(name)
-            meshes = ([item.mesh for item in rule.influence_objects] or
-                      list(dict.fromkeys(target.mesh for target in task.targets)))
-            if not meshes:
-                raise ValueError(f"规则缺少影响物体：{rule.bone}")
             for mesh in meshes:
                 if mesh is None or mesh.type != "MESH":
                     raise ValueError("目标网格必须是 Mesh 对象")
@@ -643,18 +591,14 @@ def _collect_generated_targets(armature, overwrite=True, rule_indices=None):
                     for fcurve in animation.drivers if animation else []:
                         if fcurve.data_path == existing.path_from_id("value") and not _owned_driver(fcurve, armature, {rule.id}):
                             raise ValueError(f"目标已有其他驱动器：{mesh.name}/{name}")
-                targets.append((task, mesh, name))
+                targets.append((point, mesh, name))
     return targets
 
 
 def _prepare_generated_shape_keys(armature, overwrite=True, rule_indices=None):
     """Create each rule's named output key before attaching native drivers."""
     targets = _collect_generated_targets(armature, overwrite, rule_indices)
-    cleared = set()
-    for task, mesh, name in targets:
-        if task.as_pointer() not in cleared:
-            task.targets.clear()
-            cleared.add(task.as_pointer())
+    for point, mesh, name in targets:
         shape_keys = mesh.data.shape_keys
         existing = shape_keys.key_blocks.get(name) if shape_keys else None
         if mesh.data.shape_keys is None:
@@ -669,9 +613,6 @@ def _prepare_generated_shape_keys(armature, overwrite=True, rule_indices=None):
             existing.data.foreach_set("co", coordinates)
             existing.relative_key = basis
             existing.mute = False
-        target = task.targets.add()
-        target.mesh = mesh
-        target.shape_key = name
     return len(targets)
 
 
@@ -679,11 +620,12 @@ class HO_UL_BsCorrectiveRule(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
         row.prop(item, "enabled", text="")
-        row.label(text=f"{index + 1}. {item.bone or '未指定骨骼'}", icon="BONE_DATA")
-        row.label(text=str(len(item.tasks)))
         select = row.row(align=True)
         select.enabled = bool(item.bone)
         select.operator("hotools.bs_corrective_select_bone", text="", icon="RESTRICT_SELECT_OFF").index = index
+        row.label(text=f"{item.bone or '未指定骨骼'}")
+        row.label(text=str(max(0, len(item.pose_points) - 1)))
+
 
 
 class HO_UL_BsCorrectiveInfluence(UIList):
@@ -694,23 +636,17 @@ class HO_UL_BsCorrectiveInfluence(UIList):
 class HO_UL_BsCorrectivePoint(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
-        if item.id == _BASE_POINT:
-            row.label(text="0. 基准姿态 · 0° / 0° / 0°", icon="LOCKED")
-        else:
-            task = _task_for_point(data, item.id)
-            row.label(text=f"{index}. {task.bs_name if task else '未关联任务'}", icon="KEY_HLT")
-        preview = row.row(align=True)
+        preview = row.row(align=False)
         preview.enabled = bool(data.bone)
-        preview.operator("hotools.bs_corrective_pose", text="", icon="HIDE_OFF").index = index
+        if item.id == _BASE_POINT:
+            preview.operator("hotools.bs_corrective_pose", text="", icon="MOD_ARMATURE").index = index
+            row.label(text="基准姿态")
+            row.label(text="0° / 0° / 0°")
 
-
-class HO_UL_BsCorrectiveTask(UIList):
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        row = layout.row(align=True)
-        point_index = next((i for i, point in enumerate(data.pose_points) if point.id == item.point_id), -1)
-        row.label(text=f"点 {point_index}", icon="KEY_HLT")
-        row.prop(item, "bs_name", text="", emboss=False)
-        row.label(text=f"{len(item.targets)} 目标")
+        else:
+            preview.operator("hotools.bs_corrective_pose", text="", icon="OUTLINER_OB_ARMATURE").index = index
+            row.prop(item, "bs_name", text="", emboss=False)
+            row.label(text=f"{math.degrees(item.x):.1f}° / {math.degrees(item.y):.1f}° / {math.degrees(item.z):.1f}°")
 
 
 def _active_rule(context):
@@ -718,12 +654,13 @@ def _active_rule(context):
     return settings.rules[min(settings.active_index, len(settings.rules) - 1)] if settings and settings.rules else None
 
 
-def _active_task(rule):
-    return rule.tasks[rule.task_active_index] if rule and 0 <= rule.task_active_index < len(rule.tasks) else None
-
-
 def _next_bs_name(settings):
-    used = {task.bs_name for rule in settings.rules for task in rule.tasks}
+    used = {
+        point.bs_name.strip()
+        for rule in settings.rules
+        for point in _authored_points(rule)
+        if point.bs_name.strip()
+    }
     index = 1
     while f"_BSC_pose{index}" in used:
         index += 1
@@ -737,19 +674,10 @@ def _add_point(armature, rule, pose):
     point = rule.pose_points.add()
     point.id = uuid.uuid4().hex
     point.x, point.y, point.z = pose
-    name = _next_bs_name(settings_for(armature))
-    task = rule.tasks.add()
-    task.id = uuid.uuid4().hex
-    task.point_id = point.id
-    task.bs_name = name
-    point.task_id = task.id
-    for item in rule.influence_objects:
-        if item.mesh:
-            target = task.targets.add()
-            target.mesh, target.shape_key = item.mesh, task.bs_name
+    point.bs_name = ""
+    point.bs_name = _next_bs_name(settings_for(armature))
     rule.pose_active_index = len(rule.pose_points) - 1
-    rule.task_active_index = len(rule.tasks) - 1
-    return point, task
+    return point
 
 
 class _ArmatureOperator:
@@ -795,20 +723,19 @@ class OP_BsCorrectiveSelectBone(_ArmatureOperator, Operator):
 
 
 class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
-    """Native list controls; removing data also releases its generated drivers."""
+    """Native list controls for rules, influence meshes and authored poses."""
     bl_idname = "hotools.bs_corrective_list_edit"
     bl_label = "编辑修型列表"
     bl_options = {"REGISTER", "UNDO"}
-    kind: bpy.props.EnumProperty(items=[(x, x, "") for x in ("RULES", "OBJECTS", "POINTS", "TASKS", "TARGETS")]) # type: ignore
+    kind: bpy.props.EnumProperty(items=[(x, x, "") for x in ("RULES", "OBJECTS", "POINTS")]) # type: ignore
     action: bpy.props.EnumProperty(items=[(x, x, "") for x in ("ADD", "REMOVE", "CLEAR", "UP", "DOWN", "ENABLE", "DISABLE")]) # type: ignore
     index: bpy.props.IntProperty(default=-1) # type: ignore
 
     @classmethod
     def description(cls, context, properties):
-        kind = {"RULES": "规则", "OBJECTS": "影响物体", "POINTS": "控制点及对应任务",
-                "TASKS": "修型任务及对应控制点", "TARGETS": "任务目标"}.get(properties.kind, "条目")
-        if properties.action == "ADD" and properties.kind in {"POINTS", "TASKS"}:
-            return "记录参考骨骼的当前局部姿态，并创建一一对应的控制点和修型任务"
+        kind = {"RULES": "规则", "OBJECTS": "影响物体", "POINTS": "修型姿势"}.get(properties.kind, "条目")
+        if properties.action == "ADD" and properties.kind == "POINTS":
+            return "记录参考骨骼的当前局部姿态并创建修型姿势"
         action = {"ADD": "添加", "REMOVE": "删除活动", "CLEAR": "清空全部", "UP": "上移活动", "DOWN": "下移活动",
                   "ENABLE": "启用全部", "DISABLE": "禁用全部"}.get(properties.action, "编辑")
         return action + kind
@@ -817,15 +744,12 @@ class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
         armature = context.object
         settings = settings_for(armature)
         rule = _active_rule(context)
-        task = _active_task(rule)
-        if self.kind != "RULES" and rule is None or self.kind == "TARGETS" and task is None:
+        if self.kind != "RULES" and rule is None:
             return {"CANCELLED"}
         collection, owner, index_property = {
             "RULES": (settings.rules, settings, "active_index"),
             "OBJECTS": (rule.influence_objects, rule, "influence_active_index") if rule else (None, None, ""),
             "POINTS": (rule.pose_points, rule, "pose_active_index") if rule else (None, None, ""),
-            "TASKS": (rule.tasks, rule, "task_active_index") if rule else (None, None, ""),
-            "TARGETS": (task.targets, None, "") if task else (None, None, ""),
         }[self.kind]
         index = self.index if self.index >= 0 else getattr(owner, index_property, max(0, len(collection) - 1))
         try:
@@ -841,7 +765,7 @@ class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
                     if bone:
                         item.bone = bone.name
                     _ensure_base_point(item)
-                elif self.kind in {"POINTS", "TASKS"}:
+                elif self.kind == "POINTS":
                     _add_point(armature, rule, _current_local_pose(armature, rule.bone))
                     return {"FINISHED"}
                 else:
@@ -865,26 +789,19 @@ class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
                 return {"CANCELLED"}
             if not 0 <= index < len(collection):
                 return {"CANCELLED"}
-            if self.kind in {"RULES", "POINTS", "TASKS", "TARGETS"}:
+            if self.kind in {"RULES", "POINTS"}:
                 remove_native_drivers(armature, None if self.kind == "RULES" and self.action == "CLEAR" else [settings.active_index])
-            if self.kind in {"POINTS", "TASKS"}:
+            if self.kind == "POINTS":
                 if self.action == "CLEAR":
-                    rule.tasks.clear()
                     rule.pose_points.clear()
                     _ensure_base_point(rule)
                 else:
-                    point_id = collection[index].id if self.kind == "POINTS" else collection[index].point_id
-                    for i, item in enumerate(rule.tasks):
-                        if item.point_id == point_id:
-                            rule.tasks.remove(i)
-                            break
                     for i, item in enumerate(rule.pose_points):
-                        if item.id == point_id:
+                        if item.id == collection[index].id:
                             rule.pose_points.remove(i)
                             break
                 rule.driver_payload = ""
                 rule.pose_active_index = min(index, max(0, len(rule.pose_points) - 1))
-                rule.task_active_index = min(rule.task_active_index, max(0, len(rule.tasks) - 1))
             else:
                 if self.action == "CLEAR":
                     collection.clear()
@@ -900,11 +817,10 @@ class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
 
 class OP_BsCorrectivePose(_ArmatureOperator, Operator):
     bl_idname = "hotools.bs_corrective_pose"
-    bl_label = "控制点姿态"
-    bl_description = "预览该控制点姿态并定位对应修型任务；只修改参考骨骼的局部旋转"
+    bl_label = "预览修型姿势"
+    bl_description = "预览该修型姿势；只修改参考骨骼的局部旋转"
     bl_options = {"REGISTER", "UNDO"}
     index: bpy.props.IntProperty(default=-1, min=-1) # type: ignore
-    capture: BoolProperty(default=False) # type: ignore
 
     def execute(self, context):
         rule = _active_rule(context)
@@ -918,28 +834,17 @@ class OP_BsCorrectivePose(_ArmatureOperator, Operator):
         if bone is None:
             self.report({"ERROR"}, "请先指定参考骨骼")
             return {"CANCELLED"}
-        if self.capture:
-            if point.id == _BASE_POINT:
-                return {"CANCELLED"}
-            pose = _current_local_pose(context.object, rule.bone)
-            if any(_rbf_distance(pose, (item.x, item.y, item.z)) < 1e-5
-                   for item in rule.pose_points if item.id != point.id):
-                self.report({"ERROR"}, "当前姿态与已有控制点重复")
-                return {"CANCELLED"}
-            point.x, point.y, point.z = pose
+        from mathutils import Euler
+        rotation = Euler((point.x, point.y, point.z), "XYZ")
+        if bone.rotation_mode == "QUATERNION":
+            bone.rotation_quaternion = rotation.to_quaternion()
+        elif bone.rotation_mode == "AXIS_ANGLE":
+            axis, angle = rotation.to_quaternion().to_axis_angle()
+            bone.rotation_axis_angle = (angle, *axis)
         else:
-            from mathutils import Euler
-            rotation = Euler((point.x, point.y, point.z), "XYZ")
-            if bone.rotation_mode == "QUATERNION":
-                bone.rotation_quaternion = rotation.to_quaternion()
-            elif bone.rotation_mode == "AXIS_ANGLE":
-                axis, angle = rotation.to_quaternion().to_axis_angle()
-                bone.rotation_axis_angle = (angle, *axis)
-            else:
-                bone.rotation_euler = rotation.to_quaternion().to_euler(bone.rotation_mode)
+            bone.rotation_euler = rotation.to_quaternion().to_euler(bone.rotation_mode)
         rule.pose_active_index = index
-        if not self.capture:
-            context.view_layer.update()
+        context.view_layer.update()
         return {"FINISHED"}
 
 
@@ -955,7 +860,7 @@ class _BatchRuleOperator(_ArmatureOperator):
         self.layout.prop(self, "all_rules")
         if self.bl_idname == "hotools.bs_corrective_reset":
             self.layout.prop(self, "overwrite_existing")
-            self.layout.label(text="按影响物体重建任务目标，并生成同名 BS。", icon="INFO")
+            self.layout.label(text="按规则影响物体生成同名姿势 BS。", icon="INFO")
             self.layout.label(text="关闭覆盖将保留已有 BS 的修型数据。")
 
     def indices(self, context):
@@ -981,14 +886,10 @@ class OP_BsCorrectiveGenerateDrivers(_BatchRuleOperator, Operator):
 
 def reset_correctives(armature, overwrite=True, rule_indices=None):
     # Preflight the whole batch (including the solver) before removing anything.
+    settings = settings_for(armature)
+    if settings is not None:
+        _validate_pose_names(settings)
     selected = _selected_rules(armature, rule_indices)
-    names = set()
-    for _, rule in _selected_rules(armature):
-        for task in rule.tasks:
-            name = task.bs_name.strip()
-            if not name or name in names:
-                raise ValueError(f"修型任务 BS 名称为空或重复：{name}")
-            names.add(name)
     for _, rule in selected:
         _validate_rule(armature, rule, require_targets=False)
         _compile_rbf(rule)
@@ -1001,7 +902,7 @@ def reset_correctives(armature, overwrite=True, rule_indices=None):
 class OP_BsCorrectiveReset(_BatchRuleOperator, Operator):
     bl_idname = "hotools.bs_corrective_reset"
     bl_label = "重置规则"
-    bl_description = "按影响物体生成任务 BS 并添加驱动器；可选择覆盖已有 BS；Shift 点击批量执行"
+    bl_description = "按规则影响物体生成姿势 BS 并添加驱动器；可选择覆盖已有 BS；Shift 点击批量执行"
     bl_options = {"REGISTER", "UNDO"}
     all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
     overwrite_existing: BoolProperty(name="覆盖同名形态键", default=True) # type: ignore
@@ -1032,7 +933,7 @@ class OP_BsCorrectiveRemoveDrivers(_BatchRuleOperator, Operator):
 class OP_BsCorrectiveClearControls(_BatchRuleOperator, Operator):
     bl_idname = "hotools.bs_corrective_clear_controls"
     bl_label = "删除控件"
-    bl_description = "删除活动规则的控制点、任务及其驱动器，保留已生成的 BS；Shift 点击确认批量执行"
+    bl_description = "删除活动规则的修型姿势及其驱动器，保留已生成的 BS；Shift 点击确认批量执行"
     bl_options = {"REGISTER", "UNDO"}
     all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
 
@@ -1041,10 +942,9 @@ class OP_BsCorrectiveClearControls(_BatchRuleOperator, Operator):
         remove_native_drivers(armature, self.indices(context))
         for _, rule in _selected_rules(armature, self.indices(context)):
             rule.pose_points.clear()
-            rule.tasks.clear()
             rule.driver_payload = ""
             _ensure_base_point(rule)
-            rule.pose_active_index = rule.task_active_index = 0
+            rule.pose_active_index = 0
         return {"FINISHED"}
 
 
@@ -1054,8 +954,7 @@ def _list_button(layout, kind, action, icon, index=-1):
     return operator
 
 
-def _draw_list(layout, title, list_type, owner, collection, active, kind, rows=4):
-    layout.label(text=title)
+def _draw_list(layout, list_type, owner, collection, active, kind, rows=4):
     row = layout.row()
     buttons = row.column(align=True)
     _list_button(buttons, kind, "ADD", "ADD")
@@ -1081,7 +980,7 @@ def draw_bs_corrective_header(layout, context):
 
 
 def draw_bs_corrective_menu(layout, context):
-    """One native four-list controller shared by Armature Properties and N-panel."""
+    """One native three-list controller shared by Armature Properties and N-panel."""
     armature = context.object
     if armature is None or armature.type != "ARMATURE":
         layout.label(text="请选择骨架", icon="INFO")
@@ -1089,47 +988,17 @@ def draw_bs_corrective_menu(layout, context):
     settings = settings_for(armature)
     top = layout.split(factor=0.5)
     left, right = top.column(), top.column()
-    _draw_list(left, "规则", HO_UL_BsCorrectiveRule, settings, "rules", "active_index", "RULES")
+    _draw_list(left, HO_UL_BsCorrectiveRule, settings, "rules", "active_index", "RULES")
     rule = _active_rule(context)
     if rule is None:
-        right.label(text="添加规则后，摆姿态并添加控制点。", icon="INFO")
+        right.label(text="添加规则后，摆姿态并添加修型姿势。", icon="INFO")
         return
-    _draw_list(right, "控制点 → 修型任务", HO_UL_BsCorrectivePoint, rule, "pose_points", "pose_active_index", "POINTS")
-    bottom = layout.split(factor=0.5)
-    left, right = bottom.column(), bottom.column()
-    _draw_list(left, "影响物体", HO_UL_BsCorrectiveInfluence, rule, "influence_objects", "influence_active_index", "OBJECTS")
-    _draw_list(right, "修型任务", HO_UL_BsCorrectiveTask, rule, "tasks", "task_active_index", "TASKS")
+    _draw_list(right, HO_UL_BsCorrectivePoint, rule, "pose_points", "pose_active_index", "POINTS")
+    _draw_list(layout, HO_UL_BsCorrectiveInfluence, rule, "influence_objects", "influence_active_index", "OBJECTS")
     detail = layout.box()
     detail.label(text=f"活动规则 · {settings.active_index + 1}", icon="BONE_DATA")
     detail.prop_search(rule, "bone", armature.data, "bones", text="参考骨骼")
     detail.prop(rule, "rbf_radius", text="影响半径")
-    detail.prop(rule, "comment", text="注释")
-    if rule.pose_points:
-        point = rule.pose_points[min(rule.pose_active_index, len(rule.pose_points) - 1)]
-        row = detail.row(align=True)
-        values = row.row(align=True)
-        values.enabled = point.id != _BASE_POINT
-        for axis in "xyz":
-            values.prop(point, axis, text=axis.upper())
-    task = _active_task(rule)
-    if task:
-        detail.separator()
-        detail.prop(task, "bs_name", text="生成 BS 名称")
-        header = detail.row(align=True)
-        header.label(text="活动任务目标 · 物体 / 形态键")
-        _list_button(header, "TARGETS", "ADD", "ADD")
-        _list_button(header, "TARGETS", "CLEAR", "TRASH")
-        for index, target in enumerate(task.targets):
-            row = detail.row(align=True)
-            row.prop(target, "mesh", text="")
-            keys = target.mesh.data.shape_keys if target.mesh and target.mesh.type == "MESH" else None
-            if keys:
-                row.prop_search(target, "shape_key", keys, "key_blocks", text="")
-            else:
-                row.prop(target, "shape_key", text="")
-            _list_button(row, "TARGETS", "REMOVE", "X", index)
-            _list_button(row, "TARGETS", "UP", "TRIA_UP", index)
-            _list_button(row, "TARGETS", "DOWN", "TRIA_DOWN", index)
     row = detail.row(align=True)
     row.operator(OP_BsCorrectiveReset.bl_idname, text="重置规则", icon="FILE_REFRESH")
     row.operator(OP_BsCorrectiveGenerateDrivers.bl_idname, text="刷新驱动", icon="DRIVER")
@@ -1148,9 +1017,9 @@ def draw_bs_corrective_panel(layout, context):
 
 
 CLASSES = [
-    PG_BsCorrectiveInfluenceObject, PG_BsCorrectiveTaskTarget, PG_BsCorrectivePosePoint,
-    PG_BsCorrectiveTask, PG_BsCorrectiveRule, PG_BsCorrectiveSettings,
-    HO_UL_BsCorrectiveRule, HO_UL_BsCorrectiveInfluence, HO_UL_BsCorrectivePoint, HO_UL_BsCorrectiveTask,
+    PG_BsCorrectiveInfluenceObject, PG_BsCorrectivePosePoint,
+    PG_BsCorrectiveRule, PG_BsCorrectiveSettings,
+    HO_UL_BsCorrectiveRule, HO_UL_BsCorrectiveInfluence, HO_UL_BsCorrectivePoint,
     OP_BsCorrectiveSelectBone, OP_BsCorrectiveListEdit, OP_BsCorrectivePose, OP_BsCorrectiveGenerateDrivers,
     OP_BsCorrectiveReset, OP_BsCorrectiveRemoveDrivers, OP_BsCorrectiveClearControls,
 ]

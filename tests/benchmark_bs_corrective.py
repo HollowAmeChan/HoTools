@@ -1,4 +1,4 @@
-"""Compare old per-task caching and whole-rule caching in Blender's dependency graph.
+"""Compare per-output and whole-rule caching in Blender's dependency graph.
 
 blender --background --factory-startup --enable-autoexec --python this_file.py -- OUTPUT.json
 """
@@ -41,10 +41,9 @@ def run(point_count, copies):
         mesh = bpy.data.objects.new(f"Output{i}", data.copy())
         bpy.context.scene.collection.objects.link(mesh)
         mesh.shape_key_add(name="Basis")
-        for task in rule.tasks:
-            mesh.shape_key_add(name=task.bs_name)
-            target = task.targets.add()
-            target.mesh, target.shape_key = mesh, task.bs_name
+        rule.influence_objects.add().mesh = mesh
+        for point in bs._authored_points(rule):
+            mesh.shape_key_add(name=point.bs_name)
         meshes.append(mesh)
     bs.generate_native_drivers(arm)
     item = bs._RBF_RUNTIME[rule.id]
@@ -88,10 +87,10 @@ def run(point_count, copies):
         # Compare the output actually produced by Blender against independent
         # scalar evaluation, not just two direct Python calls.
         pose = arm.pose.bones['Main'].matrix_basis.to_euler('XYZ')
-        for task in rule.tasks:
-            expected = old(rule.id, task.id, *pose)
-            for target in task.targets:
-                actual = target.mesh.data.shape_keys.key_blocks[target.shape_key].value
+        for point in bs._authored_points(rule):
+            expected = old(rule.id, point.id, *pose)
+            for mesh in meshes:
+                actual = mesh.data.shape_keys.key_blocks[point.bs_name].value
                 assert abs(actual - expected) < 5e-5, (name, actual, expected)
     results['scalar_solves'], results['whole_rule_solves'] = counts
     bs._evaluate_rbf_outputs = original_evaluate
