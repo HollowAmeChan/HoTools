@@ -763,8 +763,8 @@ class OP_BsCorrectiveSelectBone(_ArmatureOperator, Operator):
     bl_label = "选择规则骨骼"
     bl_description = "选择并激活这条规则的参考骨骼；物体模式下进入姿态模式，Shift 点击加选"
     bl_options = {"REGISTER", "UNDO"}
-    index: bpy.props.IntProperty(default=-1, min=-1)
-    extend: BoolProperty(default=False, options={"SKIP_SAVE"})
+    index: bpy.props.IntProperty(default=-1, min=-1) # type: ignore
+    extend: BoolProperty(default=False, options={"SKIP_SAVE"}) # type: ignore
 
     def invoke(self, context, event):
         self.extend = bool(event.shift)
@@ -799,9 +799,9 @@ class OP_BsCorrectiveListEdit(_ArmatureOperator, Operator):
     bl_idname = "hotools.bs_corrective_list_edit"
     bl_label = "编辑修型列表"
     bl_options = {"REGISTER", "UNDO"}
-    kind: bpy.props.EnumProperty(items=[(x, x, "") for x in ("RULES", "OBJECTS", "POINTS", "TASKS", "TARGETS")])
-    action: bpy.props.EnumProperty(items=[(x, x, "") for x in ("ADD", "REMOVE", "CLEAR", "UP", "DOWN", "ENABLE", "DISABLE")])
-    index: bpy.props.IntProperty(default=-1)
+    kind: bpy.props.EnumProperty(items=[(x, x, "") for x in ("RULES", "OBJECTS", "POINTS", "TASKS", "TARGETS")]) # type: ignore
+    action: bpy.props.EnumProperty(items=[(x, x, "") for x in ("ADD", "REMOVE", "CLEAR", "UP", "DOWN", "ENABLE", "DISABLE")]) # type: ignore
+    index: bpy.props.IntProperty(default=-1) # type: ignore
 
     @classmethod
     def description(cls, context, properties):
@@ -903,8 +903,8 @@ class OP_BsCorrectivePose(_ArmatureOperator, Operator):
     bl_label = "控制点姿态"
     bl_description = "预览该控制点姿态并定位对应修型任务；只修改参考骨骼的局部旋转"
     bl_options = {"REGISTER", "UNDO"}
-    index: bpy.props.IntProperty(default=-1, min=-1)
-    capture: BoolProperty(default=False)
+    index: bpy.props.IntProperty(default=-1, min=-1) # type: ignore
+    capture: BoolProperty(default=False) # type: ignore
 
     def execute(self, context):
         rule = _active_rule(context)
@@ -967,7 +967,7 @@ class OP_BsCorrectiveGenerateDrivers(_BatchRuleOperator, Operator):
     bl_label = "刷新驱动"
     bl_description = "只更新已有目标形态键的驱动器；Shift 点击确认批量处理全部规则"
     bl_options = {"REGISTER", "UNDO"}
-    all_rules: BoolProperty(name="处理全部规则", default=False)
+    all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
 
     def execute(self, context):
         try:
@@ -1003,8 +1003,8 @@ class OP_BsCorrectiveReset(_BatchRuleOperator, Operator):
     bl_label = "重置规则"
     bl_description = "按影响物体生成任务 BS 并添加驱动器；可选择覆盖已有 BS；Shift 点击批量执行"
     bl_options = {"REGISTER", "UNDO"}
-    all_rules: BoolProperty(name="处理全部规则", default=False)
-    overwrite_existing: BoolProperty(name="覆盖同名形态键", default=True)
+    all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
+    overwrite_existing: BoolProperty(name="覆盖同名形态键", default=True) # type: ignore
 
     def execute(self, context):
         try:
@@ -1021,7 +1021,7 @@ class OP_BsCorrectiveRemoveDrivers(_BatchRuleOperator, Operator):
     bl_label = "移除驱动"
     bl_description = "移除活动规则生成的驱动器；Shift 点击确认批量处理全部规则"
     bl_options = {"REGISTER", "UNDO"}
-    all_rules: BoolProperty(name="处理全部规则", default=False)
+    all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
 
     def execute(self, context):
         count = remove_native_drivers(context.object, self.indices(context))
@@ -1034,7 +1034,7 @@ class OP_BsCorrectiveClearControls(_BatchRuleOperator, Operator):
     bl_label = "删除控件"
     bl_description = "删除活动规则的控制点、任务及其驱动器，保留已生成的 BS；Shift 点击确认批量执行"
     bl_options = {"REGISTER", "UNDO"}
-    all_rules: BoolProperty(name="处理全部规则", default=False)
+    all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
 
     def execute(self, context):
         armature = context.object
