@@ -213,11 +213,11 @@ def remove_native_drivers(armature):
     return removed
 
 
-def _prepare_generated_shape_keys(armature, overwrite=True):
-    """Create each rule's named output key before attaching native drivers."""
+def _collect_generated_targets(armature, overwrite=True):
+    """Validate reset names and return the target/name pairs to create."""
     settings = settings_for(armature)
     if settings is None:
-        return 0
+        return []
     requested = set()
     requested_targets = set()
     targets = []
@@ -236,6 +236,12 @@ def _prepare_generated_shape_keys(armature, overwrite=True):
                 raise ValueError(f"目标 BS 重复：{target.mesh.name}/{name}")
             requested_targets.add(target_id)
             targets.append((target, name))
+    return targets
+
+
+def _prepare_generated_shape_keys(armature, overwrite=True):
+    """Create each rule's named output key before attaching native drivers."""
+    targets = _collect_generated_targets(armature, overwrite)
     for target, name in targets:
         shape_keys = target.mesh.data.shape_keys
         existing = shape_keys.key_blocks.get(name) if shape_keys else None
@@ -474,6 +480,8 @@ class OP_BsCorrectiveReset(Operator):
 
     def execute(self, context):
         try:
+            # Preflight before removing drivers so a rejected reset is side-effect free.
+            _collect_generated_targets(context.object, self.overwrite_existing)
             # Remove drivers while rules still point at their previous keys. This
             # prevents stale HoTools drivers when a reset changes the BS name.
             remove_native_drivers(context.object)
