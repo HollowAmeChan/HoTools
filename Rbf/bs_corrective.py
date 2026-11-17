@@ -16,21 +16,31 @@ _DRIVER_MARKER = "hotoolsBscMarker"
 _DRIVER_NAMESPACE_FUNCTION = "hotools_bs_rbf"
 _RBF_RUNTIME = {}
 _RBF_CACHE = {}
+_RBF_UI_CACHE = {}
 _BASE_POINT = "BASE"
 def _update_enabled(self, context):
     armature = self.id_data
     settings = settings_for(armature)
     if settings is None:
         return
-    for rule in settings.rules:
-        for keys in bpy.data.shape_keys:
-            animation = keys.animation_data
-            for fcurve in animation.drivers if animation else []:
-                if _owned_driver(fcurve, armature, {rule.id}):
-                    fcurve.mute = not (settings.enabled and rule.enabled)
-                    if fcurve.mute:
-                        keys.path_resolve(fcurve.data_path.rsplit(".", 1)[0]).value = 0.0
-            keys.update_tag()
+    if not hasattr(self, "rules"):
+        # A rule is the master switch for its authored pose rows. Individual
+        # pose switches remain available when the rule itself is enabled.
+        enabled = bool(self.enabled)
+        for point in _authored_points(self):
+            if point.enabled != enabled:
+                point.enabled = enabled
+    _sync_pose_enabled(armature, context=context)
+
+
+def _update_pose_enabled(self, context):
+    armature = self.id_data
+    settings = settings_for(armature)
+    if settings is None:
+        return
+    owner = _find_pose_rule(settings, self)
+    if owner is not None:
+        _set_pose_enabled(armature, owner, self, context=context)
 
 
 def _current_local_pose(armature, bone_name):
@@ -82,7 +92,9 @@ class PG_BsCorrectiveInfluenceObject(PropertyGroup):
 class PG_BsCorrectivePosePoint(PropertyGroup):
     """One authored pose and its generated shape-key name."""
     id: StringProperty(default="")  # type: ignore
+    enabled: BoolProperty(name="启用", default=True, update=_update_pose_enabled)  # type: ignore
     bs_name: StringProperty(name="BS 名称", default="_BSC_pose1")  # type: ignore
+    weight: FloatProperty(name="权重", default=1.0, min=0.0, max=1.0, subtype="FACTOR")  # type: ignore
     x: FloatProperty(name="X", default=0.0, unit="ROTATION")  # type: ignore
     y: FloatProperty(name="Y", default=0.0, unit="ROTATION")  # type: ignore
     z: FloatProperty(name="Z", default=0.0, unit="ROTATION")  # type: ignore
@@ -176,6 +188,8 @@ def _validate_rule(armature, rule, require_targets=True):
         if name in names:
             raise ValueError(f"规则内姿势 BS 名称重复：{name}")
         names.add(name)
+        if not math.isfinite(point.weight) or not 0.0 <= point.weight <= 1.0:
+            raise ValueError(f"姿势权重必须在 0..1：{name}")
     meshes = _rule_meshes(rule)
     if not meshes:
         raise ValueError(f"规则缺少影响物体：{rule.bone}")
@@ -242,6 +256,8 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
                     "id": point.id,
                     "bsName": point.bs_name.strip(),
                     "pointId": point.id,
+                    "enabled": bool(rule.enabled and point.enabled),
+                    "weight": float(point.weight),
                     "targets": [
                         {"mesh": mesh.name, "shapeKey": point.bs_name.strip()}
                         for mesh in _rule_meshes(rule)
@@ -316,7 +332,7 @@ def _compile_rbf(rule):
     for column, point in enumerate(points):
         if point.id not in indices:
             raise ValueError("姿势引用了不存在的控制点")
-        values[indices[point.id], column] = 1.0
+        values[indices[point.id], column] = float(point.weight)
     try:
         coefficients = np.linalg.solve(kernel, values)
     except np.linalg.LinAlgError as exc:
@@ -386,6 +402,7 @@ def _rebuild_driver_namespace():
     """Rebuild runtime rule data from serialized armature settings."""
     _RBF_RUNTIME.clear()
     _RBF_CACHE.clear()
+    _RBF_UI_CACHE.clear()
     for armature in bpy.data.objects:
         if armature.type != "ARMATURE":
             continue
@@ -417,6 +434,7 @@ def _unregister_driver_namespace():
         bpy.app.driver_namespace.pop(_DRIVER_NAMESPACE_FUNCTION, None)
     _RBF_RUNTIME.clear()
     _RBF_CACHE.clear()
+    _RBF_UI_CACHE.clear()
 
 
 @persistent
@@ -456,6 +474,65 @@ def _owned_driver(fcurve, armature, rule_ids):
             and any(json.dumps(rule_id) in fcurve.driver.expression for rule_id in rule_ids))
 
 
+def _driver_owns_pose(fcurve, point_id):
+    return json.dumps(point_id) in fcurve.driver.expression
+
+
+def _find_pose_rule(settings, point):
+    point_pointer = point.as_pointer()
+    for rule in settings.rules:
+        if any(candidate.as_pointer() == point_pointer for candidate in rule.pose_points):
+            return rule
+    return None
+
+
+def _set_shape_key_enabled(key, enabled):
+    key.mute = not enabled
+    if not enabled:
+        key.value = 0.0
+
+
+def _set_pose_enabled(armature, rule, point, context=None, update=True):
+    """Synchronize one pose's authored enabled state to all target keys/drivers."""
+    settings = settings_for(armature)
+    if settings is None or point.id == _BASE_POINT:
+        return
+    enabled = bool(settings.enabled and rule.enabled and point.enabled)
+    names = point.bs_name.strip()
+    for mesh in _rule_meshes(rule):
+        shape_keys = mesh.data.shape_keys
+        key = shape_keys.key_blocks.get(names) if shape_keys else None
+        if key is not None:
+            _set_shape_key_enabled(key, enabled)
+            shape_keys.update_tag()
+    for keys in bpy.data.shape_keys:
+        animation = keys.animation_data
+        for fcurve in list(animation.drivers) if animation else []:
+            if not (_owned_driver(fcurve, armature, {rule.id}) and _driver_owns_pose(fcurve, point.id)):
+                continue
+            fcurve.mute = not enabled
+            try:
+                key = keys.path_resolve(fcurve.data_path.rsplit(".", 1)[0])
+                _set_shape_key_enabled(key, enabled)
+            except (AttributeError, KeyError, RuntimeError, ValueError):
+                # A stale driver path can survive an edited shape-key list.
+                pass
+        keys.update_tag()
+    if update and context is not None and getattr(context, "view_layer", None) is not None:
+        context.view_layer.update()
+
+
+def _sync_pose_enabled(armature, rule_indices=None, context=None):
+    settings = settings_for(armature)
+    if settings is None:
+        return
+    for _, rule in _selected_rules(armature, rule_indices):
+        for point in _authored_points(rule):
+            _set_pose_enabled(armature, rule, point, update=False)
+    if context is not None and getattr(context, "view_layer", None) is not None:
+        context.view_layer.update()
+
+
 def _validate_outputs(armature, rule_indices=None):
     """Reject conflicting outputs and foreign drivers before touching the graph."""
     settings = settings_for(armature)
@@ -483,9 +560,12 @@ def _validate_outputs(armature, rule_indices=None):
 
 
 def generate_native_drivers(armature, rule_indices=None):
-    """Create Blender drivers for enabled rules, caching one RBF result per pose."""
+    """Create Blender drivers and resync every pose's enabled state."""
     settings = settings_for(armature)
-    if settings is None or not settings.enabled:
+    if settings is None:
+        return 0
+    _sync_pose_enabled(armature, rule_indices)
+    if not settings.enabled:
         return 0
     _validate_outputs(armature, rule_indices)
     prepared = {}
@@ -518,6 +598,7 @@ def generate_native_drivers(armature, rule_indices=None):
                 for channel in "YZ":
                     _set_transform_variable(driver, channel.lower(), armature, rule.bone, channel)
                 generated += 1
+        _sync_pose_enabled(armature, rule_indices)
     except Exception:
         # Do not leave a truncated or half-generated driver graph behind.
         remove_native_drivers(armature, rule_indices)
@@ -587,12 +668,20 @@ def _collect_generated_targets(armature, overwrite=True, rule_indices=None):
                 if existing is not None:
                     if existing == mesh.data.shape_keys.reference_key:
                         raise ValueError(f"不能覆盖基准形态键：{mesh.name}/{name}")
-                    animation = existing.id_data.animation_data
-                    for fcurve in animation.drivers if animation else []:
-                        if fcurve.data_path == existing.path_from_id("value") and not _owned_driver(fcurve, armature, {rule.id}):
-                            raise ValueError(f"目标已有其他驱动器：{mesh.name}/{name}")
+                    if not overwrite:
+                        animation = existing.id_data.animation_data
+                        for fcurve in animation.drivers if animation else []:
+                            if fcurve.data_path == existing.path_from_id("value") and not _owned_driver(fcurve, armature, {rule.id}):
+                                raise ValueError(f"目标已有其他驱动器：{mesh.name}/{name}")
                 targets.append((point, mesh, name))
     return targets
+
+
+def _remove_shape_key_drivers(key):
+    animation = key.id_data.animation_data
+    for fcurve in list(animation.drivers) if animation else []:
+        if fcurve.data_path == key.path_from_id("value"):
+            key.id_data.driver_remove(fcurve.data_path, fcurve.array_index)
 
 
 def _prepare_generated_shape_keys(armature, overwrite=True, rule_indices=None):
@@ -607,6 +696,7 @@ def _prepare_generated_shape_keys(armature, overwrite=True, rule_indices=None):
             mesh.shape_key_add(name=name, from_mix=False)
         elif overwrite:
             # Preserve key identity, relative-key references and topology.
+            _remove_shape_key_drivers(existing)
             basis = mesh.data.shape_keys.reference_key
             coordinates = np.empty(len(basis.data) * 3, dtype=np.float32)
             basis.data.foreach_get("co", coordinates)
@@ -623,8 +713,14 @@ class HO_UL_BsCorrectiveRule(UIList):
         select = row.row(align=True)
         select.enabled = bool(item.bone)
         select.operator("hotools.bs_corrective_select_bone", text="", icon="RESTRICT_SELECT_OFF").index = index
-        row.label(text=f"{item.bone or '未指定骨骼'}")
-        row.label(text=str(max(0, len(item.pose_points) - 1)))
+        armature = context.object if context.object and context.object.type == "ARMATURE" else None
+        if armature is not None:
+            row.prop_search(item, "bone", armature.data, "bones", text="")
+        else:
+            row.prop(item, "bone", text="")
+        row.prop(item, "rbf_radius", text="")
+        rotation = _display_bone_rotation(item, armature)
+        row.label(text=f"当前 {rotation}" if rotation else "当前 --")
 
 
 
@@ -642,11 +738,58 @@ class HO_UL_BsCorrectivePoint(UIList):
             preview.operator("hotools.bs_corrective_pose", text="", icon="MOD_ARMATURE").index = index
             row.label(text="基准姿态")
             row.label(text="0° / 0° / 0°")
+            row.label(text="RBF 0.000")
 
         else:
+            row.prop(item, "enabled", text="")
             preview.operator("hotools.bs_corrective_pose", text="", icon="OUTLINER_OB_ARMATURE").index = index
             row.prop(item, "bs_name", text="", emboss=False)
+            row.prop(item, "weight", text="")
             row.label(text=f"{math.degrees(item.x):.1f}° / {math.degrees(item.y):.1f}° / {math.degrees(item.z):.1f}°")
+            weight = _display_rbf_weight(data, item, context.object)
+            row.label(text=f"RBF {weight:.3f}" if weight is not None else "RBF --")
+
+
+def _display_rbf_weight(rule, point, armature):
+    """Return the current driver-space weight without making UI drawing fail."""
+    if point.id == _BASE_POINT or armature is None or not rule.bone:
+        return 0.0 if point.id == _BASE_POINT else None
+    try:
+        current = _current_local_pose(armature, rule.bone)
+    except (AttributeError, ValueError, RuntimeError):
+        return None
+    signature = (
+        rule.as_pointer(),
+        rule.id,
+        tuple((p.id, float(p.x), float(p.y), float(p.z)) for p in _authored_points(rule)),
+        float(rule.rbf_radius),
+        current,
+    )
+    cache_key = (armature.as_pointer(), signature)
+    cached = _RBF_UI_CACHE.get(cache_key)
+    if cached is None:
+        item = _RBF_RUNTIME.get(rule.id)
+        try:
+            if item is None:
+                item = _decode_rbf_payload(_encode_rbf_payload(rule, persist=False))
+            values = _evaluate_rbf_outputs(item, current)
+            cached = {pose_id: float(values[index]) for pose_id, index in item[1].items()}
+        except (KeyError, TypeError, ValueError, RuntimeError, np.linalg.LinAlgError):
+            cached = {}
+        if len(_RBF_UI_CACHE) > 128:
+            _RBF_UI_CACHE.clear()
+        _RBF_UI_CACHE[cache_key] = cached
+    return cached.get(point.id)
+
+
+def _display_bone_rotation(rule, armature):
+    if armature is None or not rule.bone:
+        return None
+    try:
+        pose = _current_local_pose(armature, rule.bone)
+    except (AttributeError, ValueError, RuntimeError):
+        return None
+    return " / ".join(f"{math.degrees(value):.1f}°" for value in pose)
 
 
 def _active_rule(context):
@@ -917,37 +1060,6 @@ class OP_BsCorrectiveReset(_BatchRuleOperator, Operator):
         return {"FINISHED"}
 
 
-class OP_BsCorrectiveRemoveDrivers(_BatchRuleOperator, Operator):
-    bl_idname = "hotools.bs_corrective_remove_drivers"
-    bl_label = "移除驱动"
-    bl_description = "移除活动规则生成的驱动器；Shift 点击确认批量处理全部规则"
-    bl_options = {"REGISTER", "UNDO"}
-    all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
-
-    def execute(self, context):
-        count = remove_native_drivers(context.object, self.indices(context))
-        self.report({"INFO"}, f"已移除 {count} 条 BS 驱动器")
-        return {"FINISHED"}
-
-
-class OP_BsCorrectiveClearControls(_BatchRuleOperator, Operator):
-    bl_idname = "hotools.bs_corrective_clear_controls"
-    bl_label = "删除控件"
-    bl_description = "删除活动规则的修型姿势及其驱动器，保留已生成的 BS；Shift 点击确认批量执行"
-    bl_options = {"REGISTER", "UNDO"}
-    all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
-
-    def execute(self, context):
-        armature = context.object
-        remove_native_drivers(armature, self.indices(context))
-        for _, rule in _selected_rules(armature, self.indices(context)):
-            rule.pose_points.clear()
-            rule.driver_payload = ""
-            _ensure_base_point(rule)
-            rule.pose_active_index = 0
-        return {"FINISHED"}
-
-
 def _list_button(layout, kind, action, icon, index=-1):
     operator = layout.operator(OP_BsCorrectiveListEdit.bl_idname, text="", icon=icon)
     operator.kind, operator.action, operator.index = kind, action, index
@@ -956,6 +1068,7 @@ def _list_button(layout, kind, action, icon, index=-1):
 
 def _draw_list(layout, list_type, owner, collection, active, kind, rows=4):
     row = layout.row()
+    row.template_list(list_type.__name__, kind, owner, collection, owner, active, rows=rows)
     buttons = row.column(align=True)
     _list_button(buttons, kind, "ADD", "ADD")
     _list_button(buttons, kind, "REMOVE", "REMOVE")
@@ -967,7 +1080,6 @@ def _draw_list(layout, list_type, owner, collection, active, kind, rows=4):
     buttons.separator()
     _list_button(buttons, kind, "UP", "TRIA_UP")
     _list_button(buttons, kind, "DOWN", "TRIA_DOWN")
-    row.template_list(list_type.__name__, kind, owner, collection, owner, active, rows=rows)
 
 
 def draw_bs_corrective_header(layout, context):
@@ -986,26 +1098,19 @@ def draw_bs_corrective_menu(layout, context):
         layout.label(text="请选择骨架", icon="INFO")
         return
     settings = settings_for(armature)
-    top = layout.split(factor=0.5)
-    left, right = top.column(), top.column()
-    _draw_list(left, HO_UL_BsCorrectiveRule, settings, "rules", "active_index", "RULES")
     rule = _active_rule(context)
+    actions = layout.row(align=True)
+    actions.enabled = rule is not None
+    actions.operator(OP_BsCorrectiveReset.bl_idname, text="重置规则", icon="FILE_REFRESH")
+    actions.operator(OP_BsCorrectiveGenerateDrivers.bl_idname, text="刷新驱动", icon="DRIVER")
+    top = layout.split(factor=0.72)
+    left, right = top.column(), top.column()
+    _draw_list(left, HO_UL_BsCorrectiveRule, settings, "rules", "active_index", "RULES", rows=7)
     if rule is None:
         right.label(text="添加规则后，摆姿态并添加修型姿势。", icon="INFO")
         return
-    _draw_list(right, HO_UL_BsCorrectivePoint, rule, "pose_points", "pose_active_index", "POINTS")
-    _draw_list(layout, HO_UL_BsCorrectiveInfluence, rule, "influence_objects", "influence_active_index", "OBJECTS")
-    detail = layout.box()
-    detail.label(text=f"活动规则 · {settings.active_index + 1}", icon="BONE_DATA")
-    detail.prop_search(rule, "bone", armature.data, "bones", text="参考骨骼")
-    detail.prop(rule, "rbf_radius", text="影响半径")
-    row = detail.row(align=True)
-    row.operator(OP_BsCorrectiveReset.bl_idname, text="重置规则", icon="FILE_REFRESH")
-    row.operator(OP_BsCorrectiveGenerateDrivers.bl_idname, text="刷新驱动", icon="DRIVER")
-    row = detail.row(align=True)
-    row.operator(OP_BsCorrectiveRemoveDrivers.bl_idname, text="移除驱动", icon="X")
-    row.operator(OP_BsCorrectiveClearControls.bl_idname, text="删除控件", icon="TRASH")
-    detail.label(text="Shift 点击操作按钮：确认后处理全部规则", icon="INFO")
+    _draw_list(right, HO_UL_BsCorrectiveInfluence, rule, "influence_objects", "influence_active_index", "OBJECTS", rows=7)
+    _draw_list(layout, HO_UL_BsCorrectivePoint, rule, "pose_points", "pose_active_index", "POINTS")
 
 
 def draw_bs_corrective_panel(layout, context):
@@ -1021,7 +1126,7 @@ CLASSES = [
     PG_BsCorrectiveRule, PG_BsCorrectiveSettings,
     HO_UL_BsCorrectiveRule, HO_UL_BsCorrectiveInfluence, HO_UL_BsCorrectivePoint,
     OP_BsCorrectiveSelectBone, OP_BsCorrectiveListEdit, OP_BsCorrectivePose, OP_BsCorrectiveGenerateDrivers,
-    OP_BsCorrectiveReset, OP_BsCorrectiveRemoveDrivers, OP_BsCorrectiveClearControls,
+    OP_BsCorrectiveReset,
 ]
 
 

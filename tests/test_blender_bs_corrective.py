@@ -100,6 +100,11 @@ for pose, expected in [((0, 0, 0), (0, 0)), ((p1.x, p1.y, p1.z), (1, 0)), ((p2.x
                 close(mesh.data.shape_keys.key_blocks[rule.pose_points[index + 1].bs_name].value, value)
             assert all(fc.driver.is_valid for fc in mesh.data.shape_keys.animation_data.drivers)
 
+arm.pose.bones["Main"].rotation_quaternion = Euler((p1.x, p1.y, p1.z), "XYZ").to_quaternion()
+bpy.context.view_layer.update()
+assert bs._display_rbf_weight(rule, p1, arm) > 0.99
+assert bs._display_rbf_weight(rule, p2, arm) < 0.01
+
 # Same input, different output drivers: one solve/evaluation of the complete rule.
 bs._RBF_CACHE.clear()
 original_evaluate = bs._evaluate_rbf_outputs
@@ -129,11 +134,37 @@ bs._RBF_CACHE.pop("wrap-test")
 # Native toggles mute live drivers and restore evaluation when re-enabled.
 settings.enabled = False
 assert all(fc.mute for fc in coat.data.shape_keys.animation_data.drivers)
+assert all(coat.data.shape_keys.key_blocks[name].mute for name in (p1.bs_name, p2.bs_name))
 settings.enabled = True
 assert not any(fc.mute for fc in coat.data.shape_keys.animation_data.drivers)
+assert not any(coat.data.shape_keys.key_blocks[name].mute for name in (p1.bs_name, p2.bs_name))
 rule.enabled = False
 assert all(fc.mute for fc in coat.data.shape_keys.animation_data.drivers)
+assert all(coat.data.shape_keys.key_blocks[name].mute for name in (p1.bs_name, p2.bs_name))
+assert not p1.enabled and not p2.enabled
 rule.enabled = True
+assert not any(coat.data.shape_keys.key_blocks[name].mute for name in (p1.bs_name, p2.bs_name))
+assert p1.enabled and p2.enabled
+
+# Pose-level switches mute only their own output, and the authored weight is
+# compiled into that pose's RBF output channel.
+p1.enabled = False
+assert coat.data.shape_keys.key_blocks[p1.bs_name].mute
+assert all(fc.mute for fc in coat.data.shape_keys.animation_data.drivers
+           if bs._owned_driver(fc, arm, {rule.id}) and bs._driver_owns_pose(fc, p1.id))
+assert bs.generate_native_drivers(arm) == 4
+assert all(fc.mute for fc in coat.data.shape_keys.animation_data.drivers
+           if bs._owned_driver(fc, arm, {rule.id}) and bs._driver_owns_pose(fc, p1.id))
+p1.enabled = True
+p1.weight = 0.25
+assert bs.generate_native_drivers(arm) == 4
+assert all("*0.25" not in fc.driver.expression for fc in coat.data.shape_keys.animation_data.drivers
+           if bs._owned_driver(fc, arm, {rule.id}) and bs._driver_owns_pose(fc, p1.id))
+arm.pose.bones["Main"].rotation_quaternion = Euler((p1.x, p1.y, p1.z), "XYZ").to_quaternion()
+bpy.context.view_layer.update()
+close(coat.data.shape_keys.key_blocks[p1.bs_name].value, 0.25)
+p1.weight = 1.0
+assert bs.generate_native_drivers(arm) == 4
 
 # Reset reuses key identity; unchecked overwrite preserves authored vertex data.
 key = coat.data.shape_keys.key_blocks[p1.bs_name]
@@ -161,13 +192,18 @@ p2.x, p2.y, p2.z = p1.x, p1.y, p1.z
 raises(lambda: bs.generate_native_drivers(arm), "duplicate RBF point accepted")
 assert len(coat.data.shape_keys.animation_data.drivers) == 2
 p2.x, p2.y, p2.z = pose2
-# Foreign drivers are never overwritten.
+# Refresh protects foreign drivers; reset with overwrite explicitly replaces them.
 foreign = coat.shape_key_add(name="Foreign")
 foreign.driver_add("value").driver.expression = "0.25"
 old_shape = p1.bs_name
 p1.bs_name = "Foreign"
 raises(lambda: bs.generate_native_drivers(arm), "foreign driver accepted")
+assert bs.reset_correctives(arm, overwrite=True) == 4
 p1.bs_name = old_shape
+assert bs.reset_correctives(arm, overwrite=True) == 4
+# The overwrite reset intentionally removed the old foreign driver. Recreate
+# it here so the cleanup assertion still verifies unrelated drivers survive.
+foreign.driver_add("value").driver.expression = "0.25"
 
 # Virtual reference sample is a native UIList row but cannot be removed/moved.
 rule.pose_active_index = 0
@@ -178,6 +214,8 @@ assert list_edit("POINTS", "DOWN") == {"FINISHED"}
 assert list_edit("POINTS", "UP") == {"FINISHED"}
 
 # Export carries links; the zero baseline is fixed and not duplicated in samples.
+p1.enabled = False
+p2.weight = 0.4
 config = bs.build_export_config(arm, measurement_bones={"Main": "MCH_Main"})
 exported = config["rules"][0]
 assert config["version"] == 3 and config["poseSpace"] == "LOCAL"
@@ -186,7 +224,12 @@ assert exported["rbf"]["includeBase"] and exported["rbf"]["basePose"] == [0, 0, 
 assert len(exported["rbf"]["controlPoints"]) == 2
 assert len(exported["tasks"]) == 2
 assert {task["pointId"] for task in exported["tasks"]} == {point["id"] for point in exported["rbf"]["controlPoints"]}
+assert all("enabled" in task and "weight" in task for task in exported["tasks"])
+assert next(task for task in exported["tasks"] if task["pointId"] == p1.id)["enabled"] is False
+close(next(task for task in exported["tasks"] if task["pointId"] == p2.id)["weight"], 0.4)
 assert len(exported["influenceObjects"]) == 2
+p1.enabled = True
+p2.weight = 1.0
 raises(lambda: bs._decode_rbf_payload('{"positions":[[0,0,0]],"coefficients":{"x":[1,2]},"radius":1}'), "bad coefficient length accepted")
 
 # The namespace and its serialized coefficients survive a real .blend reload.
@@ -231,7 +274,7 @@ settings.rules.remove(1)
 bs._restore_driver_namespace(None)
 assert "large-test" not in bs._RBF_RUNTIME
 
-# Batch controls really process a second rule; ordinary operations stay local.
+# Batch reset and refresh process a second rule; ordinary operations stay local.
 batch = settings.rules.add()
 batch.id, batch.bone = "batch-test", "Main"
 batch.influence_objects.add().mesh = coat
@@ -239,21 +282,28 @@ bs._add_point(arm, batch, (0.1, 0.7, -0.5))
 assert bpy.ops.hotools.bs_corrective_reset(all_rules=True, overwrite_existing=False) == {"FINISHED"}
 assert "batch-test" in bs._RBF_RUNTIME
 settings.active_index = 0
-assert bpy.ops.hotools.bs_corrective_remove_drivers(all_rules=False) == {"FINISHED"}
+rule.enabled = False
+assert all(fc.mute for fc in coat.data.shape_keys.animation_data.drivers if bs._owned_driver(fc, arm, {rule.id}))
+rule.enabled = True
+assert not any(fc.mute for fc in coat.data.shape_keys.animation_data.drivers if bs._owned_driver(fc, arm, {rule.id}))
+bs.remove_native_drivers(arm, [0])
 assert rule.id not in bs._RBF_RUNTIME and "batch-test" in bs._RBF_RUNTIME
 assert bpy.ops.hotools.bs_corrective_generate_drivers(all_rules=True) == {"FINISHED"}
 assert rule.id in bs._RBF_RUNTIME and "batch-test" in bs._RBF_RUNTIME
 from types import SimpleNamespace
 dialogs = []
 fake_context = SimpleNamespace(window_manager=SimpleNamespace(invoke_props_dialog=lambda op, **kw: dialogs.append(op.all_rules) or {"RUNNING_MODAL"}))
-for operator_type in (bs.OP_BsCorrectiveReset, bs.OP_BsCorrectiveGenerateDrivers, bs.OP_BsCorrectiveRemoveDrivers, bs.OP_BsCorrectiveClearControls):
+for operator_type in (bs.OP_BsCorrectiveReset, bs.OP_BsCorrectiveGenerateDrivers):
     op = SimpleNamespace(bl_idname=operator_type.bl_idname, all_rules=False)
     assert bs._BatchRuleOperator.invoke(op, fake_context, SimpleNamespace(shift=True)) == {"RUNNING_MODAL"}
-assert dialogs == [True] * 4
+assert dialogs == [True] * 2
 
-# Clear authored poses in a batch; keep sculpted keys and foreign drivers.
+# Remove the second rule and clear authored poses through the native pose list.
+bs.remove_native_drivers(arm)
+settings.rules.remove(1)
 bpy.context.view_layer.objects.active = arm
-assert bpy.ops.hotools.bs_corrective_clear_controls(all_rules=True) == {"FINISHED"}
+settings.active_index = 0
+assert list_edit("POINTS", "CLEAR") == {"FINISHED"}
 assert len(rule.pose_points) == 1
 assert rule.pose_points[0].id == bs._BASE_POINT
 assert not bs._RBF_RUNTIME and not bs._RBF_CACHE
