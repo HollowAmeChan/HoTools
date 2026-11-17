@@ -1,6 +1,7 @@
 """Small, portable expression subset shared by native drivers and HoFBX.
 
-No Python callbacks/driver_namespace entries are needed in saved blend files.
+The parser keeps authored expressions intact; the driver generator verifies
+what Blender's RNA field actually stores before accepting a generated driver.
 """
 import ast
 import math
@@ -16,15 +17,13 @@ def validate_name(name):
 
 
 def parse(expression, names=()):
-    if not expression or len(expression) > 1024:
-        raise ValueError("表达式不能为空且最多 1024 字符")
+    if not expression:
+        raise ValueError("表达式不能为空")
     try:
         tree = ast.parse(expression, mode="eval")
     except (SyntaxError, RecursionError) as exc:
         raise ValueError("表达式语法无效") from exc
     nodes = list(ast.walk(tree))
-    if len(nodes) > 256:
-        raise ValueError("表达式过于复杂")
     allowed_names = {"x", "y", "z", "pi", *names}
     for node in nodes:
         if isinstance(node, ast.Constant):
@@ -63,8 +62,6 @@ def parse(expression, names=()):
             return f"{node.func.id}({','.join(args)})"
         return emit(node.body)
     result = emit(tree)
-    # Blender's native expression field is bounded; fail before mutating drivers.
-    result = f"min(max({result},0),1)"
-    if len(result) > 255:
-        raise ValueError("生成的原生驱动表达式超过 255 字符，请简化")
-    return result
+    # Blender 4.5 accepts the complete generated expression; keep it intact so
+    # a dense RBF control domain does not need a custom-property proxy.
+    return f"min(max({result},0),1)"

@@ -2327,7 +2327,11 @@ class FBXExporter:
         directly.  Export preprocessing may substitute an MCH measurement bone
         when the source bone is configured for MCH conversion.
         """
-        from ..Rbf.bs_corrective import build_export_config
+        try:
+            from ..Rbf.bs_corrective import build_export_config
+        except ImportError:
+            # Partial exporter tests load this module as top-level ``Exporter``.
+            from HoTools.Rbf.bs_corrective import build_export_config
 
         rules = []
         for armature in armature_objects:
