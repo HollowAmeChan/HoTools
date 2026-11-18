@@ -1516,6 +1516,9 @@ class RTDirectChannel(RTBakeChannel):
     EMIT，目标是尽量接近当前材质网络经过 Cycles 计算后的综合结果。因为它
     不拆材质节点，所以适合复杂节点、数学运算、BSDF 混合等“不要解释节点，
     只要当前结果”的场景。
+
+    开启“使用修改器结果”时，临时使用当前视口求值后的网格，让目标 UV、
+    属性、材质和后处理遮罩与修改器结果一致，完成或失败后恢复原网格。
     """
 
     def __init__(self):
@@ -1539,6 +1542,79 @@ class RTDirectChannel(RTBakeChannel):
             "direct_non_color",
             text="非彩色图像",
         )
+        col.prop(rt_settings, "direct_use_modifiers")
+
+    def execute(self, context, operator):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        if not rt_settings.direct_use_modifiers:
+            return super().execute(context, operator)
+
+        mode_state = self._switch_to_object_mode(context)
+        mesh_states = []
+        try:
+            self._prepare_modifier_meshes(context, mesh_states)
+            # Keep the evaluated UVs and materials active through image-target
+            # creation, baking, padding and cropping, not just object.bake.
+            return super().execute(context, operator)
+        finally:
+            try:
+                self._restore_modifier_meshes(context, mesh_states)
+            finally:
+                self._restore_mode(context, mode_state)
+
+    def _prepare_modifier_meshes(self, context, mesh_states):
+        context.view_layer.update()
+        depsgraph = context.evaluated_depsgraph_get()
+        # Evaluate every target before swapping any data. A modifier may read
+        # another target, so mutating objects during evaluation can apply it
+        # twice or change its input partway through a multi-object bake.
+        for obj in _get_bake_target_objects(context):
+            evaluated = obj.evaluated_get(depsgraph)
+            mesh = bpy.data.meshes.new_from_object(
+                evaluated,
+                preserve_all_data_layers=True,
+                depsgraph=depsgraph,
+            )
+            mesh_states.append({
+                "object": obj,
+                "original_mesh": obj.data,
+                "mesh": mesh,
+                "material_slots": [(slot.link, slot.material) for slot in obj.material_slots],
+                "active_material_index": obj.active_material_index,
+                "modifiers": [(modifier, modifier.show_viewport, modifier.show_render)
+                              for modifier in obj.modifiers],
+            })
+            mesh.name = f"HoRTBake_Evaluated_{obj.name}"
+
+        for state in mesh_states:
+            obj = state["object"]
+            obj.data = state["mesh"]
+            # The new mesh already contains the enabled viewport modifiers.
+            # Disable the stack for both bake/render and viewport evaluation.
+            for modifier, _, _ in state["modifiers"]:
+                modifier.show_viewport = False
+                modifier.show_render = False
+        context.view_layer.update()
+
+    def _restore_modifier_meshes(self, context, mesh_states):
+        for state in reversed(mesh_states):
+            obj = state["object"]
+            obj.data = state["original_mesh"]
+            for slot, (link, material) in zip(obj.material_slots, state["material_slots"]):
+                slot.link = link
+                if link == 'OBJECT':
+                    slot.material = material
+            obj.active_material_index = state["active_material_index"]
+            for modifier, show_viewport, show_render in state["modifiers"]:
+                modifier.show_viewport = show_viewport
+                modifier.show_render = show_render
+        # Drop all temporary meshes only after the original scene is restored.
+        for state in mesh_states:
+            mesh = state["mesh"]
+            if mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        if mesh_states:
+            context.view_layer.update()
 
     def is_non_color_output(self, context=None):
         if context is None:
@@ -1707,6 +1783,12 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
     direct_non_color: BoolProperty(
         name="非彩色图像",
         description="以 Non-Color 数据图像方式保存直出结果，适合需要避免 sRGB 编码的贴图",
+        default=False,
+    )  # type: ignore
+    direct_use_modifiers: BoolProperty(
+        name="使用修改器结果",
+        description="使用当前视口启用的修改器求值结果（含UV和属性）进行直出烘焙，"
+                    "结束后恢复原网格；几何节点仍由“忽略几何节点”控制",
         default=False,
     )  # type: ignore
     use_ao: BoolProperty(name="环境光遮蔽 (AO)", default=False)  # type: ignore
