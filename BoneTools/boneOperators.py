@@ -1,7 +1,7 @@
 import ast
 
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 from bpy.types import Operator
 from bpy.types import UILayout, Context
 from bpy.props import (
@@ -926,6 +926,22 @@ def _is_aux_bone(pose_bone) -> bool:
     return bool(aux and aux.isAuxBone)
 
 
+def _confirm_constraint_deletion(operator, context, event, bone_filter=None):
+    armature = context.active_object
+    count = sum(
+        len(bone.constraints) for bone in armature.pose.bones
+        if bone_filter is None or bone_filter(bone)
+    )
+    return context.window_manager.invoke_confirm(
+        operator,
+        event,
+        title=operator.bl_label,
+        message=f"将删除骨架「{armature.name}」上的 {count} 个约束。此操作可撤销。",
+        confirm_text="删除约束",
+        icon="WARNING",
+    )
+
+
 class OP_DisableAllBoneConstraints(Operator):
     bl_idname = "ho.disable_all_bone_constraints"
     bl_label = "禁用所有骨骼约束"
@@ -966,6 +982,35 @@ class OP_EnableAllBoneConstraints(Operator):
         else:
             self.report({'INFO'}, f"已启用 {bone_count} 根骨骼上的 {constraint_count} 个约束")
         return {'FINISHED'}
+
+
+class OP_ClearAllBoneConstraints(Operator):
+    bl_idname = "ho.clear_all_bone_constraints"
+    bl_label = "删除所有骨骼约束"
+    bl_description = "确认后删除当前活动骨架所有骨骼上的全部约束；可撤销"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and obj.type == "ARMATURE"
+            and obj.is_editable and obj.data.is_editable
+        )
+
+    def invoke(self, context, event):
+        return _confirm_constraint_deletion(self, context, event)
+
+    def execute(self, context):
+        armature = context.active_object
+        count = 0
+        with arpAssembly.object_context(context):
+            for bone in armature.pose.bones:
+                for constraint in list(bone.constraints):
+                    bone.constraints.remove(constraint)
+                    count += 1
+        self.report({"INFO"}, f"已删除 {count} 个骨骼约束")
+        return {"FINISHED"}
 
 
 class OP_DisableHumanoidBoneConstraints(Operator):
@@ -1013,13 +1058,16 @@ class OP_EnableHumanoidBoneConstraints(Operator):
 class OP_ClearHumanoidConstraints(Operator):
     bl_idname = "ho.clear_humanoid_constraints"
     bl_label = "删除 Humanoid 骨全部约束"
-    bl_description = "删除当前活动骨架中带 Humanoid 映射的骨上的全部约束，包括手工约束；可撤销"
+    bl_description = "确认后删除当前活动骨架中带 Humanoid 映射的骨上的全部约束，包括手工约束；可撤销"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
         obj = context.active_object
         return obj is not None and obj.type == "ARMATURE"
+
+    def invoke(self, context, event):
+        return _confirm_constraint_deletion(self, context, event, _is_humanoid_bone)
 
     def execute(self, context):
         armature = context.active_object
@@ -1108,6 +1156,57 @@ class OP_ResetAllBonePose(Operator):
             count += 1
         self.report({'INFO'}, f"已重置 {count} 根骨骼的姿态")
         return {'FINISHED'}
+
+
+class OP_SymmetrizeSelectedPose(Operator):
+    bl_idname = "ho.symmetrize_selected_pose"
+    bl_label = "镜像/翻转姿态"
+    bl_description = (
+        "将所选骨骼姿态镜像到同名对侧骨；两侧都选中时交换姿态，"
+        "跳过中间骨和缺少对侧的骨骼"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and obj.type == "ARMATURE"
+            and context.mode == "POSE"
+            and bool(bone_utils.selected_bone_names(context, obj))
+        )
+
+    def execute(self, context):
+        armature = context.active_object
+        selected_names = bone_utils.selected_bone_names(context, armature)
+        source_names = [
+            name for name in selected_names
+            if bpy.utils.flip_name(name) != name
+            and bpy.utils.flip_name(name) in armature.pose.bones
+        ]
+        if not source_names:
+            self.report({"WARNING"}, "所选骨骼没有可对称的同名对侧骨")
+            return {"CANCELLED"}
+
+        mirror_x = Matrix.Diagonal((-1.0, 1.0, 1.0, 1.0))
+        mirrored_poses = {
+            bpy.utils.flip_name(name): (
+                mirror_x @ armature.pose.bones[name].matrix_basis.copy() @ mirror_x
+            )
+            for name in source_names
+        }
+        mirror_state = bone_utils.set_temp_armature_mirror_off(armature)
+        try:
+            # Reflect local transform channels, as in Blender's flipped paste,
+            # without losing axis-angle rotations or changing rotation modes.
+            for name, matrix in mirrored_poses.items():
+                armature.pose.bones[name].matrix_basis = matrix
+            context.view_layer.update()
+        finally:
+            bone_utils.restore_armature_mirror_state(mirror_state)
+        self.report({"INFO"}, f"已镜像/翻转 {len(source_names)} 根骨骼的姿态")
+        return {"FINISHED"}
+
 
 class OP_BoneApplyConstraint(Operator):
     bl_idname = "ho.bone_apply_constraint"
@@ -1960,11 +2059,16 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     row.operator(OP_SimpleDissolveBone.bl_idname, text="简单融并")
 
     colMain2 = layout.column(align=True)
-    colMain2.operator(OP_ResetAllBonePose.bl_idname, text="重置所有骨骼姿态", icon="LOOP_BACK")
     row = colMain2.row(align=True)
+    row.operator(OP_ResetAllBonePose.bl_idname, text="重置所有骨骼姿态")
+    row.operator(OP_SymmetrizeSelectedPose.bl_idname)
+    row = colMain2.row(align=True)
+    row.operator_context = "INVOKE_DEFAULT"
     row.operator(OP_DisableAllBoneConstraints.bl_idname, text="禁用所有约束")
     row.operator(OP_EnableAllBoneConstraints.bl_idname, text="启用所有约束")
+    row.operator(OP_ClearAllBoneConstraints.bl_idname, text="", icon="TRASH")
     row = colMain2.row(align=True)
+    row.operator_context = "INVOKE_DEFAULT"
     row.operator(OP_DisableHumanoidBoneConstraints.bl_idname, text="禁用Humanoid约束")
     row.operator(OP_EnableHumanoidBoneConstraints.bl_idname, text="启用Humanoid约束")
     row.operator(OP_ClearHumanoidConstraints.bl_idname, text="", icon="TRASH")
@@ -2021,12 +2125,14 @@ cls = [
     OP_DeleteSelectedBoneCurrentFrameKeyframes,
     OP_DisableAllBoneConstraints,
     OP_EnableAllBoneConstraints,
+    OP_ClearAllBoneConstraints,
     OP_DisableHumanoidBoneConstraints,
     OP_EnableHumanoidBoneConstraints,
     OP_ClearHumanoidConstraints,
     OP_DisableAuxBoneConstraints,
     OP_EnableAuxBoneConstraints,
     OP_ResetAllBonePose,
+    OP_SymmetrizeSelectedPose,
     OP_BoneApplyConstraint,
     OP_BoneRemoveConstraints,
     OP_MergeArmatures,
