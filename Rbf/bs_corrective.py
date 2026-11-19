@@ -28,6 +28,7 @@ _RBF_RUNTIME = {}
 _RBF_CACHE = {}
 _RBF_UI_CACHE = {}
 _BASE_POINT = "BASE"
+_LAST_ACTIVE_BONE = None
 
 
 def _update_pose_parameters(self, context):
@@ -171,6 +172,38 @@ def settings_for(armature):
     return getattr(armature, "hotools_bs_corrective", None)
 
 
+@persistent
+def _follow_active_bone(_scene, _depsgraph):
+    """Follow selection changes without overriding manual rule-list selection."""
+    global _LAST_ACTIVE_BONE
+    armature = getattr(bpy.context, "pose_object", None)
+    if armature is None:
+        armature = getattr(bpy.context, "edit_object", None)
+    if armature is None or armature.type != "ARMATURE":
+        _LAST_ACTIVE_BONE = None
+        return
+    bones = armature.data.edit_bones if armature.mode == "EDIT" else armature.data.bones
+    bone = bones.active
+    if bone is None or not bone.select:
+        _LAST_ACTIVE_BONE = None
+        return
+    selection = (armature.as_pointer(), bone.name)
+    if selection == _LAST_ACTIVE_BONE:
+        return
+    _LAST_ACTIVE_BONE = selection
+    settings = settings_for(armature)
+    if settings is None:
+        return
+    if 0 <= settings.active_index < len(settings.rules):
+        if settings.rules[settings.active_index].bone == bone.name:
+            return
+    for index, rule in enumerate(settings.rules):
+        if rule.bone == bone.name:
+            settings.active_index = index
+            AuxPreviewUtils.tag_redraw()
+            return
+
+
 def _armature_object_poll(_self, obj):
     return obj is not None and obj.type == "ARMATURE"
 
@@ -238,6 +271,77 @@ def _validate_pose_names(settings):
             if name in names:
                 raise ValueError(f"修型姿势 BS 名称重复：{name}")
             names.add(name)
+
+
+def rename_corrective_pose(armature, rule, point, new_name):
+    """Rename the pose and existing target keys, preserving geometry and drivers."""
+    settings = settings_for(armature)
+    if settings is None or _find_pose_rule(settings, point) != rule:
+        raise ValueError("修型姿态已不存在，请重新打开高级操作")
+    if point.id == _BASE_POINT:
+        raise ValueError("基准姿态不能改名")
+    new_name = new_name.strip()
+    if not new_name:
+        raise ValueError("修型姿态名称不能为空")
+    max_bytes = bpy.types.ShapeKey.bl_rna.properties["name"].length_max - 1
+    if "\0" in new_name or len(new_name.encode("utf-8")) > max_bytes:
+        raise ValueError(f"形态键名称最多支持 {max_bytes} 个 UTF-8 字节，且不能包含空字符")
+    if not armature.is_editable:
+        raise ValueError("骨架为只读数据，不能修改修型姿态")
+
+    old_name = point.bs_name.strip()
+    if new_name == old_name:
+        return 0
+    meshes = _rule_meshes(rule)
+    mesh_data = {mesh.data.as_pointer() for mesh in meshes}
+    for other_rule in settings.rules:
+        for other_point in _authored_points(other_rule):
+            if other_point == point:
+                continue
+            other_name = other_point.bs_name.strip()
+            if other_name == new_name:
+                raise ValueError(f"修型姿态 BS 名称重复：{new_name}")
+            if other_name == old_name and any(
+                mesh.data.as_pointer() in mesh_data for mesh in _rule_meshes(other_rule)
+            ):
+                raise ValueError(f"原形态键还被其他修型姿态使用：{old_name}")
+
+    targets = []
+    seen = set()
+    for mesh in meshes:
+        keys = mesh.data.shape_keys
+        if keys is None:
+            continue
+        if keys.key_blocks.get(new_name) is not None:
+            raise ValueError(f"目标已有同名形态键：{mesh.name}/{new_name}")
+        key = keys.key_blocks.get(old_name)
+        if key is None:
+            continue
+        if key == keys.reference_key:
+            raise ValueError(f"不能改名基准形态键：{mesh.name}/{old_name}")
+        if not keys.is_editable:
+            raise ValueError(f"目标形态键为只读数据：{mesh.name}/{old_name}")
+        if keys.as_pointer() not in seen:
+            seen.add(keys.as_pointer())
+            targets.append(key)
+
+    renamed = []
+    try:
+        for key in targets:
+            renamed.append((key, key.name))
+            # Blender also updates animation and driver RNA paths on rename.
+            key.name = new_name
+            if key.name != new_name:
+                raise ValueError(f"形态键未能使用指定名称：{new_name}")
+        point.bs_name = new_name
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        for key, original in reversed(renamed):
+            key.name = original
+        raise
+    for key in targets:
+        key.id_data.update_tag()
+    AuxPreviewUtils.tag_redraw()
+    return len(targets)
 
 
 def _validate_rule(armature, rule, require_targets=True):
@@ -493,6 +597,8 @@ def _unregister_driver_namespace():
 
 @persistent
 def _restore_driver_namespace(_):
+    global _LAST_ACTIVE_BONE
+    _LAST_ACTIVE_BONE = None
     _register_driver_namespace()
 
 
@@ -845,6 +951,14 @@ class HO_UL_BsCorrectivePoint(UIList):
             weight = _display_rbf_weight(data, item, _owner_armature(data, context))
             row.label(text=f"RBF {weight:.3f}" if weight is not None else "RBF --")
             row.prop(item, "weight", text="")
+            advanced = row.row(align=True)
+            advanced.operator_context = "INVOKE_DEFAULT"
+            operator = advanced.operator(
+                "hotools.bs_corrective_pose_advanced", text="", icon="PREFERENCES",
+            )
+            operator.armature_name = owner.name if owner is not None else ""
+            operator.rule_id = data.id
+            operator.point_id = item.id
 
 
 
@@ -894,7 +1008,7 @@ def _display_bone_rotation(rule, armature):
 
 
 class BsCorrectivePreview:
-    """3D range preview for the active corrective rule."""
+    """Preview all corrective rules, emphasizing the active rule."""
 
     _handler_3d = None
     _handler_2d = None
@@ -983,15 +1097,8 @@ class BsCorrectivePreview:
         return groups
 
     @classmethod
-    def _draw_3d(cls):
-        if not cls._armature_name:
-            return
-        armature = bpy.data.objects.get(cls._armature_name)
-        settings = settings_for(armature)
-        if armature is None or settings is None or not settings.preview_enabled:
-            return
-        rule = settings.rules[min(settings.active_index, len(settings.rules) - 1)] if settings.rules else None
-        if rule is None or not rule.enabled or not rule.bone:
+    def _draw_rule(cls, shader, armature, settings, rule, active):
+        if not rule.bone:
             return
         bone = armature.pose.bones.get(rule.bone)
         if bone is None:
@@ -1005,65 +1112,86 @@ class BsCorrectivePreview:
         frame = (armature.matrix_world.to_quaternion() @ bone.matrix.to_quaternion()
                  @ bone.matrix_basis.to_quaternion().inverted()).to_matrix()
         actual_direction = AuxPreviewUtils.safe_normalized_vector(tail - head)
+        opacity = 1.0 if active else 0.18
 
+        gpu.state.line_width_set(2.0 if active else 1.0)
+        actual_lines = [tuple(head), tuple(tail)]
+        AuxPreviewUtils.draw_lines(shader, actual_lines, (0.95, 0.95, 0.95, 0.9 * opacity))
+        if actual_direction is not None:
+            head_color = (1.0, 0.75, 0.15, 1.0) if active else (0.65, 0.72, 0.85, opacity)
+            AuxPreviewUtils.draw_points(shader, [tuple(head)], head_color, size=9.0 if active else 6.0)
+
+        authored = _authored_points(rule)
+        selected_point = rule.pose_points[min(rule.pose_active_index, len(rule.pose_points) - 1)] if rule.pose_points else None
+        # Keep the selected halo on top when pose markers overlap.
+        authored.sort(key=lambda point: selected_point is not None and selected_point.id == point.id)
+        for point in authored:
+            try:
+                weight = _display_rbf_weight(rule, point, armature)
+                if weight is None:
+                    weight = 0.0
+                authored_weight = max(0.0, min(1.0, float(point.weight)))
+                pose_rotation = Euler((point.x, point.y, point.z), "XYZ").to_matrix()
+                ghost_rotation = frame @ pose_rotation
+                direction = ghost_rotation @ Vector((0.0, 1.0, 0.0))
+                enabled = bool(settings.enabled and rule.enabled and point.enabled)
+                color = cls._color(weight, enabled, authored_weight)
+                selected = selected_point is not None and selected_point.id == point.id
+                highlighted = active and selected
+                if selected:
+                    gpu.state.line_width_set(2.5 if active else 1.0)
+                    for level, vertices in enumerate(cls._pose_slices(point)):
+                        lines = [tuple(head + frame @ vertex * length * 1.05) for vertex in vertices]
+                        alpha = (0.18 + 0.72 * level / 7) * opacity
+                        AuxPreviewUtils.draw_lines(shader, lines, (0.30 + 0.70 * level / 7, 0.72, 1.0 - 0.65 * level / 7, alpha))
+                    lines = [tuple(head), tuple(head + direction.normalized() * length * 1.35)]
+                    gpu.state.line_width_set(3.5 if active else 1.0)
+                    direction_color = (1.0, 0.82, 0.24, 1.0) if active else (0.65, 0.72, 0.85, opacity)
+                    AuxPreviewUtils.draw_lines(shader, lines, direction_color)
+                if highlighted:
+                    # Gold belongs exclusively to the active rule's selection.
+                    AuxPreviewUtils.draw_points(
+                        shader, [tuple(head + direction.normalized() * length * 1.35)],
+                        (1.0, 0.82, 0.24, 1.0), size=17.0,
+                    )
+                else:
+                    color = (*color[:3], max(color[3], 0.85 if enabled else 0.60))
+                color = (*color[:3], color[3] * opacity)
+                marker_size = 10.0 if highlighted else (
+                    (9.0 if active else 7.0) + 3.0 * min(max(weight, 0.0), 1.0)
+                )
+                if not highlighted:
+                    # Fade the rim too, so inactive rules cannot mask the focus.
+                    AuxPreviewUtils.draw_points(
+                        shader, [tuple(head + direction.normalized() * length * 1.35)],
+                        (0.035, 0.045, 0.065, 0.95 * opacity), size=marker_size + 4.0,
+                    )
+                AuxPreviewUtils.draw_points(
+                    shader,
+                    [tuple(head + direction.normalized() * length * 1.35)],
+                    color,
+                    size=marker_size,
+                )
+            except (AttributeError, ValueError, RuntimeError, IndexError, TypeError):
+                continue
+
+    @classmethod
+    def _draw_3d(cls):
+        if not cls._armature_name:
+            return
+        armature = bpy.data.objects.get(cls._armature_name)
+        settings = settings_for(armature)
+        if armature is None or settings is None or not settings.preview_enabled:
+            return
+        active_index = min(settings.active_index, len(settings.rules) - 1)
+        # Paint the active rule last so faded rules never cover its highlights.
+        rules = sorted(enumerate(settings.rules), key=lambda item: item[0] == active_index)
         gpu.state.blend_set("ALPHA")
         gpu.state.depth_test_set("NONE")
-        gpu.state.line_width_set(2.0)
         try:
             shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-            actual_lines = [tuple(head), tuple(tail)]
-            AuxPreviewUtils.draw_lines(shader, actual_lines, (0.95, 0.95, 0.95, 0.9))
-            if actual_direction is not None:
-                AuxPreviewUtils.draw_points(shader, [tuple(head)], (1.0, 0.75, 0.15, 1.0), size=9.0)
-
-            authored = _authored_points(rule)
-            selected_point = rule.pose_points[min(rule.pose_active_index, len(rule.pose_points) - 1)] if rule.pose_points else None
-            # Keep the selected halo on top when pose markers overlap.
-            authored.sort(key=lambda point: selected_point is not None and selected_point.id == point.id)
-            for point in authored:
-                try:
-                    weight = _display_rbf_weight(rule, point, armature)
-                    if weight is None:
-                        weight = 0.0
-                    authored_weight = max(0.0, min(1.0, float(point.weight)))
-                    pose_rotation = Euler((point.x, point.y, point.z), "XYZ").to_matrix()
-                    ghost_rotation = frame @ pose_rotation
-                    direction = ghost_rotation @ Vector((0.0, 1.0, 0.0))
-                    enabled = bool(settings.enabled and rule.enabled and point.enabled)
-                    color = cls._color(weight, enabled, authored_weight)
-                    selected = selected_point is not None and selected_point.id == point.id
-                    if selected:
-                        gpu.state.line_width_set(2.5)
-                        for level, vertices in enumerate(cls._pose_slices(point)):
-                            lines = [tuple(head + frame @ vertex * length * 1.05) for vertex in vertices]
-                            alpha = 0.18 + 0.72 * level / 7
-                            AuxPreviewUtils.draw_lines(shader, lines, (0.30 + 0.70 * level / 7, 0.72, 1.0 - 0.65 * level / 7, alpha))
-                        lines = [tuple(head), tuple(head + direction.normalized() * length * 1.35)]
-                        gpu.state.line_width_set(3.5)
-                        AuxPreviewUtils.draw_lines(shader, lines, (1.0, 0.82, 0.24, 1.0))
-                        # Selection has its own gold halo, separate from the
-                        # inner marker's blue-to-orange live output color.
-                        AuxPreviewUtils.draw_points(
-                            shader, [tuple(head + direction.normalized() * length * 1.35)],
-                            (1.0, 0.82, 0.24, 1.0), size=17.0,
-                        )
-                    else:
-                        color = (*color[:3], max(color[3], 0.85 if enabled else 0.60))
-                    marker_size = 10.0 if selected else 9.0 + 3.0 * min(max(weight, 0.0), 1.0)
-                    if not selected:
-                        # A dark rim keeps idle poses readable on light meshes.
-                        AuxPreviewUtils.draw_points(
-                            shader, [tuple(head + direction.normalized() * length * 1.35)],
-                            (0.035, 0.045, 0.065, 0.95), size=marker_size + 4.0,
-                        )
-                    AuxPreviewUtils.draw_points(
-                        shader,
-                        [tuple(head + direction.normalized() * length * 1.35)],
-                        color,
-                        size=marker_size,
-                    )
-                except (AttributeError, ValueError, RuntimeError, IndexError, TypeError):
-                    continue
+            for index, rule in rules:
+                cls._draw_rule(shader, armature, settings, rule, index == active_index)
         finally:
             gpu.state.line_width_set(1.0)
             gpu.state.depth_test_set("LESS_EQUAL")
@@ -1079,7 +1207,7 @@ class BsCorrectivePreview:
         if not settings.preview_enabled:
             return
         lines = [("BS 修型范围预览  ", rule.bone or "未指定骨骼")]
-        lines.append(("范围显示  ", "金色为选中项 · 摆动弧 / 扭转弧"))
+        lines.append(("范围显示  ", "其他规则淡显 · 金色为活动规则选中姿态"))
         try:
             current = euler_xyz_quaternion(_current_local_pose(armature, rule.bone))
         except (ValueError, RuntimeError, AttributeError):
@@ -1140,6 +1268,88 @@ class _ArmatureOperator:
     @classmethod
     def poll(cls, context):
         return _context_armature(context) is not None
+
+
+class _PoseTargetOperator(_ArmatureOperator):
+    """Keep popup operations bound to the clicked row even if selection changes."""
+    armature_name: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})  # type: ignore
+    rule_id: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})  # type: ignore
+    point_id: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})  # type: ignore
+
+    def target(self, context):
+        armature = bpy.data.objects.get(self.armature_name)
+        settings = settings_for(armature) if armature is not None and armature.type == "ARMATURE" else None
+        rule = next((rule for rule in settings.rules if rule.id == self.rule_id), None) if settings else None
+        point = next((point for point in rule.pose_points if point.id == self.point_id), None) if rule else None
+        if point is None or point.id == _BASE_POINT:
+            raise ValueError("修型姿态已不存在，请重新打开高级操作")
+        return armature, rule, point
+
+
+class OP_BsCorrectivePoseAdvanced(_PoseTargetOperator, Operator):
+    bl_idname = "hotools.bs_corrective_pose_advanced"
+    bl_label = "修型姿态高级操作"
+    bl_description = "打开此修型姿态的高级操作"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        # Native popup drawing requires an executable operator.
+        return {"FINISHED"}
+
+    def invoke(self, context, event):
+        try:
+            self.target(context)
+        except ValueError as exc:
+            self.report({"WARNING"}, str(exc))
+            return {"CANCELLED"}
+        return context.window_manager.invoke_popup(self, width=320)
+
+    def draw(self, context):
+        layout = self.layout
+        try:
+            armature, rule, point = self.target(context)
+        except ValueError as exc:
+            layout.label(text=str(exc), icon="ERROR")
+            return
+        layout.label(text=point.bs_name, icon="SHAPEKEY_DATA")
+        layout.separator()
+        layout.operator_context = "INVOKE_DEFAULT"
+        operator = layout.operator("hotools.bs_corrective_pose_rename", text="改名…", icon="GREASEPENCIL")
+        operator.armature_name = armature.name
+        operator.rule_id = rule.id
+        operator.point_id = point.id
+
+
+class OP_BsCorrectivePoseRename(_PoseTargetOperator, Operator):
+    bl_idname = "hotools.bs_corrective_pose_rename"
+    bl_label = "修型姿态改名"
+    bl_description = "同步修改姿态及规则影响物体上的已有形态键名称，保留形变与驱动"
+    bl_options = {"REGISTER", "UNDO"}
+    new_name: StringProperty(name="新名称", default="")  # type: ignore
+
+    def invoke(self, context, event):
+        try:
+            _, _, point = self.target(context)
+        except ValueError as exc:
+            self.report({"WARNING"}, str(exc))
+            return {"CANCELLED"}
+        self.new_name = point.bs_name
+        return context.window_manager.invoke_props_dialog(self, width=400)
+
+    def draw(self, context):
+        self.layout.prop(self, "new_name")
+        self.layout.label(text="同步改名已有形态键，保留形变与驱动。", icon="INFO")
+
+    def execute(self, context):
+        try:
+            armature, rule, point = self.target(context)
+            count = rename_corrective_pose(armature, rule, point, self.new_name)
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        context.view_layer.update()
+        self.report({"INFO"}, f"姿态已改名，同步 {count} 个形态键")
+        return {"FINISHED"}
 
 
 class OP_BsCorrectiveSelectBone(_ArmatureOperator, Operator):
@@ -1590,12 +1800,15 @@ CLASSES = [
     PG_BsCorrectiveRule, PG_BsCorrectiveSettings, PG_BsCorrectiveResetTarget,
     HO_UL_BsCorrectiveRule, HO_UL_BsCorrectiveInfluence, HO_UL_BsCorrectivePoint,
     HO_UL_BsCorrectiveResetTarget,
+    OP_BsCorrectivePoseAdvanced, OP_BsCorrectivePoseRename,
     OP_BsCorrectiveSelectBone, OP_BsCorrectiveListEdit, OP_BsCorrectivePose, OP_BsCorrectiveGenerateDrivers,
     OP_BsCorrectiveReset,
 ]
 
 
 def register():
+    global _LAST_ACTIVE_BONE
+    _LAST_ACTIVE_BONE = None
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Object.hotools_bs_corrective = PointerProperty(type=PG_BsCorrectiveSettings)
@@ -1605,11 +1818,17 @@ def register():
     for handlers in (bpy.app.handlers.load_post, bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
         if _restore_driver_namespace not in handlers:
             handlers.append(_restore_driver_namespace)
+    if _follow_active_bone not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_follow_active_bone)
     _register_driver_namespace(rebuild=False)
 
 
 def unregister():
+    global _LAST_ACTIVE_BONE
+    _LAST_ACTIVE_BONE = None
     BsCorrectivePreview.shutdown()
+    if _follow_active_bone in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_follow_active_bone)
     for handlers in (bpy.app.handlers.load_post, bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
         if _restore_driver_namespace in handlers:
             handlers.remove(_restore_driver_namespace)

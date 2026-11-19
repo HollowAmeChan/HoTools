@@ -467,6 +467,8 @@ assert dialog.missing_count == 0
 assert not bs.OP_BsCorrectiveReset.check(dialog, dialog_context)
 assert bpy.ops.hotools.bs_corrective_reset(all_rules=True) == {"FINISHED"}
 assert "batch-test" in bs._RBF_RUNTIME
+# Collection growth can invalidate an earlier PropertyGroup wrapper.
+rule = settings.rules[0]
 settings.active_index = 0
 rule.enabled = False
 assert all(fc.mute for fc in coat.data.shape_keys.animation_data.drivers if bs._owned_driver(fc, arm, {rule.id}))
@@ -486,6 +488,7 @@ assert dialogs == [True]
 # Remove the second rule and clear authored poses through the native pose list.
 bs.remove_native_drivers(arm)
 settings.rules.remove(1)
+rule = settings.rules[0]
 bpy.context.view_layer.objects.active = arm
 settings.active_index = 0
 assert list_edit("POINTS", "CLEAR") == {"FINISHED"}
