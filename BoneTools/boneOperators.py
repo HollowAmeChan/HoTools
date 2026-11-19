@@ -13,6 +13,7 @@ from bpy.props import (
 )
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight, OP_SimpleDissolveBone
+from . import arpAssembly
 from Utils import bone_utils
 
 
@@ -1009,6 +1010,36 @@ class OP_EnableHumanoidBoneConstraints(Operator):
         return {'FINISHED'}
 
 
+class OP_ClearHumanoidConstraints(Operator):
+    bl_idname = "ho.clear_humanoid_constraints"
+    bl_label = "删除 Humanoid 骨全部约束"
+    bl_description = "删除当前活动骨架中带 Humanoid 映射的骨上的全部约束，包括手工约束；可撤销"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == "ARMATURE"
+
+    def execute(self, context):
+        armature = context.active_object
+        try:
+            arpAssembly.validate_main(armature, context)
+            count = 0
+            with arpAssembly.object_context(context):
+                for bone in armature.pose.bones:
+                    if not _is_humanoid_bone(bone):
+                        continue
+                    for constraint in list(bone.constraints):
+                        bone.constraints.remove(constraint)
+                        count += 1
+        except (ValueError, RuntimeError) as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"已删除 Humanoid 骨上的 {count} 个约束")
+        return {"FINISHED"}
+
+
 class OP_DisableAuxBoneConstraints(Operator):
     bl_idname = "ho.disable_aux_bone_constraints"
     bl_label = "禁用所有辅助骨约束"
@@ -1849,9 +1880,60 @@ class OP_MergeArmatures(Operator):
         return {'FINISHED'}
 
 
+class OP_SyncArmatures(Operator):
+    bl_idname = "ho.snap_to_main_armature"
+    bl_label = "同步骨架"
+    bl_description = "为跟随骨架的同名骨添加复制位置、复制旋转约束，使其同步主骨架"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        scene = context.scene
+        return (
+            scene.ho_sync_main_armature is not None
+            and scene.ho_sync_follower_armature is not None
+        )
+
+    def execute(self, context):
+        main = context.scene.ho_sync_main_armature
+        follower = context.scene.ho_sync_follower_armature
+        try:
+            arpAssembly.validate_main(main, context)
+            arpAssembly.validate_main(follower, context)
+            if follower == main or follower.data == main.data:
+                raise ValueError("主骨架与跟随骨架必须是两个独立骨架")
+            if arpAssembly.would_create_cycle(follower, main):
+                raise ValueError("同步将产生循环依赖，请检查现有约束和父子关系")
+            with arpAssembly.object_context(context):
+                pairs = [(bone.name, bone.name, "") for bone in follower.pose.bones
+                         if bone.name in main.pose.bones]
+                if not pairs:
+                    raise ValueError("两个骨架没有同名骨骼")
+                count = arpAssembly.bind_pairs(
+                    follower, main, pairs, arpAssembly.SNAP_PREFIX)
+        except (ValueError, RuntimeError) as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"已将 {count} 根同名骨同步到 {main.name}")
+        return {"FINISHED"}
+
+
+def drawSyncArmaturesPanel(layout: UILayout, context: Context):
+    header, box = layout.panel("hotools_bone_sync_armatures", default_closed=True)
+    header.label(text="同步骨架", icon="CONSTRAINT_BONE")
+    if box is None:
+        return
+    row = box.row(align=True)
+    row.prop(context.scene, "ho_sync_main_armature", text="主骨架")
+    row.prop(context.scene, "ho_sync_follower_armature", text="跟随骨架")
+    box.operator(OP_SyncArmatures.bl_idname, icon="CONSTRAINT_BONE")
+
+
 def drawMergeArmaturesPanel(layout: UILayout, context: Context):
-    box = layout.box()
-    box.label(text="融合骨架")
+    header, box = layout.panel("hotools_bone_merge_armatures", default_closed=True)
+    header.label(text="融合骨架")
+    if box is None:
+        return
     row = box.row(align=True)
     row.prop(
         context.scene,
@@ -1885,8 +1967,10 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     row = colMain2.row(align=True)
     row.operator(OP_DisableHumanoidBoneConstraints.bl_idname, text="禁用Humanoid约束")
     row.operator(OP_EnableHumanoidBoneConstraints.bl_idname, text="启用Humanoid约束")
+    row.operator(OP_ClearHumanoidConstraints.bl_idname, text="", icon="TRASH")
 
     layout.separator()
+    drawSyncArmaturesPanel(layout, context)
     drawMergeArmaturesPanel(layout, context)
 
 
@@ -1939,18 +2023,32 @@ cls = [
     OP_EnableAllBoneConstraints,
     OP_DisableHumanoidBoneConstraints,
     OP_EnableHumanoidBoneConstraints,
+    OP_ClearHumanoidConstraints,
     OP_DisableAuxBoneConstraints,
     OP_EnableAuxBoneConstraints,
     OP_ResetAllBonePose,
     OP_BoneApplyConstraint,
     OP_BoneRemoveConstraints,
     OP_MergeArmatures,
+    OP_SyncArmatures,
     OP_RemoveEmptyBoneCollections,
 ]
 
 
 
 def register():
+    bpy.types.Scene.ho_sync_main_armature = PointerProperty(
+        name="主骨架",
+        description="同步时读取姿态的主骨架",
+        type=bpy.types.Object,
+        poll=_armature_filter,
+    )
+    bpy.types.Scene.ho_sync_follower_armature = PointerProperty(
+        name="跟随骨架",
+        description="通过同名骨的位置和旋转约束跟随主骨架的骨架",
+        type=bpy.types.Object,
+        poll=_armature_filter,
+    )
     bpy.types.Scene.ho_mod_weight_merge_main_armature = PointerProperty(
         name="主骨架",
         description="保留现有骨骼及其自定义信息的目标骨架",
@@ -1972,3 +2070,5 @@ def unregister():
         bpy.utils.unregister_class(i)
     del bpy.types.Scene.ho_mod_weight_merge_asset_armature
     del bpy.types.Scene.ho_mod_weight_merge_main_armature
+    del bpy.types.Scene.ho_sync_follower_armature
+    del bpy.types.Scene.ho_sync_main_armature

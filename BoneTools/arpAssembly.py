@@ -584,65 +584,12 @@ class OP_GenerateArpController(Operator):
         return {"FINISHED"}
 
 
-class OP_SnapToMainArmature(Operator):
-    bl_idname = "ho.snap_to_main_armature"
-    bl_label = "吸附到主骨架"
-    bl_description = "在待吸附骨架的所有同名骨上添加复制位置、复制旋转约束，目标为主骨架"
-    bl_options = {"REGISTER", "UNDO"}
-
-    def execute(self, context):
-        main = context.scene.ho_arp_main_armature
-        follower = context.scene.ho_arp_follower_armature
-        try:
-            validate_main(main, context)
-            validate_main(follower, context)
-            if follower == main or follower.data == main.data:
-                raise ValueError("主骨架与待吸附骨架必须是两个独立骨架")
-            if would_create_cycle(follower, main):
-                raise ValueError("吸附将产生循环依赖，请检查现有约束和父子关系")
-            pairs = [(bone.name, bone.name, "") for bone in follower.pose.bones
-                     if bone.name in main.pose.bones]
-            if not pairs:
-                raise ValueError("两个骨架没有同名骨骼")
-            with object_context(context):
-                count = bind_pairs(follower, main, pairs, SNAP_PREFIX)
-        except (ValueError, RuntimeError) as error:
-            self.report({"ERROR"}, str(error))
-            return {"CANCELLED"}
-        self.report({"INFO"}, f"已吸附 {count} 根同名骨到 {main.name}")
-        return {"FINISHED"}
-
-
-class OP_ClearHumanoidConstraints(Operator):
-    bl_idname = "ho.clear_humanoid_constraints"
-    bl_label = "删除 Humanoid 骨全部约束"
-    bl_description = "删除主骨架中带 Humanoid 映射的骨上的全部约束，包括手工约束；可撤销"
-    bl_options = {"REGISTER", "UNDO"}
-
-    def execute(self, context):
-        main = context.scene.ho_arp_main_armature
-        try:
-            validate_main(main, context)
-            count = 0
-            with object_context(context):
-                for bone in main.pose.bones:
-                    props = getattr(bone.bone, "hotools_boneprops", None)
-                    if not getattr(props, "humanoidMapping", "").strip():
-                        continue
-                    for constraint in list(bone.constraints):
-                        bone.constraints.remove(constraint)
-                        count += 1
-        except (ValueError, RuntimeError) as error:
-            self.report({"ERROR"}, str(error))
-            return {"CANCELLED"}
-        self.report({"INFO"}, f"已删除 Humanoid 骨上的 {count} 个约束")
-        return {"FINISHED"}
-
-
 def draw_panel(layout, context):
     scene = context.scene
-    box = layout.box()
-    box.label(text="ARP 装配", icon="ARMATURE_DATA")
+    header, box = layout.panel("hotools_bone_arp_assembly", default_closed=True)
+    header.label(text="ARP 装配", icon="ARMATURE_DATA")
+    if box is None:
+        return
     box.prop(scene, "ho_arp_main_armature", text="主骨架")
     ready, message = arp_status()
     if not ready:
@@ -655,19 +602,9 @@ def draw_panel(layout, context):
     controller = getattr(scene.ho_arp_main_armature, "ho_arp_controller", None)
     if controller:
         box.label(text=f"控制器：{controller.name}", icon="LINKED")
-    box.separator()
-    box.prop(scene, "ho_arp_follower_armature", text="待吸附骨架")
-    row = box.row()
-    row.enabled = bool(scene.ho_arp_main_armature and scene.ho_arp_follower_armature)
-    row.operator(OP_SnapToMainArmature.bl_idname, icon="CONSTRAINT_BONE")
-    row = box.row()
-    row.enabled = scene.ho_arp_main_armature is not None
-    row.operator(OP_ClearHumanoidConstraints.bl_idname, icon="TRASH")
 
 
-CLASSES = (
-    OP_GenerateArpController, OP_SnapToMainArmature, OP_ClearHumanoidConstraints,
-)
+CLASSES = (OP_GenerateArpController,)
 
 
 def register():
@@ -675,15 +612,12 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.ho_arp_main_armature = PointerProperty(
         name="主骨架", type=bpy.types.Object, poll=armature_filter)
-    bpy.types.Scene.ho_arp_follower_armature = PointerProperty(
-        name="待吸附骨架", type=bpy.types.Object, poll=armature_filter)
     bpy.types.Object.ho_arp_controller = PointerProperty(
         name="ARP 控制器", type=bpy.types.Object, poll=armature_filter)
 
 
 def unregister():
     del bpy.types.Object.ho_arp_controller
-    del bpy.types.Scene.ho_arp_follower_armature
     del bpy.types.Scene.ho_arp_main_armature
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

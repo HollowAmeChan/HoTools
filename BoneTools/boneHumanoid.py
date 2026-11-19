@@ -3,6 +3,7 @@ from bpy.types import UILayout, Context, Operator
 from bpy.props import BoolProperty, IntProperty
 from .humanoid_auto_mapping import auto_map_source_names_to_humanoid,TARGET_LAYOUT
 from . import arpAssembly
+from . import boneTPose
 
 from math import acos, atan2, cos, degrees, radians, sin
 import blf
@@ -2397,23 +2398,22 @@ class OP_HumanoidMappingPreview_Clear(Operator):
         return {'FINISHED'}
 
 
-def drawBoneHumanoidPanel(layout: UILayout, context: Context):
-    scene = context.scene
-
-    # ── 骨骼处理 ──────────────────────────────────────────
-    mapping_box = layout.box()
-    mapping_box.label(text="骨骼处理", icon="ARMATURE_DATA")
-
+def _draw_bone_processing_panel(layout, context):
+    header, mapping_box = layout.panel(
+        "hotools_bone_humanoid_processing", default_closed=True)
+    header.label(text="骨骼处理", icon="ARMATURE_DATA")
+    if mapping_box is None:
+        return
     row = mapping_box.row(align=True)
     row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname, text="自动映射")
     row.operator(OP_Mapping_ClearHumanoidBoneProps.bl_idname, text="", icon="TRASH")
+    boneTPose.draw_tpose_row(mapping_box, context.active_object)
 
-    # ── Humanoid 检查预览 ──────────────────────────────────
-    layout.separator(factor=0.8)
-    preview_box = layout.box()
 
-    # 标题行：名称 + 开关按钮
-    header = preview_box.row(align=True)
+def _draw_humanoid_check_panel(layout, context):
+    scene = context.scene
+    header, preview_box = layout.panel(
+        "hotools_bone_humanoid_checks", default_closed=True)
     header.label(text="Humanoid检查预览", icon="HIDE_OFF")
     if HumanoidMappingPreviewHUD.is_running():
         header.alert = True
@@ -2429,6 +2429,9 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
             text="开启预览",
             icon="HIDE_OFF",
         )
+
+    if preview_box is None:
+        return
 
     # 显示选项
     display_col = preview_box.column(align=True)
@@ -2459,7 +2462,10 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
         icon="CON_KINEMATIC",
     )
 
-    layout.separator(factor=0.8)
+
+def drawBoneHumanoidPanel(layout: UILayout, context: Context):
+    _draw_bone_processing_panel(layout, context)
+    _draw_humanoid_check_panel(layout, context)
     arpAssembly.draw_panel(layout, context)
 
 cls = [

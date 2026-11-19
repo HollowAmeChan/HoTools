@@ -16,12 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from BoneTools import arpAssembly as assembly, boneHumanoid, boneProperty, hoAux
+from BoneTools import arpAssembly as assembly, boneHumanoid, boneOperators, boneProperty, hoAux
 from BoneTools.humanoid_auto_mapping import TARGET_LAYOUT
 
 
 hoAux.register()
 boneProperty.register()
+boneOperators.register()
 boneHumanoid.register()
 assert not hasattr(bpy.types.Scene, "bone_constraint_resting_armature")
 assert not hasattr(bpy.types.Scene, "bone_humanoid_deform_tag_preset")
@@ -31,10 +32,17 @@ assert not assembly.arp_status()[0]
 
 class LayoutRecorder:
     """Verify the visible fallback without requiring a GPU/UI screenshot."""
-    def __init__(self, events=None):
+    def __init__(self, events=None, panels_open=True):
         self.events = events if events is not None else []
+        self.panels_open = panels_open
         self.enabled = True
         self.alert = False
+
+    def panel(self, idname, *, default_closed):
+        self.events.append(("panel", idname, default_closed))
+        header = LayoutRecorder(self.events, self.panels_open)
+        body = LayoutRecorder(self.events, self.panels_open) if self.panels_open else None
+        return header, body
 
     def box(self):
         return LayoutRecorder(self.events)
@@ -87,13 +95,31 @@ follower = create_armature("SnapFollower", [
     ("unmatched", (1, 0, 0), (1, 0, 1)),
 ])
 scene.ho_arp_main_armature = main
-scene.ho_arp_follower_armature = follower
+scene.ho_sync_main_armature = main
+scene.ho_sync_follower_armature = follower
 layout = LayoutRecorder()
 assembly.draw_panel(layout, bpy.context)
 assert ("label", "未安装或未启用 Auto-Rig Pro", True) in layout.events
 assert ("operator", "ho.generate_arp_controller", False) in layout.events
+assert not any(event[1] in {
+    "ho.snap_to_main_armature", "ho.clear_humanoid_constraints",
+} for event in layout.events)
+layout = LayoutRecorder()
+boneOperators.drawBoneOperatorsPanel(layout, bpy.context)
 assert ("operator", "ho.snap_to_main_armature", True) in layout.events
 assert ("operator", "ho.clear_humanoid_constraints", True) in layout.events
+operator_ids = [event[1] for event in layout.events if event[0] == "operator"]
+assert operator_ids.index("ho.clear_humanoid_constraints") == (
+    operator_ids.index("ho.enable_humanoid_bone_constraints") + 1)
+collapsed = LayoutRecorder(panels_open=False)
+assembly.draw_panel(collapsed, bpy.context)
+boneOperators.drawBoneOperatorsPanel(collapsed, bpy.context)
+assert not any(event[1] in {
+    "ho.generate_arp_controller", "ho.snap_to_main_armature",
+    boneOperators.OP_MergeArmatures.bl_idname,
+} for event in collapsed.events)
+assert all(event[2] for event in collapsed.events if event[0] == "panel")
+assert boneOperators.OP_SyncArmatures.bl_label == "同步骨架"
 main.matrix_world = Matrix.Translation((3.0, -2.0, 1.0))
 follower.matrix_world = Matrix.Translation((-4.0, 2.0, 0.0))
 assert bpy.ops.ho.snap_to_main_armature() == {"FINISHED"}
@@ -115,9 +141,15 @@ main.data.bones["hips"].hotools_boneprops.humanoidMapping = "hips"
 main.pose.bones["hips"].constraints.new("LIMIT_ROTATION")
 main.pose.bones["hips"].constraints.new("LIMIT_LOCATION")
 main.pose.bones["hair"].constraints.new("LIMIT_ROTATION")
+bpy.context.view_layer.objects.active = main
+main.select_set(True)
+scene.ho_arp_main_armature = follower
+follower_constraint_count = len(follower.pose.bones["hips"].constraints)
 assert bpy.ops.ho.clear_humanoid_constraints() == {"FINISHED"}
 assert not main.pose.bones["hips"].constraints
 assert len(main.pose.bones["hair"].constraints) == 1
+assert len(follower.pose.bones["hips"].constraints) == follower_constraint_count
+scene.ho_arp_main_armature = main
 
 # Save/restore the edit context, including flushing an edited bone position.
 bpy.context.view_layer.objects.active = main
@@ -419,8 +451,11 @@ else:
     print("ARP_ASSEMBLY_REAL_GENERATION_SKIPPED: ARP is not installed")
 
 boneHumanoid.unregister()
+boneOperators.unregister()
 boneProperty.unregister()
 hoAux.unregister()
 assert not hasattr(bpy.types.Scene, "ho_arp_main_armature")
+assert not hasattr(bpy.types.Scene, "ho_sync_main_armature")
+assert not hasattr(bpy.types.Scene, "ho_sync_follower_armature")
 assert not hasattr(bpy.types.Object, "ho_arp_controller")
 print("ARP_ASSEMBLY_ALL_OK")

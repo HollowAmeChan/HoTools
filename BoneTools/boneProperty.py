@@ -4,6 +4,7 @@ from bpy.props import (
     BoolProperty,
     CollectionProperty,
     EnumProperty,
+    FloatVectorProperty,
     IntProperty,
     PointerProperty,
     StringProperty,
@@ -258,6 +259,25 @@ class PG_Hotools_BoneProps(PropertyGroup):
         name="Humanoid映射",
         description="定义此骨对应Unity-Humannoid标准骨",
         default="",
+    )  # type: ignore
+    humanoidTPoseCached: BoolProperty(
+        name="已保存 T-Pose",
+        description="此骨骼具有已保存的 Humanoid 参考姿态",
+        default=False,
+        options={"HIDDEN"},
+    )  # type: ignore
+    humanoidTPoseMatrixBasis: FloatVectorProperty(
+        name="T-Pose 姿态矩阵",
+        description="相对于骨骼静置姿态保存的位置、旋转和缩放",
+        size=16,
+        default=(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ),
+        precision=6,
+        options={"HIDDEN"},
     )  # type: ignore
     auxBone: PointerProperty(
         name="辅助骨信息",
