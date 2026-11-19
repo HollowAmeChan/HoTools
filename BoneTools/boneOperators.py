@@ -1868,23 +1868,21 @@ def drawMergeArmaturesPanel(layout: UILayout, context: Context):
 
 def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     """Draw common bone operations."""
-    layout.operator(OP_SelectAllChildBones.bl_idname, text="选择所有子级骨")
-
-    row = layout.row(align=True)
+    colMain1 = layout.column(align=True)
+    row = colMain1.row(align=True)
     row.operator(OP_BoneApplyConstraint.bl_idname, text="应用约束到骨骼")
     row.operator(OP_BoneRemoveConstraints.bl_idname, text="移除骨骼约束")
-
-    row = layout.row(align=True)
+    row = colMain1.row(align=True)
     row.operator(OP_SplitBoneWithWeight.bl_idname, text="细分骨骼")
     row.operator(OP_DissolveBoneWithWeight.bl_idname, text="融并骨骼")
     row.operator(OP_SimpleDissolveBone.bl_idname, text="简单融并")
 
-    col = layout.column(align=True)
-    col.operator(OP_ResetAllBonePose.bl_idname, text="重置所有骨骼姿态", icon="LOOP_BACK")
-    row = col.row(align=True)
+    colMain2 = layout.column(align=True)
+    colMain2.operator(OP_ResetAllBonePose.bl_idname, text="重置所有骨骼姿态", icon="LOOP_BACK")
+    row = colMain2.row(align=True)
     row.operator(OP_DisableAllBoneConstraints.bl_idname, text="禁用所有约束")
     row.operator(OP_EnableAllBoneConstraints.bl_idname, text="启用所有约束")
-    row = col.row(align=True)
+    row = colMain2.row(align=True)
     row.operator(OP_DisableHumanoidBoneConstraints.bl_idname, text="禁用Humanoid约束")
     row.operator(OP_EnableHumanoidBoneConstraints.bl_idname, text="启用Humanoid约束")
 

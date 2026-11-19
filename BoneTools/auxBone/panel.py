@@ -17,18 +17,6 @@ def draw_overview(layout, context):
         boneProperty.draw_aux_overview(box, context)
 
 
-def draw_bs_overview(layout, context):
-    """Shared BS corrective authoring menu alongside the auxiliary-bone overview."""
-    scene = context.scene
-    obj = context.object
-    if obj is None or obj.type != "ARMATURE":
-        return
-    box = layout.box()
-    expanded = scene.ho_bs_corrective_overview_expanded
-    header = box.row(align=True)
-    header.prop(scene, "ho_bs_corrective_overview_expanded", text="", emboss=False,
-                icon="TRIA_DOWN" if expanded else "TRIA_RIGHT")
-
 
 def draw_constraint_controls(layout):
     row = layout.row(align=True)

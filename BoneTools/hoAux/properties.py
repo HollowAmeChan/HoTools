@@ -67,7 +67,7 @@ class PG_HoAuxGroupState(PropertyGroup):
 
 
 class PG_HoAuxSettings(PropertyGroup):
-    pipelineExpanded: BoolProperty(name="整臂流水线", default=True)  # type: ignore
+    pipelineExpanded: BoolProperty(name="整臂流水线", default=False)  # type: ignore
     pipelinePreviewEnabled: BoolProperty(
         name="预览整臂流水线",
         default=False,
@@ -115,7 +115,7 @@ def register_rna():
     )
     bpy.types.Scene.hoaux_overview_expanded = BoolProperty(
         name="HoAux Overview",
-        default=True,
+        default=False,
     )
     bpy.types.Scene.hoaux_settings = PointerProperty(type=PG_HoAuxSettings)
 

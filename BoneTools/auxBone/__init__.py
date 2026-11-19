@@ -3,14 +3,13 @@
 import bpy
 
 from . import boneTwist, boneFan, boneFanSingle, boneFanSide
-from .panel import draw_overview, draw_bs_overview, draw_constraint_controls, draw_type_panels
+from .panel import draw_overview, draw_constraint_controls, draw_type_panels
 
 _MODULES = (boneTwist, boneFan, boneFanSingle, boneFanSide)
 
 
 def draw_panel(layout, context):
     draw_overview(layout, context)
-    draw_bs_overview(layout, context)
     draw_constraint_controls(layout)
     draw_type_panels(layout, context)
 
