@@ -47,20 +47,17 @@ def run(point_count, copies):
         meshes.append(mesh)
     bs.generate_native_drivers(arm)
     item = bs._RBF_RUNTIME[rule.id]
-    legacy_positions = tuple(tuple(float(value) for value in row) for row in item[0])
-    legacy_rows = {task_id: tuple(float(value) for value in item[2][index]) for task_id, index in item[1].items()}
+    legacy_rows = {task_id: (item[0][index], item[2][index], item[3][index], item[4][index])
+                   for task_id, index in item[1].items()}
     legacy_cache, counts = {}, [0, 0]
     def old(rule_id, task_id, x, y, z):
         current = (x, y, z)
         hit = legacy_cache.get(task_id)
         if hit is not None and hit[0] == current:
             return hit[1]
-        value = 0
         counts[0] += 1
-        for index, (p, c) in enumerate(zip(legacy_positions, legacy_rows[task_id])):
-            distance = sum(bs._shortest_angle(current[i] - p[i]) ** 2 for i in range(3))
-            value += c * math.exp(-distance * item[3][index])
-        value = min(max(float(value), 0), 1)
+        pose, radius, weight, neutral = legacy_rows[task_id]
+        value = bs.pose_weight(bs.euler_xyz_quaternion(current), pose, radius, weight, neutral)
         legacy_cache[task_id] = (current, value)
         return value
     original_evaluate = bs._evaluate_rbf_outputs

@@ -10,20 +10,55 @@ import gpu
 from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, CollectionProperty, FloatProperty, PointerProperty, StringProperty
 from bpy.types import Operator, PropertyGroup, UIList
-from mathutils import Euler, Matrix, Vector
+from mathutils import Euler, Quaternion, Vector
+from .bs_math import (
+    ANGLE_EPSILON, IDENTITY, euler_xyz_quaternion, normalize_quaternion,
+    pose_weight, quaternion_angle,
+)
 
 from ..BoneTools.previewUtils import AuxPreviewUtils
 from ..Utils.hud import begin_hud, end_hud, draw_hud_lines
+from ..Utils.shapekey_utils import read_shape_key_positions
 
 SCHEMA = "hotools.bs-corrective"
-VERSION = 4
+VERSION = 5
 _DRIVER_MARKER = "hotoolsBscMarker"
 _DRIVER_NAMESPACE_FUNCTION = "hotools_bs_rbf"
 _RBF_RUNTIME = {}
 _RBF_CACHE = {}
 _RBF_UI_CACHE = {}
 _BASE_POINT = "BASE"
+
+
+def _update_pose_parameters(self, context):
+    """Refresh compiled data only; realtime rotation still comes from drivers."""
+    armature = self.id_data
+    settings = settings_for(armature)
+    rule = _find_pose_rule(settings, self) if settings is not None else None
+    _RBF_UI_CACHE.clear()
+    BsCorrectivePreview.invalidate()
+    if rule is None or not rule.driver_payload:
+        return
+    try:
+        encoded = _encode_rbf_payload(rule, persist=False)
+        _RBF_RUNTIME[rule.id] = _decode_rbf_payload(encoded)
+        rule.driver_payload = encoded
+    except (KeyError, TypeError, ValueError):
+        _RBF_RUNTIME.pop(rule.id, None)
+        rule.driver_payload = json.dumps({"version": VERSION, "invalid": True})
+    _RBF_CACHE.pop(rule.id, None)
+    for keys in bpy.data.shape_keys:
+        animation = keys.animation_data
+        for fc in animation.drivers if animation else ():
+            if _owned_driver(fc, armature, {rule.id}):
+                fc.driver.expression = fc.driver.expression
+                keys.update_tag()
+    if context is not None and getattr(context, "view_layer", None) is not None:
+        context.view_layer.update()
+
+
 def _update_enabled(self, context):
+    _RBF_UI_CACHE.clear()
     armature = self.id_data
     settings = settings_for(armature)
     if settings is None:
@@ -50,7 +85,7 @@ def _update_pose_enabled(self, context):
 
 def _update_preview(self, context):
     if self.preview_enabled:
-        BsCorrectivePreview.show(context, armature=_context_armature(context))
+        BsCorrectivePreview.show(context, armature=self.id_data)
     else:
         BsCorrectivePreview.clear()
 
@@ -64,41 +99,7 @@ def _current_local_pose(armature, bone_name):
 
 
 def _rbf_distance(a, b):
-    # Euler angles wrap at +/-pi. Keep Blender and Unity on the same metric so
-    # a pose near 179 degrees is close to one near -179 degrees.
-    return math.sqrt(sum(_shortest_angle(a[i] - b[i]) ** 2 for i in range(3)))
-
-
-def _shortest_angle(value):
-    return (value + math.pi) % (2.0 * math.pi) - math.pi
-
-
-def _rule_points(rule):
-    """Return the implicit zero pose followed by authored control points."""
-    return [(0.0, 0.0, 0.0)] + [(point.x, point.y, point.z) for point in _authored_points(rule)]
-
-
-def _effective_radii(rule, positions=None):
-    """Return one Gaussian width per center, with automatic local narrowing."""
-    positions = positions if positions is not None else np.asarray(_rule_points(rule), dtype=np.float64)
-    default = float(rule.rbf_radius)
-    radii = [default]
-    authored = _authored_points(rule)
-    for index, point in enumerate(authored, start=1):
-        explicit = float(getattr(point, "radius", 0.0))
-        if math.isfinite(explicit) and explicit > 0.0:
-            radii.append(explicit)
-            continue
-        distances = [
-            _rbf_distance(positions[index], positions[other])
-            for other in range(len(positions))
-            if other != index
-        ]
-        nearest = min(distances) if distances else default
-        # The hidden rule value is only a fallback for legacy zero-radius data
-        # and the implicit zero pose; authored rows normally use their own value.
-        radii.append(max(0.001, min(default, nearest)))
-    return np.asarray(radii, dtype=np.float64)
+    return quaternion_angle(euler_xyz_quaternion(a), euler_xyz_quaternion(b))
 
 
 def _authored_points(rule):
@@ -129,15 +130,15 @@ class PG_BsCorrectivePosePoint(PropertyGroup):
     id: StringProperty(default="")  # type: ignore
     enabled: BoolProperty(name="启用", default=True, update=_update_pose_enabled)  # type: ignore
     bs_name: StringProperty(name="BS 名称", default="_BSC_pose1")  # type: ignore
-    weight: FloatProperty(name="权重", default=1.0, min=0.0, max=1.0, subtype="FACTOR")  # type: ignore
-    # Every authored pose owns its Gaussian influence radius. Keep zero as an
-    # automatic fallback for data authored before per-pose radii were exposed.
+    weight: FloatProperty(name="权重", default=1.0, min=0.0, max=1.0, subtype="FACTOR", update=_update_pose_parameters)  # type: ignore
     radius: FloatProperty(
         name="影响半径",
         default=math.radians(30.0),
-        min=0.0,
-        max=100.0,
+        min=ANGLE_EPSILON,
+        max=math.pi,
         subtype="ANGLE",
+        description="允许偏离本姿态的最大旋转角；基准侧自动归零，其他修型独立叠加",
+        update=_update_pose_parameters,
     )  # type: ignore
     x: FloatProperty(name="X", default=0.0, unit="ROTATION")  # type: ignore
     y: FloatProperty(name="Y", default=0.0, unit="ROTATION")  # type: ignore
@@ -150,18 +151,13 @@ class PG_BsCorrectiveRule(PropertyGroup):
     bone: StringProperty(name="测量骨骼", default="")  # type: ignore
     influence_objects: CollectionProperty(type=PG_BsCorrectiveInfluenceObject)  # type: ignore
     pose_points: CollectionProperty(type=PG_BsCorrectivePosePoint)  # type: ignore
-    rbf_radius: FloatProperty(
-        name="RBF 半径",
-        default=math.radians(30.0),
-        min=0.001,
-        max=100.0,
-        subtype="ANGLE",
-    )  # type: ignore
     # Compiled RBF data is serialized with the rule so the runtime namespace
     # can be rebuilt after opening a .blend without using custom properties.
     driver_payload: StringProperty(default="")  # type: ignore
     influence_active_index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
-    pose_active_index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
+    pose_active_index: bpy.props.IntProperty(
+        default=0, min=0, update=lambda self, context: AuxPreviewUtils.tag_redraw(),
+    )  # type: ignore
 
 
 class PG_BsCorrectiveSettings(PropertyGroup):
@@ -263,8 +259,8 @@ def _validate_rule(armature, rule, require_targets=True):
         names.add(name)
         if not math.isfinite(point.weight) or not 0.0 <= point.weight <= 1.0:
             raise ValueError(f"姿势权重必须在 0..1：{name}")
-        if not math.isfinite(point.radius) or point.radius < 0.0:
-            raise ValueError(f"姿势影响半径必须为有限非负数：{name}")
+        if not math.isfinite(point.radius) or not 0.0 < point.radius <= math.pi + 1e-6:
+            raise ValueError(f"姿势影响半径必须在 0°..180°：{name}")
     meshes = _rule_meshes(rule)
     if not meshes:
         raise ValueError(f"规则缺少影响物体：{rule.bone}")
@@ -280,8 +276,6 @@ def _validate_rule(armature, rule, require_targets=True):
                 shape_key = point.bs_name.strip()
                 if shape_key not in _shape_names(mesh):
                     raise ValueError(f"找不到形态键：{mesh.name}/{shape_key}")
-    if not math.isfinite(rule.rbf_radius) or rule.rbf_radius <= 0:
-        raise ValueError("RBF 半径必须为正数")
 
 
 def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
@@ -293,9 +287,12 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
         "schema": SCHEMA,
         "version": VERSION,
         "poseSpace": "LOCAL",
-        "rotationOrder": "XYZ",
+        "rotationRepresentation": "quaternion-xyzw",
         "angleUnit": "radian",
-        "kernel": "gaussian-local",
+        "kernel": "smoothstep-compact",
+        "evaluation": "independent",
+        "distanceMetric": "quaternion-angle",
+        "neutralMode": "triangle-smoothstep",
         "fbxBoneAxes": fbx_bone_axes,
         "measurement": "source_local_rotation",
         "rules": [],
@@ -313,7 +310,6 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
                 outputs.add(output)
         if not rule.id:
             rule.id = uuid.uuid4().hex
-        authored_radii = _effective_radii(rule)
         # MCH is the export-time stable cache for a source bone whose authored
         # rest rotation is cleared by HoFBX.  The authored rule remains keyed by
         # the source name, while Unity reads the actual exported cache bone.
@@ -342,13 +338,12 @@ def build_export_config(armature, fbx_bone_axes="Y_X", measurement_bones=None):
                 for point in _authored_points(rule)
             ],
             "rbf": {
-                "radius": rule.rbf_radius,
                 "includeBase": True,
-                "basePose": [0.0, 0.0, 0.0],
+                "basePose": list(IDENTITY),
                 "controlPoints": [
-                    {"id": point.id, "pose": [point.x, point.y, point.z],
-                     "radius": float(authored_radii[index + 1])}
-                    for index, point in enumerate(_authored_points(rule))
+                    {"id": point.id, "pose": list(euler_xyz_quaternion((point.x, point.y, point.z))),
+                     "radius": float(point.radius)}
+                    for point in _authored_points(rule)
                 ],
             },
         }
@@ -380,12 +375,13 @@ def _set_driver_expression(driver, expression):
 
 def _encode_rbf_payload(rule, persist=True):
     """Serialize compiled RBF data into a normal RNA StringProperty."""
-    positions, radii, pose_ids, matrix = _compile_rbf(rule)
+    poses, indices, radii, weights, _ = _compile_rbf(rule)
     payload = {
-        "radius": float(rule.rbf_radius),
-        "positions": positions.tolist(),
-        "radii": radii.tolist(),
-        "coefficients": {pose_id: matrix[:, index].tolist() for index, pose_id in enumerate(pose_ids)},
+        "version": VERSION,
+        "poses": poses,
+        "ids": list(indices),
+        "radii": radii,
+        "weights": weights,
     }
     encoded = json.dumps(payload, separators=(",", ":"), allow_nan=False)
     if persist:
@@ -394,79 +390,45 @@ def _encode_rbf_payload(rule, persist=True):
 
 
 def _compile_rbf(rule):
-    """Factor the shared kernel once, solving all pose channels together."""
+    """Compile independent poses in O(N), without interpolation coefficients."""
     points = _authored_points(rule)
-    positions = np.asarray(_rule_points(rule), dtype=np.float64)
-    if not np.isfinite(positions).all() or not math.isfinite(rule.rbf_radius) or rule.rbf_radius <= 0:
-        raise ValueError("RBF 输入必须为有限数值，半径必须大于零")
-    radii = _effective_radii(rule, positions)
-    if not np.isfinite(radii).all() or np.any(radii <= 0):
-        raise ValueError("RBF 每个控制点的影响半径必须为有限正数")
-    delta = (positions[:, None, :] - positions[None, :, :] + math.pi) % (2 * math.pi) - math.pi
-    distance_squared = np.einsum("ijk,ijk->ij", delta, delta)
-    if np.any(distance_squared[np.triu_indices(len(positions), 1)] < 1e-10):
-        raise ValueError("RBF 控制点过近或重复，无法求解")
-    # Each column is one basis function, so its local radius belongs to the
-    # column center. The resulting matrix is intentionally non-symmetric but
-    # still interpolates every authored sample exactly.
-    kernel = np.exp(-distance_squared / (2.0 * radii[None, :] ** 2))
-    kernel.flat[::len(positions) + 1] += 1e-6
-    values = np.zeros((len(positions), len(points)), dtype=np.float64)
-    indices = {point.id: i + 1 for i, point in enumerate(points)}
-    for column, point in enumerate(points):
-        if point.id not in indices:
-            raise ValueError("姿势引用了不存在的控制点")
-        values[indices[point.id], column] = float(point.weight)
-    try:
-        coefficients = np.linalg.solve(kernel, values)
-    except np.linalg.LinAlgError as exc:
-        raise ValueError("RBF 控制点无法求解") from exc
-    return positions, radii, tuple(point.id for point in points), coefficients
+    return _compiled_poses(
+        [euler_xyz_quaternion((p.x, p.y, p.z)) for p in points],
+        [p.id for p in points], [float(p.radius) for p in points], [float(p.weight) for p in points],
+    )
+
+
+def _compiled_poses(poses, ids, radii, weights):
+    count = len(poses)
+    if not count or any(len(values) != count for values in (ids, radii, weights)):
+        raise ValueError("修型驱动数据为空或长度不一致")
+    if any(not isinstance(pose_id, str) or not pose_id for pose_id in ids) or len(set(ids)) != count:
+        raise ValueError("修型姿态 id 为空或重复")
+    poses = tuple(normalize_quaternion(pose) for pose in poses)
+    radii, weights = tuple(float(v) for v in radii), tuple(float(v) for v in weights)
+    if any(not math.isfinite(v) or not 0.0 < v <= math.pi + 1e-6 for v in radii):
+        raise ValueError("姿态影响半径必须为有限正数且不超过 180°")
+    if any(not math.isfinite(v) or not 0.0 <= v <= 1.0 for v in weights):
+        raise ValueError("姿态权重必须在 0..1")
+    neutral_angles = tuple(quaternion_angle(pose, IDENTITY) for pose in poses)
+    if any(angle < ANGLE_EPSILON for angle in neutral_angles):
+        raise ValueError("修型姿态不能与基准姿态相同")
+    return poses, {pose_id: index for index, pose_id in enumerate(ids)}, radii, weights, neutral_angles
 
 
 def _decode_rbf_payload(encoded):
     payload = json.loads(encoded)
-    positions = payload["positions"]
-    radii = payload["radii"]
-    coefficients = payload["coefficients"]
-    if not positions or not coefficients:
-        raise ValueError("RBF 驱动数据为空或长度不一致")
-    if any(len(position) != 3 for position in positions):
-        raise ValueError("RBF 驱动姿态必须包含 XYZ 三个值")
-    if len(radii) != len(positions):
-        raise ValueError("RBF 影响半径与控制点数量不一致")
-    if any(len(values) != len(positions) for values in coefficients.values()):
-        raise ValueError("RBF 系数与控制点数量不一致")
-    positions = np.asarray(positions, dtype=np.float64)
-    radii = np.asarray(radii, dtype=np.float64)
-    matrix = np.ascontiguousarray(list(coefficients.values()), dtype=np.float64)
-    radius = float(payload["radius"])
-    if (not np.isfinite(positions).all() or not np.isfinite(radii).all() or
-            not np.isfinite(matrix).all() or not math.isfinite(radius) or radius <= 0 or
-            np.any(radii <= 0)):
-        raise ValueError("RBF 驱动数据必须为有限数值，半径必须大于零")
-    if matrix.size < 64:
-        positions = tuple(tuple(float(value) for value in row) for row in positions)
-        radii = tuple(float(value) for value in radii)
-        matrix = tuple(tuple(float(value) for value in row) for row in matrix)
-    radius_terms = tuple(1.0 / (2 * value * value) for value in radii) if isinstance(radii, tuple) else 1.0 / (2 * radii * radii)
-    return positions, {pose_id: index for index, pose_id in enumerate(coefficients)}, matrix, radius_terms
+    if payload.get("version") != VERSION:
+        raise ValueError("修型驱动数据版本不匹配，请刷新驱动")
+    return _compiled_poses(payload["poses"], payload["ids"], payload["radii"], payload["weights"])
 
 
 def _evaluate_rbf_outputs(item, current):
-    positions, _, coefficients, radius_terms = item
-    # Recompute the Gaussian vector only once for ALL output channels. Small
-    # rules avoid NumPy setup; larger rules use its bundled vectorized path.
-    if isinstance(coefficients, tuple):
-        x, y, z = current
-        kernels = []
-        for center_index, (px, py, pz) in enumerate(positions):
-            dx, dy, dz = _shortest_angle(x - px), _shortest_angle(y - py), _shortest_angle(z - pz)
-            kernels.append(math.exp(-(dx * dx + dy * dy + dz * dz) * radius_terms[center_index]))
-        return tuple(min(max(sum(c * k for c, k in zip(row, kernels)), 0.0), 1.0) for row in coefficients)
-    delta = (np.asarray(current) - positions + math.pi) % (2 * math.pi) - math.pi
-    kernels = np.exp(-np.einsum("ij,ij->i", delta, delta) * radius_terms)
-    return tuple(np.clip(coefficients @ kernels, 0.0, 1.0))
+    poses, _, radii, weights, neutral_angles = item
+    quaternion = euler_xyz_quaternion(current)
+    neutral = quaternion_angle(quaternion, IDENTITY)
+    return tuple(pose_weight(quaternion, pose, radius, weight, c, neutral)
+                 for pose, radius, weight, c in zip(poses, radii, weights, neutral_angles))
 
 
 def _driver_namespace_rbf(rule_id, pose_id, x, y, z):
@@ -636,16 +598,10 @@ def generate_native_drivers(armature, rule_indices=None, warnings=None):
         return 0
     warnings = warnings if warnings is not None else []
     _sync_pose_enabled(armature, rule_indices)
-    if not settings.enabled:
-        return 0
     selected = _selected_rules(armature, rule_indices)
     prepared = {}
     valid_indices = []
     for index, rule in selected:
-        if not rule.enabled:
-            # Disabled rules still need their old owned drivers removed.
-            valid_indices.append(index)
-            continue
         try:
             _validate_rule(armature, rule, require_targets=False)
             if not rule.id:
@@ -653,7 +609,7 @@ def generate_native_drivers(armature, rule_indices=None, warnings=None):
             encoded = _encode_rbf_payload(rule, persist=False)
             prepared[rule.id] = encoded, _decode_rbf_payload(encoded)
             valid_indices.append(index)
-        except (KeyError, TypeError, ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
+        except (KeyError, TypeError, ValueError, RuntimeError) as exc:
             warnings.append(f"规则「{rule.bone or '未指定骨骼'}」跳过：{exc}")
 
     if not valid_indices:
@@ -672,7 +628,7 @@ def generate_native_drivers(armature, rule_indices=None, warnings=None):
     generated = 0
     try:
         for index, rule in selected:
-            if index not in valid_indices or not rule.enabled:
+            if index not in valid_indices:
                 continue
             rule.driver_payload, _RBF_RUNTIME[rule.id] = prepared[rule.id]
             _RBF_CACHE.pop(rule.id, None)
@@ -742,7 +698,7 @@ def remove_native_drivers(armature, rule_indices=None):
     return removed
 
 
-def _collect_generated_targets(armature, overwrite=True, rule_indices=None):
+def _collect_generated_targets(armature, rule_indices=None):
     """Validate reset names and return the rule pose/name pairs to create."""
     settings = settings_for(armature)
     if settings is None:
@@ -781,13 +737,21 @@ def _collect_generated_targets(armature, overwrite=True, rule_indices=None):
                 if existing is not None:
                     if existing == mesh.data.shape_keys.reference_key:
                         raise ValueError(f"不能覆盖基准形态键：{mesh.name}/{name}")
-                    if not overwrite:
-                        animation = existing.id_data.animation_data
-                        for fcurve in animation.drivers if animation else []:
-                            if fcurve.data_path == existing.path_from_id("value") and not _owned_driver(fcurve, armature, {rule.id}):
-                                raise ValueError(f"目标已有其他驱动器：{mesh.name}/{name}")
                 targets.append((point, mesh, name))
     return targets
+
+
+def _shape_key_is_empty(key, reference_cache=None):
+    """Only exact zero deltas are empty; even tiny authored offsets are kept."""
+    relative = key.relative_key
+    if relative is None or relative == key or len(key.data) != len(relative.data):
+        return False
+    cache = reference_cache if reference_cache is not None else {}
+    relative_id = relative.as_pointer()
+    if relative_id not in cache:
+        cache[relative_id] = read_shape_key_positions(relative)
+    coordinates = read_shape_key_positions(key)
+    return bool(np.isfinite(coordinates).all() and np.array_equal(coordinates, cache[relative_id]))
 
 
 def _remove_shape_key_drivers(key):
@@ -797,25 +761,35 @@ def _remove_shape_key_drivers(key):
             key.id_data.driver_remove(fcurve.data_path, fcurve.array_index)
 
 
-def _prepare_generated_shape_keys(armature, overwrite=True, rule_indices=None):
-    """Create each rule's named output key before attaching native drivers."""
-    targets = _collect_generated_targets(armature, overwrite, rule_indices)
-    for point, mesh, name in targets:
+def _prepare_generated_shape_keys(targets, overwrite=False, overwrite_targets=None):
+    """Reset empty/approved keys, retaining all other sculpted coordinates."""
+    overwrite_targets = set(overwrite_targets or ())
+    reference_cache = {}
+    # Classify before modifying any relative-key coordinates in this batch.
+    prepared = []
+    for _, mesh, name in targets:
         shape_keys = mesh.data.shape_keys
         existing = shape_keys.key_blocks.get(name) if shape_keys else None
+        reset_geometry = existing is not None and (
+            overwrite or (mesh.data.as_pointer(), name) in overwrite_targets
+            or _shape_key_is_empty(existing, reference_cache)
+        )
+        prepared.append((mesh, name, existing, reset_geometry))
+    for mesh, name, existing, reset_geometry in prepared:
         if mesh.data.shape_keys is None:
             mesh.shape_key_add(name="Basis", from_mix=False)
         if existing is None:
             mesh.shape_key_add(name=name, from_mix=False)
-        elif overwrite:
-            # Preserve key identity, relative-key references and topology.
+        else:
+            # Reset always refreshes these configured outputs, including keys
+            # whose sculpt is kept. Unrelated shape-key drivers stay untouched.
             _remove_shape_key_drivers(existing)
-            basis = mesh.data.shape_keys.reference_key
-            coordinates = np.empty(len(basis.data) * 3, dtype=np.float32)
-            basis.data.foreach_get("co", coordinates)
-            existing.data.foreach_set("co", coordinates)
-            existing.relative_key = basis
-            existing.mute = False
+            if reset_geometry:
+                # Preserve key identity, references from other keys and topology.
+                basis = mesh.data.shape_keys.reference_key
+                existing.data.foreach_set("co", read_shape_key_positions(basis).ravel())
+                existing.relative_key = basis
+                existing.mute = False
     return len(targets)
 
 
@@ -888,24 +862,25 @@ def _display_rbf_weight(rule, point, armature):
         bool(rule.enabled),
         tuple((p.id, float(p.x), float(p.y), float(p.z)) for p in _authored_points(rule)),
         tuple((p.id, float(p.radius), float(p.weight), bool(p.enabled)) for p in _authored_points(rule)),
-        float(rule.rbf_radius),
         current,
     )
     cache_key = (armature.as_pointer(), signature)
     cached = _RBF_UI_CACHE.get(cache_key)
     if cached is None:
         try:
-            # UI preview follows the authored rule immediately; the serialized
-            # driver payload is intentionally updated only by the refresh action.
-            item = _decode_rbf_payload(_encode_rbf_payload(rule, persist=False))
+            item = (_RBF_RUNTIME.get(rule.id) or _decode_rbf_payload(rule.driver_payload)
+                    if rule.driver_payload else _compile_rbf(rule))
             values = _evaluate_rbf_outputs(item, current)
+            settings = settings_for(armature)
+            if not rule.enabled or settings is None or not settings.enabled:
+                values = tuple(0.0 for _ in values)
             cached = {pose_id: float(values[index]) for pose_id, index in item[1].items()}
-        except (KeyError, TypeError, ValueError, RuntimeError, np.linalg.LinAlgError):
+        except (KeyError, TypeError, ValueError, RuntimeError):
             cached = {}
         if len(_RBF_UI_CACHE) > 128:
             _RBF_UI_CACHE.clear()
         _RBF_UI_CACHE[cache_key] = cached
-    return cached.get(point.id)
+    return cached.get(point.id) if point.enabled else 0.0
 
 
 def _display_bone_rotation(rule, armature):
@@ -924,6 +899,12 @@ class BsCorrectivePreview:
     _handler_3d = None
     _handler_2d = None
     _armature_name = ""
+    _slice_cache = {}
+
+    @classmethod
+    def invalidate(cls):
+        cls._slice_cache.clear()
+        AuxPreviewUtils.tag_redraw()
 
     @classmethod
     def show(cls, context, armature=None):
@@ -939,6 +920,7 @@ class BsCorrectivePreview:
     @classmethod
     def clear(cls):
         cls._armature_name = ""
+        cls._slice_cache.clear()
         AuxPreviewUtils.remove_handlers(cls)
         AuxPreviewUtils.tag_redraw()
 
@@ -962,29 +944,43 @@ class BsCorrectivePreview:
             0.18 + 0.48 * value + 0.28 * authored,
         )
 
-    @staticmethod
-    def _append_cone(target, origin, direction, up, length, radius):
-        direction = AuxPreviewUtils.safe_normalized_vector(direction)
-        up = AuxPreviewUtils.safe_normalized_vector(up)
-        if direction is None:
-            return
-        side = AuxPreviewUtils.safe_normalized_vector(direction.cross(up)) if up is not None else None
-        if side is None:
-            side = AuxPreviewUtils.safe_normalized_vector(direction.cross(Vector((0.0, 0.0, 1.0))))
-        if side is None:
-            side = AuxPreviewUtils.safe_normalized_vector(direction.cross(Vector((0.0, 1.0, 0.0))))
-        if side is None:
-            return
-        up = AuxPreviewUtils.safe_normalized_vector(side.cross(direction))
-        if up is None:
-            return
-        depth = max(length, 1e-4)
-        angle = max(0.01, min(float(radius), math.radians(80.0)))
-        ring_center = origin + direction * depth
-        ring_radius = math.tan(angle) * depth
-        AuxPreviewUtils.append_circle(target, ring_center, side, up, ring_radius, segments=32)
-        for axis in (side, up, -side, -up):
-            target.extend((tuple(origin), tuple(ring_center + axis * ring_radius)))
+    @classmethod
+    def _pose_slices(cls, point):
+        """Two swing arcs plus a small twist arc for the selected pose only."""
+        key = (point.x, point.y, point.z, point.radius, point.weight)
+        if key in cls._slice_cache:
+            return cls._slice_cache[key]
+        pose = Euler((point.x, point.y, point.z), "XYZ").to_quaternion()
+        normalized = normalize_quaternion((pose.x, pose.y, pose.z, pose.w))
+        groups = [[] for _ in range(8)]
+        c = quaternion_angle(normalized, IDENTITY)
+        if c < ANGLE_EPSILON:
+            return groups
+        for axis in ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)):
+            arc = []
+            for i in range(65):
+                angle = point.radius * (2.0 * i / 64 - 1.0)
+                rotation = pose @ Quaternion(axis, angle)
+                q = normalize_quaternion((rotation.x, rotation.y, rotation.z, rotation.w))
+                value = pose_weight(q, normalized, point.radius, point.weight, c)
+                arc.append((rotation @ Vector((0.0, 1.0, 0.0)), value))
+            for (a, wa), (b, wb) in zip(arc, arc[1:]):
+                groups[min(7, int((wa + wb) * 0.5 / max(point.weight, 1e-9) * 7))].extend((a, b))
+        # A local-Y twist leaves the bone direction unchanged. Draw it as a
+        # small separate arc around the pose tip rather than pretending it is swing.
+        arc = []
+        for i in range(65):
+            angle = point.radius * (2.0 * i / 64 - 1.0)
+            rotation = pose @ Quaternion((0.0, 1.0, 0.0), angle)
+            q = normalize_quaternion((rotation.x, rotation.y, rotation.z, rotation.w))
+            value = pose_weight(q, normalized, point.radius, point.weight, c)
+            arc.append((pose @ Vector((0.22 * math.sin(angle), 1.2, 0.22 * math.cos(angle))), value))
+        for (a, wa), (b, wb) in zip(arc, arc[1:]):
+            groups[min(7, int((wa + wb) * 0.5 / max(point.weight, 1e-9) * 7))].extend((a, b))
+        if len(cls._slice_cache) > 64:
+            cls._slice_cache.clear()
+        cls._slice_cache[key] = groups
+        return groups
 
     @classmethod
     def _draw_3d(cls):
@@ -1004,12 +1000,10 @@ class BsCorrectivePreview:
         head = armature.matrix_world @ bone.head
         tail = armature.matrix_world @ bone.tail
         length = max((tail - head).length, 0.05)
-        current = bone.matrix_basis.to_3x3()
-        try:
-            current_inverse = current.inverted()
-        except (ValueError, RuntimeError):
-            current_inverse = Matrix.Identity(3)
-        armature_rotation = armature.matrix_world.to_3x3()
+        # Display uses rotations only; non-uniform scale must not distort the
+        # angular guides into ellipses or shear them as the bone moves.
+        frame = (armature.matrix_world.to_quaternion() @ bone.matrix.to_quaternion()
+                 @ bone.matrix_basis.to_quaternion().inverted()).to_matrix()
         actual_direction = AuxPreviewUtils.safe_normalized_vector(tail - head)
 
         gpu.state.blend_set("ALPHA")
@@ -1023,26 +1017,45 @@ class BsCorrectivePreview:
                 AuxPreviewUtils.draw_points(shader, [tuple(head)], (1.0, 0.75, 0.15, 1.0), size=9.0)
 
             authored = _authored_points(rule)
-            radii = _effective_radii(rule)
-            for point_index, point in enumerate(authored, start=1):
+            selected_point = rule.pose_points[min(rule.pose_active_index, len(rule.pose_points) - 1)] if rule.pose_points else None
+            # Keep the selected halo on top when pose markers overlap.
+            authored.sort(key=lambda point: selected_point is not None and selected_point.id == point.id)
+            for point in authored:
                 try:
                     weight = _display_rbf_weight(rule, point, armature)
                     if weight is None:
                         weight = 0.0
                     authored_weight = max(0.0, min(1.0, float(point.weight)))
-                    radius = radii[point_index]
                     pose_rotation = Euler((point.x, point.y, point.z), "XYZ").to_matrix()
-                    ghost_rotation = armature_rotation @ bone.matrix.to_3x3() @ current_inverse @ pose_rotation
+                    ghost_rotation = frame @ pose_rotation
                     direction = ghost_rotation @ Vector((0.0, 1.0, 0.0))
-                    up = ghost_rotation @ Vector((0.0, 0.0, 1.0))
                     enabled = bool(settings.enabled and rule.enabled and point.enabled)
                     color = cls._color(weight, enabled, authored_weight)
-                    lines = []
-                    cls._append_cone(lines, head, direction, up, length * 1.05, radius)
-                    lines.extend((tuple(head), tuple(head + direction.normalized() * length * 1.35)))
-                    gpu.state.line_width_set(1.0 + 1.5 * authored_weight + 1.5 * min(max(weight, 0.0), 1.0))
-                    AuxPreviewUtils.draw_lines(shader, lines, color)
-                    marker_size = 5.0 + 5.0 * authored_weight + 5.0 * min(max(weight, 0.0), 1.0)
+                    selected = selected_point is not None and selected_point.id == point.id
+                    if selected:
+                        gpu.state.line_width_set(2.5)
+                        for level, vertices in enumerate(cls._pose_slices(point)):
+                            lines = [tuple(head + frame @ vertex * length * 1.05) for vertex in vertices]
+                            alpha = 0.18 + 0.72 * level / 7
+                            AuxPreviewUtils.draw_lines(shader, lines, (0.30 + 0.70 * level / 7, 0.72, 1.0 - 0.65 * level / 7, alpha))
+                        lines = [tuple(head), tuple(head + direction.normalized() * length * 1.35)]
+                        gpu.state.line_width_set(3.5)
+                        AuxPreviewUtils.draw_lines(shader, lines, (1.0, 0.82, 0.24, 1.0))
+                        # Selection has its own gold halo, separate from the
+                        # inner marker's blue-to-orange live output color.
+                        AuxPreviewUtils.draw_points(
+                            shader, [tuple(head + direction.normalized() * length * 1.35)],
+                            (1.0, 0.82, 0.24, 1.0), size=17.0,
+                        )
+                    else:
+                        color = (*color[:3], max(color[3], 0.85 if enabled else 0.60))
+                    marker_size = 10.0 if selected else 9.0 + 3.0 * min(max(weight, 0.0), 1.0)
+                    if not selected:
+                        # A dark rim keeps idle poses readable on light meshes.
+                        AuxPreviewUtils.draw_points(
+                            shader, [tuple(head + direction.normalized() * length * 1.35)],
+                            (0.035, 0.045, 0.065, 0.95), size=marker_size + 4.0,
+                        )
                     AuxPreviewUtils.draw_points(
                         shader,
                         [tuple(head + direction.normalized() * length * 1.35)],
@@ -1066,13 +1079,19 @@ class BsCorrectivePreview:
         if not settings.preview_enabled:
             return
         lines = [("BS 修型范围预览  ", rule.bone or "未指定骨骼")]
-        radii = _effective_radii(rule)
-        for point_index, point in enumerate(_authored_points(rule), start=1):
+        lines.append(("范围显示  ", "金色为选中项 · 摆动弧 / 扭转弧"))
+        try:
+            current = euler_xyz_quaternion(_current_local_pose(armature, rule.bone))
+        except (ValueError, RuntimeError, AttributeError):
+            return
+        selected = rule.pose_points[min(rule.pose_active_index, len(rule.pose_points) - 1)] if rule.pose_points else None
+        for point in [selected] if selected is not None and selected.id != _BASE_POINT else ():
             weight = _display_rbf_weight(rule, point, armature)
             state = "启用" if point.enabled and (weight or 0.0) > 0.001 else "待命"
             lines.append(
-                (f"{point.bs_name}  ",
-                 f"{state}  范围 {math.degrees(radii[point_index]):.1f}°  "
+                (f"▶ {point.bs_name}  ",
+                 f"{state}  偏离 {math.degrees(quaternion_angle(current, euler_xyz_quaternion((point.x, point.y, point.z)))):.1f}°"
+                 f" / {math.degrees(point.radius):.1f}°  "
                  f"目标 {point.weight:.2f}  当前 RBF {(weight or 0.0):.3f}")
             )
         font_id = 0
@@ -1104,8 +1123,8 @@ def _next_bs_name(settings):
 
 
 def _add_point(armature, rule, pose):
-    if any(_rbf_distance(pose, point) < 1e-5 for point in _rule_points(rule)):
-        raise ValueError("当前姿态已存在；请先摆出新的局部旋转姿态")
+    if _rbf_distance(pose, (0.0, 0.0, 0.0)) < ANGLE_EPSILON:
+        raise ValueError("修型姿态不能与基准姿态相同")
     _ensure_base_point(rule)
     point = rule.pose_points.add()
     point.id = uuid.uuid4().hex
@@ -1296,16 +1315,12 @@ class _BatchRuleOperator(_ArmatureOperator):
     # Shift always opens a confirmation dialog with an explicit all-rules checkbox.
     def invoke(self, context, event):
         self.all_rules = bool(event.shift)
-        if self.all_rules or self.bl_idname == "hotools.bs_corrective_reset":
+        if self.all_rules:
             return context.window_manager.invoke_props_dialog(self, width=360)
         return self.execute(context)
 
     def draw(self, context):
         self.layout.prop(self, "all_rules")
-        if self.bl_idname == "hotools.bs_corrective_reset":
-            self.layout.prop(self, "overwrite_existing")
-            self.layout.label(text="按规则影响物体生成同名姿势 BS。", icon="INFO")
-            self.layout.label(text="关闭覆盖将保留已有 BS 的修型数据。")
 
     def indices(self, context):
         armature = _operator_armature(self, context)
@@ -1337,7 +1352,7 @@ class OP_BsCorrectiveGenerateDrivers(_BatchRuleOperator, Operator):
         return {"FINISHED"}
 
 
-def reset_correctives(armature, overwrite=True, rule_indices=None):
+def reset_correctives(armature, overwrite=False, rule_indices=None, overwrite_targets=None, warnings=None):
     # Preflight the whole batch (including the solver) before removing anything.
     settings = settings_for(armature)
     if settings is not None:
@@ -1346,29 +1361,133 @@ def reset_correctives(armature, overwrite=True, rule_indices=None):
     for _, rule in selected:
         _validate_rule(armature, rule, require_targets=False)
         _compile_rbf(rule)
-    _collect_generated_targets(armature, overwrite, rule_indices)
-    remove_native_drivers(armature, rule_indices)
-    _prepare_generated_shape_keys(armature, overwrite, rule_indices)
-    return generate_native_drivers(armature, rule_indices)
+    targets = _collect_generated_targets(armature, rule_indices)
+    _prepare_generated_shape_keys(targets, overwrite, overwrite_targets)
+    return generate_native_drivers(armature, rule_indices, warnings)
+
+
+class PG_BsCorrectiveResetTarget(PropertyGroup):
+    """Transient per-key choices belonging only to the reset dialog."""
+    # Operator properties cannot contain data-block pointers, even nested in a
+    # collection. Mesh names resolve again when confirming or redoing the reset.
+    mesh_name: StringProperty()  # type: ignore
+    mesh_data_name: StringProperty()  # type: ignore
+    key_name: StringProperty()  # type: ignore
+    is_empty: BoolProperty()  # type: ignore
+    overwrite: BoolProperty(
+        name="覆盖",
+        description="勾选后清空这个形态键的修型顶点；未勾选时保留顶点，仍刷新驱动器",
+        default=False,
+    )  # type: ignore
+
+
+class HO_UL_BsCorrectiveResetTarget(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        row = layout.row(align=True)
+        toggle = row.row(align=True)
+        toggle.enabled = not item.is_empty
+        toggle.prop(item, "overwrite", text="")
+        row.label(text=item.mesh_name, icon="MESH_DATA")
+        row.label(text=item.key_name, icon="SHAPEKEY_DATA")
+        row.label(text="空键 · 自动重置" if item.is_empty else "有修型")
 
 
 class OP_BsCorrectiveReset(_BatchRuleOperator, Operator):
     bl_idname = "hotools.bs_corrective_reset"
     bl_label = "重置规则"
-    bl_description = "按规则影响物体生成姿势 BS 并添加驱动器；可选择覆盖已有 BS；Shift 点击批量执行"
+    bl_description = "创建缺失 BS、自动重置空键，逐项确认是否覆盖已有修型，并刷新全部目标驱动器；Shift 点击批量执行"
     bl_options = {"REGISTER", "UNDO"}
     all_rules: BoolProperty(name="处理全部规则", default=False) # type: ignore
-    overwrite_existing: BoolProperty(name="覆盖同名形态键", default=True) # type: ignore
+    existing_keys: CollectionProperty(type=PG_BsCorrectiveResetTarget, options={"SKIP_SAVE"})  # type: ignore
+    existing_active_index: bpy.props.IntProperty(default=0, min=0, options={"SKIP_SAVE"})  # type: ignore
+    missing_count: bpy.props.IntProperty(default=0, options={"HIDDEN", "SKIP_SAVE"})  # type: ignore
+    scanned_all_rules: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})  # type: ignore
+    scan_error: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})  # type: ignore
     armature_name: StringProperty(default="", options={"SKIP_SAVE"})  # type: ignore
+
+    def _scan_existing_keys(self, context):
+        previous = {
+            (item.mesh_data_name, item.key_name): bool(item.overwrite)
+            for item in self.existing_keys if not item.is_empty
+        }
+        self.existing_keys.clear()
+        self.missing_count = 0
+        self.scanned_all_rules = self.all_rules
+        self.scan_error = ""
+        armature = _operator_armature(self, context)
+        try:
+            targets = _collect_generated_targets(armature, self.indices(context))
+        except (ValueError, RuntimeError) as exc:
+            self.scan_error = str(exc)
+            return
+        reference_cache = {}
+        for _, mesh, name in targets:
+            keys = mesh.data.shape_keys
+            key = keys.key_blocks.get(name) if keys else None
+            if key is None:
+                self.missing_count += 1
+                continue
+            item = self.existing_keys.add()
+            item.mesh_name, item.mesh_data_name, item.key_name = mesh.name, mesh.data.name, name
+            item.is_empty = _shape_key_is_empty(key, reference_cache)
+            item.overwrite = item.is_empty or previous.get((mesh.data.name, name), False)
+        self.existing_active_index = min(self.existing_active_index, max(0, len(self.existing_keys) - 1))
+
+    def invoke(self, context, event):
+        self.all_rules = bool(event.shift)
+        # Never inherit destructive selections from the previous invocation.
+        self.existing_keys.clear()
+        self._scan_existing_keys(context)
+        return context.window_manager.invoke_props_dialog(self, width=620)
+
+    def check(self, context):
+        if self.scanned_all_rules != self.all_rules:
+            self._scan_existing_keys(context)
+            return True
+        return False
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "all_rules")
+        if self.scan_error:
+            layout.label(text=self.scan_error, icon="ERROR")
+            return
+        empty_count = sum(item.is_empty for item in self.existing_keys)
+        layout.label(
+            text=f"新建 {self.missing_count} 个 · 空键自动重置 {empty_count} 个 · "
+                 f"已有修型 {len(self.existing_keys) - empty_count} 个",
+            icon="INFO",
+        )
+        if self.existing_keys:
+            layout.label(text="勾选覆盖的键将清空修型；已有修型默认保留。")
+            layout.template_list(
+                HO_UL_BsCorrectiveResetTarget.__name__, "", self, "existing_keys",
+                self, "existing_active_index", rows=min(8, max(3, len(self.existing_keys))),
+            )
+        layout.label(text="所有目标驱动器都会刷新，与是否覆盖修型无关。", icon="DRIVER")
 
     def execute(self, context):
         armature = _operator_armature(self, context)
+        overwrite_targets = {
+            (mesh.as_pointer(), item.key_name)
+            for item in self.existing_keys
+            if item.overwrite and not item.is_empty
+            and (mesh := bpy.data.meshes.get(item.mesh_data_name)) is not None
+        }
+        warnings = []
         try:
-            count = reset_correctives(armature, self.overwrite_existing, self.indices(context))
+            count = reset_correctives(
+                armature, rule_indices=self.indices(context),
+                overwrite_targets=overwrite_targets, warnings=warnings,
+            )
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-        self.report({"INFO"}, f"已重置规则并生成 {count} 条 BS 驱动器")
+        for warning in warnings[:8]:
+            self.report({"WARNING"}, warning)
+        if len(warnings) > 8:
+            self.report({"WARNING"}, f"另有 {len(warnings) - 8} 条刷新警告")
+        self.report({"INFO"}, f"已处理形态键并刷新 {count} 条 BS 驱动器")
         return {"FINISHED"}
 
 
@@ -1414,6 +1533,7 @@ def draw_bs_corrective_menu(layout:bpy.types.UILayout, context, armature=None):
     settings = settings_for(armature)
     rule = _active_rule_for_armature(armature)
     actions = layout.row(align=True)
+    actions.operator_context = "INVOKE_DEFAULT"
     actions.enabled = rule is not None
     eye = actions.row(align=True)
     if settings.preview_enabled:
@@ -1467,8 +1587,9 @@ def draw_bs_corrective_panel(layout, context):
 
 CLASSES = [
     PG_BsCorrectiveInfluenceObject, PG_BsCorrectivePosePoint,
-    PG_BsCorrectiveRule, PG_BsCorrectiveSettings,
+    PG_BsCorrectiveRule, PG_BsCorrectiveSettings, PG_BsCorrectiveResetTarget,
     HO_UL_BsCorrectiveRule, HO_UL_BsCorrectiveInfluence, HO_UL_BsCorrectivePoint,
+    HO_UL_BsCorrectiveResetTarget,
     OP_BsCorrectiveSelectBone, OP_BsCorrectiveListEdit, OP_BsCorrectivePose, OP_BsCorrectiveGenerateDrivers,
     OP_BsCorrectiveReset,
 ]
