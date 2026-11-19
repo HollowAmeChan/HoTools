@@ -339,6 +339,9 @@ class PT_Hotools_PosebonePanel(Panel):
         layout.prop(props, "generateMCH", toggle=False)
         layout.prop(props, "endBone", toggle=False)
         layout.prop(props, "humanoidMapping", toggle=False)
+        tpose_status = layout.row()
+        tpose_status.enabled = False
+        tpose_status.prop(props, "humanoidTPoseCached", text="T-Pose 已保存")
         layout.operator("hotools.register_existing_aim", icon="CON_TRACKTO")
 
         aux = props.auxBone
