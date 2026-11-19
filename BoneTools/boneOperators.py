@@ -1920,7 +1920,7 @@ class OP_SyncArmatures(Operator):
 
 def drawSyncArmaturesPanel(layout: UILayout, context: Context):
     header, box = layout.panel("hotools_bone_sync_armatures", default_closed=True)
-    header.label(text="同步骨架", icon="CONSTRAINT_BONE")
+    header.label(text="同步骨架")
     if box is None:
         return
     row = box.row(align=True)
