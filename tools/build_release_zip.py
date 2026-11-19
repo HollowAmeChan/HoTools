@@ -108,6 +108,19 @@ def validate_inputs(repo_root: Path, abi: str, files: list[Path]) -> None:
     if missing:
         raise ValueError(f"Missing target runtime file: {missing[0]}")
 
+    # A checkout without LFS downloads contains small text pointers instead of
+    # animation data. Reject these before producing an unusable install ZIP.
+    for path in files:
+        if path.stat().st_size > 1024:
+            continue
+        with path.open("rb") as stream:
+            if stream.read(128).startswith(b"version https://git-lfs.github.com/spec/v1"):
+                relative = path.relative_to(repo_root).as_posix()
+                raise ValueError(
+                    f"Unresolved Git LFS pointer: {relative}. "
+                    "Run 'git lfs pull' before building a release."
+                )
+
 
 def validate_archive(output: Path, abi: str) -> tuple[int, list[str]]:
     with zipfile.ZipFile(output) as archive:
@@ -117,7 +130,10 @@ def validate_archive(output: Path, abi: str) -> tuple[int, list[str]]:
         raise ValueError("ZIP must contain exactly one HoTools root directory")
 
     other_abis = set(SUPPORTED_ABIS) - {abi}
-    forbidden_roots = {".git", ".github", ".agents", ".claude", "_native", "tools"}
+    forbidden_roots = {
+        ".git", ".github", ".agents", ".claude", ".research",
+        "_native", "_research", "tools",
+    }
     # 发布包只含插件自带的内置模块：物理世界与任何用户安装的扩展都不得出现在包里。
     # 扩展由 HoTools-Omninode-Physics 仓库自己的发布物提供。
     forbidden_paths = (
@@ -130,6 +146,8 @@ def validate_archive(output: Path, abi: str) -> tuple[int, list[str]]:
         relative_text = PurePosixPath(*relative_parts).as_posix() if relative_parts else ""
         if relative_parts and relative_parts[0] in forbidden_roots:
             raise ValueError(f"ZIP contains a development path: {member}")
+        if ".git" in relative_parts:
+            raise ValueError(f"ZIP contains Git repository metadata: {member}")
         if any(
             relative_text == prefix or relative_text.startswith(prefix + "/")
             for prefix in forbidden_paths

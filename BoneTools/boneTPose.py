@@ -483,18 +483,17 @@ _CLASSES = (
 )
 
 
-def draw_tpose_row(layout, armature):
+def draw_tpose_row(layout:bpy.types.UILayout, armature):
     row = layout.row(align=True)
-    row.label(text="T-Pose")
     previewing = is_previewing(armature)
     row.operator(
         OT_HumanoidTPosePreview.bl_idname,
-        text="",
+        text="预览Tpose",
         icon="PAUSE" if previewing else "PLAY",
         depress=previewing,
     )
-    row.operator(OT_HumanoidTPoseSave.bl_idname, text="", icon="FILE_TICK")
-    row.operator(OT_HumanoidTPoseAuto.bl_idname, text="", icon="ARMATURE_DATA")
+    row.operator(OT_HumanoidTPoseSave.bl_idname, text="保存Tpose", icon="FILE_TICK")
+    row.operator(OT_HumanoidTPoseAuto.bl_idname, text="自动Tpose", icon="ARMATURE_DATA")
     row.operator(
         OT_HumanoidTPoseClearPose.bl_idname,
         text="",

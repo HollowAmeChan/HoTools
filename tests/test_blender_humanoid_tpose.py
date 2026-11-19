@@ -82,7 +82,6 @@ armature = create_armature()
 layout = LayoutRecorder()
 boneTPose.draw_tpose_row(layout, armature)
 assert layout.events == [
-    ("label", "T-Pose"),
     ("operator", "ho.humanoid_tpose_preview"),
     ("operator", "ho.humanoid_tpose_save"),
     ("operator", "ho.humanoid_tpose_auto"),

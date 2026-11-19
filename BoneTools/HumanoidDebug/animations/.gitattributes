@@ -1,0 +1,1 @@
+*.[aA][nN][iI][mM] filter=lfs diff=lfs merge=lfs -text

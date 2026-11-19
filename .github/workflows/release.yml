@@ -19,6 +19,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 先恢复 LFS 对象缓存，再下载缺少的动画。普通代码更新无需重复下载整个动画库。
+      - name: Cache animation LFS objects
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs/objects
+          key: ${{ runner.os }}-humanoid-lfs-v1-${{ hashFiles('BoneTools/HumanoidDebug/animations/**') }}
+          restore-keys: |
+            ${{ runner.os }}-humanoid-lfs-v1-
+
+      - name: Download bundled animations
+        run: |
+          git lfs install --local
+          git lfs pull --include="BoneTools/HumanoidDebug/animations/**" --exclude=""
+
       - name: Create Blender install ZIP and release
         run: |
           set -euo pipefail

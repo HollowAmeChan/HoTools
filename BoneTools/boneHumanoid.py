@@ -4,6 +4,7 @@ from bpy.props import BoolProperty, IntProperty
 from .humanoid_auto_mapping import auto_map_source_names_to_humanoid,TARGET_LAYOUT
 from . import arpAssembly
 from . import boneTPose
+from . import HumanoidDebug as humanoidDebug
 
 from math import acos, atan2, cos, degrees, radians, sin
 import blf
@@ -2401,11 +2402,11 @@ class OP_HumanoidMappingPreview_Clear(Operator):
 def _draw_bone_processing_panel(layout, context):
     header, mapping_box = layout.panel(
         "hotools_bone_humanoid_processing", default_closed=True)
-    header.label(text="骨骼处理", icon="ARMATURE_DATA")
+    header.label(text="人型骨骼处理", icon="ARMATURE_DATA")
     if mapping_box is None:
         return
     row = mapping_box.row(align=True)
-    row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname, text="自动映射")
+    row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname, text="自动映射Humanoid标记")
     row.operator(OP_Mapping_ClearHumanoidBoneProps.bl_idname, text="", icon="TRASH")
     boneTPose.draw_tpose_row(mapping_box, context.active_object)
 
@@ -2414,7 +2415,7 @@ def _draw_humanoid_check_panel(layout, context):
     scene = context.scene
     header, preview_box = layout.panel(
         "hotools_bone_humanoid_checks", default_closed=True)
-    header.label(text="Humanoid检查预览", icon="HIDE_OFF")
+    header.label(text="人型检查预览", icon="HIDE_OFF")
     if HumanoidMappingPreviewHUD.is_running():
         header.alert = True
         header.operator(
@@ -2466,6 +2467,7 @@ def _draw_humanoid_check_panel(layout, context):
 def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     _draw_bone_processing_panel(layout, context)
     _draw_humanoid_check_panel(layout, context)
+    humanoidDebug.draw_panel(layout, context)
     arpAssembly.draw_panel(layout, context)
 
 cls = [

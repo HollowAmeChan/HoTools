@@ -1,6 +1,7 @@
 import bpy
 from bpy.types import Panel,Menu
 from . import boneHumanoid,boneOperators,boneProperty,boneRename,boneSplit,boneDissolve,auxBone,hoAux,boneTPose
+from . import HumanoidDebug as humanoidDebug
 
 
 # region 变量
@@ -119,6 +120,7 @@ def register():
     auxBone.register()
     boneHumanoid.register()
     boneTPose.register()
+    humanoidDebug.register()
 
     for i in cls:
         bpy.utils.register_class(i)
@@ -132,6 +134,7 @@ def register():
 
 
 def unregister():
+    humanoidDebug.unregister()
     boneTPose.unregister()
     boneOperators.unregister()
     boneRename.unregister()
