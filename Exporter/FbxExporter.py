@@ -99,7 +99,7 @@
 #     骨骼集合和 Humanoid 映射等 JSON；也可分别关闭各类 JSON。
 #     解决 FBX 本身无法完整表达 HoTools 约束、骨骼集合和精确 Humanoid 映射的问题，
 #     让 Unity 导入端可以按原始语义重建运行时信息。
-# 18. 导出预设：保存主导出器的开关和 JSON 后缀设置。
+# 18. 导出预设：保存主导出器的开关，JSON 文件名后缀按类型固定。
 #     解决不同资产重复配置导出参数、容易漏勾选的问题。
 #
 # 五、临时状态原则
@@ -156,11 +156,8 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
         "op.ignoreGeometryNodes",
         "op.ignoreOutlineModifiers",
         "op.exportBoneConstraint",
-        "op.boneConstraintSuffix",
         "op.exportBoneCollection",
-        "op.boneCollectionSuffix",
         "op.exportHumanoidMapping",
-        "op.humanoidMappingSuffix",
         "op.exportUnityMetadata",
     ]
 
@@ -2240,7 +2237,7 @@ class FBXExporter:
         )
 
     @staticmethod
-    def export_armature_constraint_ir(ob, fbx_filepath, suffix):
+    def export_armature_constraint_ir(ob, fbx_filepath):
         """Write the armature's neutral rig constraint IR next to the FBX."""
         from .ConstraintIRExporter import ConstraintIRExporter
 
@@ -2254,7 +2251,7 @@ class FBXExporter:
         base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
         json_path = FBXExporter.unity_metadata_path(
             fbx_filepath,
-            f"{base_name}_{ob.name}{suffix}.json",
+            f"{base_name}_{ob.name}_constraint.json",
         )
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(
@@ -2267,10 +2264,10 @@ class FBXExporter:
             f.write("\n")
         return json_path
     @staticmethod
-    def export_armature_collections_json(ob, fbx_filepath, suffix):
+    def export_armature_collections_json(ob, fbx_filepath):
         """分析本骨架的骨骼集合并写出 JSON。返回写出的文件路径，无集合则返回 None。
 
-        文件名为 <fbx名>_<骨架名><suffix>.json，suffix 用于与约束 JSON 区分避免冲突。
+        文件名固定为 <fbx名>_<骨架名>_collection.json。
         """
         from .BoneCollectionExporter import BoneCollectionExporter
 
@@ -2281,13 +2278,13 @@ class FBXExporter:
         base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
         json_path = FBXExporter.unity_metadata_path(
             fbx_filepath,
-            f"{base_name}_{ob.name}{suffix}.json",
+            f"{base_name}_{ob.name}_collection.json",
         )
         BoneCollectionExporter.export_to_file(ob.data, json_path)
         return json_path
 
     @staticmethod
-    def export_humanoid_mapping_json(mapping_data, fbx_filepath, suffix):
+    def export_humanoid_mapping_json(mapping_data, fbx_filepath):
         """Write authored Humanoid labels captured before the MCH rewrite."""
         if not mapping_data:
             return None
@@ -2295,7 +2292,7 @@ class FBXExporter:
         base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
         json_path = FBXExporter.unity_metadata_path(
             fbx_filepath,
-            f"{base_name}{suffix}.json",
+            f"{base_name}_humanoid.json",
         )
         data = HumanoidMappingExporter.write_export_dict(mapping_data, json_path)
         return json_path if data is not None else None
@@ -2320,7 +2317,7 @@ class FBXExporter:
         return json_path
 
     @staticmethod
-    def export_bs_corrective_metadata(armature_objects, fbx_filepath, suffix="_bs_corrective.json", mch_name_maps=None):
+    def export_bs_corrective_metadata(armature_objects, fbx_filepath, mch_name_maps=None):
         """Export authored BS rules as one sidecar for the selected FBX.
 
         The sidecar describes each authored source bone's local rotation
@@ -2345,7 +2342,7 @@ class FBXExporter:
         if not rules:
             return None
         base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
-        json_path = FBXExporter.unity_metadata_path(fbx_filepath, f"{base_name}{suffix}")
+        json_path = FBXExporter.unity_metadata_path(fbx_filepath, f"{base_name}_bs_corrective.json")
         payload = {
             "schema": SCHEMA,
             "version": VERSION,
@@ -2378,6 +2375,38 @@ class FBXExporter:
             and active_object.name in bpy.context.view_layer.objects
         ):
             bpy.context.view_layer.objects.active = active_object
+
+    @staticmethod
+    def capture_bs_corrective_mesh_names(armature_objects):
+        """Keep rule targets recoverable when applying rest pose replaces meshes."""
+        state = []
+        for armature in armature_objects:
+            settings = getattr(armature, "hotools_bs_corrective", None)
+            if settings is None:
+                continue
+            for rule in settings.rules:
+                for item in rule.influence_objects:
+                    mesh = item.mesh
+                    state.append((item, mesh.name if mesh is not None else ""))
+        return state
+
+    @staticmethod
+    def restore_bs_corrective_mesh_references(state):
+        restored = 0
+        for item, mesh_name in state:
+            if not mesh_name:
+                continue
+            mesh = bpy.data.objects.get(mesh_name)
+            if mesh is None or mesh.type != "MESH":
+                continue
+            try:
+                if item.mesh != mesh:
+                    item.mesh = mesh
+                    restored += 1
+            except (ReferenceError, RuntimeError, TypeError):
+                continue
+        return restored
+
     @staticmethod
     def set_armatures_pose_position(armature_objects, pose_position):
         state = []
@@ -2791,13 +2820,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
     exportBoneConstraint:BoolProperty(name="导出Rig约束IR(JSON)",description="导出Aux骨、原始Blender约束参数和MCH绑定的中立IR；最终运行时方案由导入端决定",default=False) # type: ignore
-    boneConstraintSuffix:bpy.props.StringProperty(name="约束IR后缀",description="HoFBX文件夹内的Rig约束IR文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
     exportBoneCollection:BoolProperty(name="导出骨骼集合(JSON)",description="导出各骨架的骨骼集合(Bone Collections)为JSON,统一写入FBX旁的HoFBX文件夹",default=False) # type: ignore
-    boneCollectionSuffix:bpy.props.StringProperty(name="集合后缀",description="HoFBX文件夹内的集合JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_collection") # type: ignore
     exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
-    humanoidMappingSuffix:bpy.props.StringProperty(name="Humanoid后缀",description="HoFBX文件夹内的Humanoid mapping JSON文件后缀",default="_humanoid") # type: ignore
     exportBsCorrective:BoolProperty(name="导出BS修型(JSON)",description="从 HoTools BS 修型中控导出源骨骼局部旋转规则；导出预处理仅在需要时应用 MCH 转换",default=True) # type: ignore
-    bsCorrectiveSuffix:bpy.props.StringProperty(name="BS修型后缀",description="HoFBX文件夹内的 BS 修型 JSON 文件后缀",default="_bs_corrective.json") # type: ignore
     exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成Rig约束IR、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
     applyArmaturePose:BoolProperty(name="应用骨架姿态",description="导出前调用 HoTools 的应用骨架姿态操作，将当前选中骨架的 Pose 应用为静置姿态。操作失败时跳过该骨架并提示警告。不留痕",default=True) # type: ignore
     # 保留 RNA 属性名以兼容已保存的预设；界面名称已扩展为同时处理曲线和共享网格对象。
@@ -2894,6 +2919,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         selected_armature_objects = [
             ob for ob in selection if ob.type == "ARMATURE"
         ]
+        bs_corrective_mesh_state = FBXExporter.capture_bs_corrective_mesh_names(
+            selected_armature_objects
+        )
         humanoid_mapping_data = None
         failed_data_transfer_count = 0
         failed_material_sort_count = 0
@@ -3072,6 +3100,14 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                             active_object,
                         )
                     )
+                    restored_bs_targets = FBXExporter.restore_bs_corrective_mesh_references(
+                        bs_corrective_mesh_state
+                    )
+                    if restored_bs_targets:
+                        print(
+                            "[HoTools FBX] 修型目标网格引用："
+                            f"恢复了 {restored_bs_targets} 个应用静置姿态后失效的引用"
+                        )
                 finally:
                     FBXExporter.restore_pose_constraint_mute(muted_states)
                 failed_armature_pose_count = len(failed_armatures)
@@ -3195,7 +3231,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     if ob.name not in bpy.context.view_layer.objects:
                         continue
                     json_path = FBXExporter.export_armature_constraint_ir(
-                        ob, self.filepath, self.boneConstraintSuffix
+                        ob, self.filepath
                     )
                     if json_path:
                         exported_json.append(json_path)
@@ -3213,7 +3249,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     if ob.name not in bpy.context.view_layer.objects:
                         continue
                     json_path = FBXExporter.export_armature_collections_json(
-                        ob, self.filepath, self.boneCollectionSuffix
+                        ob, self.filepath
                     )
                     if json_path:
                         exported_json.append(json_path)
@@ -3227,7 +3263,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 json_path = FBXExporter.export_humanoid_mapping_json(
                     humanoid_mapping_data,
                     self.filepath,
-                    self.humanoidMappingSuffix,
                 )
                 if json_path:
                     exported_json.append(json_path)
@@ -3238,7 +3273,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
 
             if export_bs_corrective:
                 json_path = FBXExporter.export_bs_corrective_metadata(
-                    selected_armature_objects, self.filepath, self.bsCorrectiveSuffix, mch_name_maps
+                    selected_armature_objects, self.filepath, mch_name_maps=mch_name_maps
                 )
                 if json_path:
                     exported_json.append(json_path)
@@ -3452,7 +3487,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         # 骨骼集合结构预览，仅展示每个集合持有多少骨
         FBXExporter.draw_collection_preview(option_box, self, "showCollectionPreview")
 
-        # 附加 JSON 导出（影响导出文件数量）：勾选后展开对应的文件名后缀输入框
+        # 附加 JSON 导出：只选择导出类型，文件名后缀按类型固定。
         json_box = layout.box()
         json_box.label(text="附加导出 (JSON)", icon='FILE_TEXT')
         json_col = json_box.column(align=True)
@@ -3463,17 +3498,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             info.label(text="将自动生成Rig约束IR、集合、Humanoid和BS修型 JSON", icon='INFO')
         else:
             json_col.prop(self, "exportBoneConstraint")
-            if self.exportBoneConstraint:
-                json_col.prop(self, "boneConstraintSuffix")
             json_col.prop(self, "exportBoneCollection")
-            if self.exportBoneCollection:
-                json_col.prop(self, "boneCollectionSuffix")
             json_col.prop(self, "exportHumanoidMapping")
-            if self.exportHumanoidMapping:
-                json_col.prop(self, "humanoidMappingSuffix")
             json_col.prop(self, "exportBsCorrective")
-            if self.exportBsCorrective:
-                json_col.prop(self, "bsCorrectiveSuffix")
 
 def OPF_FinalFBXExport(self, context):
     self.layout.operator_context = 'INVOKE_DEFAULT'
