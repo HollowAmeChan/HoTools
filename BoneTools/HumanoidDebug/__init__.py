@@ -660,6 +660,27 @@ def draw_panel(layout, context):
 
     controls = box.row(align=True)
     transport = controls.row(align=True)
+
+    play = transport.row(align=True)
+    play.enabled = controls_ready or active
+    if active and _RUNTIME["playing"]:
+        play.operator(
+            OT_HumanoidDebugPause.bl_idname,
+            text="暂停",
+            icon="PAUSE",
+        )
+    else:
+        play.operator(
+            OT_HumanoidDebugPlay.bl_idname,
+            text="播放",
+            icon="PLAY",
+            depress=active,
+        )
+
+    stop = transport.row(align=True)
+    stop.enabled = _RUNTIME is not None
+    stop.operator(OT_HumanoidDebugStop.bl_idname, text="取消", icon="CANCEL")
+
     step = transport.row(align=True)
     step.enabled = active and not _RUNTIME["playing"]
     previous = step.operator(
@@ -668,24 +689,7 @@ def draw_panel(layout, context):
         icon="PREV_KEYFRAME",
     )
     previous.direction = -1
-    play = transport.row(align=True)
-    play.enabled = controls_ready or active
-    if active and _RUNTIME["playing"]:
-        play.operator(
-            OT_HumanoidDebugPause.bl_idname,
-            text="",
-            icon="PAUSE",
-        )
-    else:
-        play.operator(
-            OT_HumanoidDebugPlay.bl_idname,
-            text="",
-            icon="PLAY",
-            depress=active,
-        )
-    stop = transport.row(align=True)
-    stop.enabled = _RUNTIME is not None
-    stop.operator(OT_HumanoidDebugStop.bl_idname, text="", icon="CANCEL")
+
     step = transport.row(align=True)
     step.enabled = active and not _RUNTIME["playing"]
     following = step.operator(
@@ -694,7 +698,8 @@ def draw_panel(layout, context):
         icon="NEXT_KEYFRAME",
     )
     following.direction = 1
-    controls.prop(scene, "ho_humanoid_debug_loop", text="循环", toggle=True)
+    
+    controls.prop(scene, "ho_humanoid_debug_loop", text="", toggle=True,icon="CON_FOLLOWPATH")
     controls.popover(panel=VIEW3D_PT_HumanoidDebugSettings.bl_idname, text="", icon="PREFERENCES")
 
     if info is not None:
