@@ -1,4 +1,4 @@
-"""Ensure install packages contain animation data rather than LFS pointers."""
+"""Ensure plugin ZIPs exclude optional animations and unresolved LFS pointers."""
 
 import importlib.util
 from pathlib import Path
@@ -44,24 +44,32 @@ class ReleaseLfsTests(unittest.TestCase):
         self.animation.parent.mkdir(parents=True)
         self.output = Path(self.temporary.name) / "install.zip"
 
-    def test_package_contains_original_animation_bytes(self):
+    def test_plugin_package_excludes_all_animation_assets(self):
         content = b"%YAML 1.1\r\nAnimationClip:\r\n  m_Name: example\r\n"
         self.animation.write_bytes(content)
+        official = self.animation.parent / "VRM/official.anim"
+        official.parent.mkdir()
+        official.write_bytes(content)
 
-        BUILD.build_zip(self.root, self.output, "py311")
+        BUILD.build_zip(self.root, self.output, "py311", version="test-version")
 
         with zipfile.ZipFile(self.output) as archive:
+            self.assertFalse(any(
+                name.startswith("HoTools/BoneTools/HumanoidDebug/animations/")
+                for name in archive.namelist()
+            ))
+            import json
+            metadata = json.loads(archive.read("HoTools/version_info.json"))
             self.assertEqual(
-                archive.read(
-                    "HoTools/BoneTools/HumanoidDebug/animations/example.anim"
-                ),
-                content,
+                metadata["animation_pack_asset"],
+                "HoTools-Humanoid-Animations-test-version.zip",
             )
 
     def test_unresolved_pointer_prevents_package_creation(self):
         for newline in (b"\n", b"\r\n"):
             with self.subTest(newline=newline):
-                self.animation.write_bytes(newline.join((
+                pointer = self.root / "_Lib/py311/pyoidn/unresolved.dat"
+                pointer.write_bytes(newline.join((
                     b"version https://git-lfs.github.com/spec/v1",
                     b"oid sha256:" + b"a" * 64,
                     b"size 177700571",
@@ -73,6 +81,14 @@ class ReleaseLfsTests(unittest.TestCase):
                 ):
                     BUILD.build_zip(self.root, self.output, "py311")
                 self.assertFalse(self.output.exists())
+
+    def test_plugin_can_build_without_downloading_animation_lfs_objects(self):
+        self.animation.write_bytes(
+            b"version https://git-lfs.github.com/spec/v1\noid sha256:"
+            + b"a" * 64 + b"\nsize 177700571\n"
+        )
+        BUILD.build_zip(self.root, self.output, "py311")
+        self.assertTrue(self.output.is_file())
 
     def test_local_research_checkout_is_excluded(self):
         self.animation.write_bytes(b"AnimationClip:\n  m_Name: example\n")

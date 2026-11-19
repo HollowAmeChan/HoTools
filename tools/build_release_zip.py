@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 from pathlib import Path, PurePosixPath
 import sys
 import zipfile
@@ -70,19 +71,35 @@ def collect_files(repo_root: Path, abi: str) -> list[Path]:
     other_abis = set(SUPPORTED_ABIS) - {abi}
     files: list[Path] = []
 
-    for path in sorted(repo_root.rglob("*")):
-        relative = PurePosixPath(path.relative_to(repo_root).as_posix())
-        if path.is_symlink():
-            raise ValueError(f"Release input contains a symlink: {relative}")
-        if ignore.matches(relative, path.is_dir()):
-            continue
-        if len(relative.parts) >= 2 and relative.parts[0] == "_Lib":
-            if relative.parts[1] in other_abis:
-                continue
-        if path.is_file():
-            files.append(path)
+    def walk_error(error):
+        raise error
 
-    return files
+    # Prune ignored trees before traversing them. Local research checkouts and
+    # optional animation libraries can be much larger than the plugin itself.
+    for current, directories, names in os.walk(repo_root, onerror=walk_error):
+        kept = []
+        for name in sorted(directories):
+            path = Path(current) / name
+            relative = PurePosixPath(path.relative_to(repo_root).as_posix())
+            if ignore.matches(relative, True):
+                continue
+            if len(relative.parts) == 2 and relative.parts[0] == "_Lib" and name in other_abis:
+                continue
+            if path.is_symlink():
+                raise ValueError(f"Release input contains a symlink: {relative}")
+            kept.append(name)
+        directories[:] = kept
+        for name in names:
+            path = Path(current) / name
+            relative = PurePosixPath(path.relative_to(repo_root).as_posix())
+            if ignore.matches(relative, False):
+                continue
+            if path.is_symlink():
+                raise ValueError(f"Release input contains a symlink: {relative}")
+            if path.is_file():
+                files.append(path)
+
+    return sorted(files)
 
 
 def validate_inputs(repo_root: Path, abi: str, files: list[Path]) -> None:
@@ -139,6 +156,7 @@ def validate_archive(output: Path, abi: str) -> tuple[int, list[str]]:
     forbidden_paths = (
         "OmniNode/PhysicsWorld",
         "OmniNode/extensions",
+        "BoneTools/HumanoidDebug/animations",
     )
     for member in members:
         path = PurePosixPath(member)
@@ -153,7 +171,7 @@ def validate_archive(output: Path, abi: str) -> tuple[int, list[str]]:
             for prefix in forbidden_paths
         ):
             raise ValueError(
-                f"ZIP contains an extension path (extensions ship separately): {member}"
+                f"ZIP contains a separately distributed path: {member}"
             )
         if any(part in {"test", "tests", "__pycache__"} for part in relative_parts):
             raise ValueError(f"ZIP contains a test/cache path: {member}")
@@ -198,6 +216,10 @@ def release_metadata(
     metadata.setdefault("schema", 1)
     metadata.setdefault("repository", "HollowAmeChan/HoTools")
     metadata.setdefault("channel", "stable")
+    metadata["animation_pack_schema"] = 1
+    metadata["animation_pack_asset"] = (
+        f"HoTools-Humanoid-Animations-{metadata.get('version') or 'dev'}.zip"
+    )
     return (json.dumps(metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
 

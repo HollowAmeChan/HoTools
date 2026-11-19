@@ -10,7 +10,7 @@ from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty
 from bpy.types import Operator, Panel
 
-from . import anim_parser, rig
+from . import anim_parser, rig, pack_ui
 
 
 _RUNTIME = None
@@ -33,10 +33,13 @@ _MAX_PREVIEW_FRAMES = 6000
 _TIMER_INTERVAL = 1.0 / 60.0
 
 
-def _clip_list():
+def _clip_list(preloaded=None):
     global _CLIP_LIST_CACHE, _CLIP_ENUM_ITEMS
     if _CLIP_LIST_CACHE is None:
-        _CLIP_LIST_CACHE = anim_parser.list_clips(ANIMATION_DIRECTORY)
+        _CLIP_LIST_CACHE = (
+            preloaded if preloaded is not None
+            else anim_parser.list_clips(ANIMATION_DIRECTORY)
+        )
         _CLIP_ENUM_VALUES.clear()
         _CLIP_LEGACY_VALUES.clear()
         items = []
@@ -53,6 +56,16 @@ def _clip_list():
             legacy = checksum & 0x7fffffff or 1
             for value in (legacy, int(unpack("f", pack("f", legacy))[0])):
                 _CLIP_LEGACY_VALUES.setdefault(value, info.identifier)
+            if info.identifier.startswith("VRM/"):
+                # Preserve selections saved before the official clips moved
+                # into the optional pack's dedicated subfolder.
+                old_checksum = crc32(info.identifier[4:].encode("utf-8"))
+                old_legacy = old_checksum & 0x7fffffff or 1
+                for value in (
+                    old_checksum & _MAX_ENUM_VALUE or 1, old_legacy,
+                    int(unpack("f", pack("f", old_legacy))[0]),
+                ):
+                    _CLIP_LEGACY_VALUES.setdefault(value, info.identifier)
             items.append((
                 info.identifier,
                 info.name,
@@ -446,28 +459,40 @@ def _begin_preview(scene, armature):
         raise
 
 
+def refresh_library(preloaded=None):
+    global _CLIP_LIST_CACHE
+    selected = {
+        scene: scene.ho_humanoid_debug_clip for scene in bpy.data.scenes
+    }
+    _stop_preview()
+    anim_parser.clear_clip_cache()
+    _CLIP_LIST_CACHE = None
+    clips = _clip_list(preloaded)
+    identifiers = {info.identifier for info in clips}
+    fallback = clips[0].identifier if clips else "_NONE"
+    for scene, identifier in selected.items():
+        if identifier not in identifiers and "VRM/" + identifier in identifiers:
+            identifier = "VRM/" + identifier
+        scene.ho_humanoid_debug_clip = (
+            identifier if identifier in identifiers else fallback
+        )
+        _refresh_frame_count(scene)
+    _tag_redraw()
+    return len(clips)
+
+
+def draw_preferences(layout, context):
+    pack_ui.draw_preferences(layout, context)
+
+
 class OT_HumanoidDebugRefresh(Operator):
     bl_idname = "ho.humanoid_debug_refresh"
     bl_label = "刷新动画"
     bl_description = "重新扫描动画文件夹及子文件夹，读取新增或修改的 .anim 文件"
 
     def execute(self, _context):
-        global _CLIP_LIST_CACHE
-        selected = {
-            scene: scene.ho_humanoid_debug_clip for scene in bpy.data.scenes
-        }
-        _stop_preview()
-        anim_parser.clear_clip_cache()
-        _CLIP_LIST_CACHE = None
-        clips = _clip_list()
-        identifiers = {info.identifier for info in clips}
-        fallback = clips[0].identifier if clips else "_NONE"
-        for scene, identifier in selected.items():
-            scene.ho_humanoid_debug_clip = (
-                identifier if identifier in identifiers else fallback
-            )
-        _tag_redraw()
-        self.report({"INFO"}, f"已刷新 {len(clips)} 条人型动画")
+        count = refresh_library()
+        self.report({"INFO"}, f"已刷新 {count} 条人型动画")
         return {"FINISHED"}
 
 
@@ -624,6 +649,8 @@ def draw_panel(layout, context):
     clip_row.operator(
         OT_HumanoidDebugOpenFolder.bl_idname, text="", icon="FILE_FOLDER"
     )
+    if not _clip_list():
+        box.operator("ho.humanoid_pack_download", text="下载官方动画包", icon="IMPORT")
 
     info = _selected_clip_info(scene)
     active = _active_runtime_for_scene(scene) and _RUNTIME["armature"] == armature
@@ -681,7 +708,7 @@ def draw_panel(layout, context):
     if not ready:
         box.label(text=reason, icon="INFO")
     elif not has_clip:
-        box.label(text="将 .anim 放入动画文件夹后刷新", icon="INFO")
+        box.label(text="也可添加自己的 .anim 后刷新", icon="INFO")
 
 
 _CLASSES = (
@@ -800,6 +827,7 @@ def register():
     )
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
+    pack_ui.register()
     _FRAME_HANDLER = _on_frame_change
     _SAVE_HANDLER = _save_pre_handler
     _LOAD_HANDLER = _load_pre_handler
@@ -821,6 +849,7 @@ def unregister():
     global _FRAME_HANDLER, _SAVE_HANDLER, _LOAD_HANDLER, _RENDER_HANDLER, _UNDO_HANDLER
     global _LOAD_POST_HANDLER
     global _CLIP_LIST_CACHE, _CLIP_ENUM_ITEMS
+    pack_ui.unregister()
     _stop_preview()
     if bpy.app.timers.is_registered(_initialize_scene_settings):
         bpy.app.timers.unregister(_initialize_scene_settings)

@@ -55,6 +55,19 @@ def verify(zip_path: Path, abi: str) -> None:
             )
 
     addon_root = Path(HoTools.__file__).resolve().parent
+    from HoTools.BoneTools import HumanoidDebug
+    if HumanoidDebug._clip_list():
+        raise RuntimeError("Main plugin ZIP must not include optional animations")
+    for operator in (
+        "humanoid_pack_download", "humanoid_pack_import",
+        "humanoid_pack_remove", "humanoid_pack_cancel",
+    ):
+        getattr(bpy.ops.ho, operator).get_rna_type()
+    metadata = HoTools.updater.read_version_info()
+    if not str(metadata.get("animation_pack_asset", "")).startswith(
+        "HoTools-Humanoid-Animations-"
+    ):
+        raise RuntimeError("Release metadata must identify the optional animation ZIP")
     other_abi = "py313" if abi == "py311" else "py311"
     if (addon_root / "_Lib" / other_abi).exists():
         raise RuntimeError(f"Installed ZIP leaked {other_abi}")

@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 *.pyo
+BoneTools/HumanoidDebug/animations/VRM/.installed.json
 *.blend*
 !OmniNode/PhysicsWorld/rigid/test/assets/jolt_fracture_user_project.blend
 *~

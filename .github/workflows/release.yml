@@ -28,7 +28,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-humanoid-lfs-v1-
 
-      - name: Download bundled animations
+      - name: Download animation sources
         run: |
           git lfs install --local
           git lfs pull --include="BoneTools/HumanoidDebug/animations/**" --exclude=""
@@ -43,6 +43,10 @@ jobs:
           RELEASE_TITLE="HoTools-${VERSION}"
           ZIP_45="_dist/HoTools-${VERSION}-Blender-4.5-py311.zip"
           ZIP_52="_dist/HoTools-${VERSION}-Blender-5.2-py313.zip"
+          ANIMATION_ZIP="_dist/HoTools-Humanoid-Animations-${VERSION}.zip"
+
+          # 动画独立发布，两套 Blender 安装包共用，用户按需下载。
+          python tools/build_animation_zip.py --output "$ANIMATION_ZIP" --version "$VERSION"
 
           # 每个安装包只携带目标 Blender 使用的 Python ABI 依赖，避免把两套大型
           # Pillow/OIDN/native runtime 一起塞进同一个 ZIP。
@@ -54,7 +58,7 @@ jobs:
             --release-name "$RELEASE_TITLE" --commit "$GITHUB_SHA"
 
           # GitHub 页面仍会自动显示源码压缩包；用户应下载这里上传的对应 Blender 版本 ZIP。
-          gh release create "$RELEASE_TAG" "$ZIP_45" "$ZIP_52" \
+          gh release create "$RELEASE_TAG" "$ZIP_45" "$ZIP_52" "$ANIMATION_ZIP" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_TITLE"
         env:

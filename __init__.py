@@ -502,6 +502,8 @@ class AddonPreference(bpy.types.AddonPreferences):
         intro = left.box()
         _draw_asset_library_controls(intro)
 
+        BoneTools.humanoidDebug.draw_preferences(left, context)
+
         def draw_exicon(content):
             row = content.row(align=True)
             row.prop(self, 'hoTools_ExIconSize')
