@@ -22,6 +22,10 @@ https://hollowamechan.github.io/HotoolsDoc-Quartz/
 
 插件根目录的 `version_info.json` 是独立于 Blender `bl_info` 的版本元数据，发布 ZIP 会在 GitHub Actions 中自动写入时间戳版本、发布标签和提交号。安装插件后，在 Blender 的插件偏好设置中可以查看当前版本，点击“检查 HoTools 更新”查询 GitHub 最新发布版并提示是否有新版。发现新版后，请通过 QQ 群等渠道获取适用于当前 Blender 版本的安装包并手动安装；插件仅检查版本，不会下载安装包、替换插件或触发重启。
 
+## Ho 渲染体系说明
+
+[HoGLTF](https://github.com/HollowAmeChan/HoGLTF) 已从 Ho 渲染体系退役，不再列为当前工作流的组成部分；原仓库仅作为历史参考。
+
 ## 开发者文档
 
 根 README 主要面向用户。开发、架构和 native 构建细节请看：
