@@ -2815,7 +2815,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ) # type: ignore
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。权重按导出时的求值网格判定(镜像修改器/几何节点生成的权重也算),无权重骨与辅助骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="为勾选了generateMCH的骨生成MCH_前缀同级旁路骨、清空主骨变换并写入HoTools_MCH_Parent绑定。不留痕",default=True) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="为勾选了generateMCH的骨生成MCH_前缀同级旁路骨、清空主骨变换并写入HoTools_MCH_Parent绑定。不留痕",default=False) # type: ignore
     showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
