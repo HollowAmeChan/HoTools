@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from BoneTools import boneHumanoid, boneProperty, boneTPose, hoAux
+from Exporter.HumanoidMappingExporter import HumanoidMappingExporter
 
 
 hoAux.register()
@@ -147,11 +148,51 @@ for pose_bone in armature.pose.bones:
     assert_matrix_close(pose_bone.matrix_basis, Matrix.Identity(4))
 
 # Clearing calibration is independent and does not change the current pose.
+snapshot = {bone.name: bone.matrix_basis.copy() for bone in armature.pose.bones}
+reference = HumanoidMappingExporter.capture_reference_poses([armature])
+export = HumanoidMappingExporter.build_export_dict([armature], reference)
+assert len(export["armatures"][0]["tPose"]["bones"]) == len(armature.data.bones)
+from mathutils import Quaternion, Vector
+for row in export["armatures"][0]["tPose"]["bones"]:
+    q = row["rotation"]
+    delta = Matrix.LocRotScale(Vector(row["position"]), Quaternion((q[3], q[0], q[1], q[2])), Vector(row["scale"]))
+    assert_matrix_close(delta, saved_basis[row["boneName"]])
+for bone in armature.pose.bones:
+    assert_matrix_close(bone.matrix_basis, snapshot[bone.name])
+armature.data.bones["head"].hotools_boneprops.humanoidTPoseCached = False
+try:
+    HumanoidMappingExporter.capture_reference_poses([armature])
+    raise AssertionError("Partial T-Pose was silently exported")
+except ValueError as exception:
+    assert "不完整" in str(exception)
+armature.data.bones["head"].hotools_boneprops.humanoidTPoseCached = True
+
+# An export may apply a different rest pose. Rebase the calibration against
+# that rest while retaining the original physical reference skeleton.
+expected_reference = {name: item["pose"].copy() for name, item in reference[armature.name].items()}
+bpy.ops.object.mode_set(mode="EDIT")
+change = Matrix.Rotation(.23, 4, "Z")
+for bone in armature.data.edit_bones:
+    bone.matrix = change @ bone.matrix
+bpy.ops.object.mode_set(mode="OBJECT")
+HumanoidMappingExporter.rebase_reference_rest(reference, [armature])
+HumanoidMappingExporter.update_reference_poses(export, [armature], reference)
+poses = {}
+for row in export["armatures"][0]["tPose"]["bones"]:
+    bone = armature.data.bones[row["boneName"]]
+    parent_rest = bone.parent.matrix_local if bone.parent else Matrix.Identity(4)
+    local_rest = parent_rest.inverted() @ bone.matrix_local
+    q = row["rotation"]
+    delta = Matrix.LocRotScale(Vector(row["position"]), Quaternion((q[3], q[0], q[1], q[2])), Vector(row["scale"]))
+    poses[bone.name] = (poses[bone.parent.name] if bone.parent else armature.matrix_world) @ local_rest @ delta
+    assert_matrix_close(poses[bone.name], expected_reference[bone.name])
+
 armature.pose.bones["head"].location.x = 0.25
 pose_before_clear = armature.pose.bones["head"].matrix_basis.copy()
 assert bpy.ops.ho.humanoid_tpose_clear_calibration() == {"FINISHED"}
 assert boneTPose.cached_bone_count(armature) == 0
 assert_matrix_close(armature.pose.bones["head"].matrix_basis, pose_before_clear)
+assert "tPose" not in HumanoidMappingExporter.build_export_dict([armature])["armatures"][0]
 
 boneTPose.unregister()
 boneHumanoid.unregister()

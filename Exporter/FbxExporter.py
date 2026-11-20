@@ -2923,6 +2923,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             selected_armature_objects
         )
         humanoid_mapping_data = None
+        humanoid_reference_data = {}
         failed_data_transfer_count = 0
         failed_material_sort_count = 0
         failed_triangulate_count = 0
@@ -2948,9 +2949,11 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             # Capture authored labels while the original Blender hierarchy and
             # bone properties are still intact.  MCH generation below changes
             # only the temporary export scene, not this mapping data.
-            humanoid_mapping_data = HumanoidMappingExporter.build_export_dict(
-                selected_armature_objects
-            )
+            if self.exportUnityMetadata or self.exportHumanoidMapping:
+                humanoid_reference_data = HumanoidMappingExporter.capture_reference_poses(selected_armature_objects)
+                humanoid_mapping_data = HumanoidMappingExporter.build_export_dict(
+                    selected_armature_objects, humanoid_reference_data
+                )
 
             # 共享网格（Alt+D / 资产实例）先拆成独立数据：多用户数据 Blender 拒绝应用
             # 修改器（“无法应用一个多用户…中止”），而下面每一步（数据传递、形态键烘焙、
@@ -3201,6 +3204,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 )
 
             # 生成 MCH 骨并清零主骨；返回各骨架的 {原骨名: MCH名} 映射
+            HumanoidMappingExporter.rebase_reference_rest(humanoid_reference_data, selected_armature_objects)
             mch_name_maps = {}
             if self.generateMCHBones and armature_objects != []:
                 mch_name_maps = FBXExporter.clear_armatures_bone_rotation(
@@ -3257,18 +3261,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                             "file": os.path.basename(json_path),
                         })
 
-            if export_humanoid:
-                json_path = FBXExporter.export_humanoid_mapping_json(
-                    humanoid_mapping_data,
-                    self.filepath,
-                )
-                if json_path:
-                    exported_json.append(json_path)
-                    metadata_entries.append({
-                        "kind": "humanoid",
-                        "file": os.path.basename(json_path),
-                    })
-
             if export_bs_corrective:
                 json_path = FBXExporter.export_bs_corrective_metadata(
                     selected_armature_objects, self.filepath, mch_name_maps=mch_name_maps
@@ -3324,6 +3316,16 @@ class OP_FinalFBXExport(Operator,ExportHelper):
 
             # 刷新场景防止变换没有应用
             bpy.context.view_layer.update()
+
+            if export_humanoid:
+                HumanoidMappingExporter.update_reference_poses(
+                    humanoid_mapping_data, selected_armature_objects,
+                    humanoid_reference_data, mch_name_maps,
+                )
+                json_path = FBXExporter.export_humanoid_mapping_json(humanoid_mapping_data, self.filepath)
+                if json_path:
+                    exported_json.append(json_path)
+                    metadata_entries.append({"kind": "humanoid", "file": os.path.basename(json_path)})
 
             #重置物体与集合的可见可选。
             # 名单是导出开头记下的，中间可能有物体被副本顶替（见 object_is_alive），
