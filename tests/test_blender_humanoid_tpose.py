@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from BoneTools import boneHumanoid, boneProperty, boneTPose, hoAux
+from BoneTools import humanoid_tpose_solver
 from Exporter.HumanoidMappingExporter import HumanoidMappingExporter
 
 
@@ -59,7 +60,9 @@ def create_armature():
     bpy.ops.object.mode_set(mode="EDIT")
     for name, head, tail, _parent in specs:
         bone = data.edit_bones.new(name)
-        bone.head, bone.tail = head, tail
+        # HoFBX mirrors Blender X: the character's left is Blender +X.
+        bone.head = (-head[0], head[1], head[2])
+        bone.tail = (-tail[0], tail[1], tail[2])
     for name, _head, _tail, parent in specs:
         if parent:
             data.edit_bones[name].parent = data.edit_bones[parent]
@@ -101,17 +104,14 @@ original_basis = {
     for pose_bone in armature.pose.bones
 }
 
-# Automatic T-Pose enters a temporary preview and flattens all mapped arm chains.
+# Automatic T-Pose enters preview and meets the Unity joint tolerances.
+armature.data.pose_position = "REST"
 assert bpy.ops.ho.humanoid_tpose_auto() == {"FINISHED"}
 assert boneTPose.is_previewing(armature)
+assert armature.data.pose_position == "POSE"
 assert constraint.mute
 bpy.context.view_layer.update()
-for side, expected_x in (("L", -1.0), ("R", 1.0)):
-    for slot in ("shoulder", "upper_arm", "lower_arm", "hand"):
-        pose_bone = armature.pose.bones[f"{slot}.{side}"]
-        direction = (pose_bone.tail - pose_bone.head).normalized()
-        assert direction.x * expected_x > 0.999, (pose_bone.name, direction)
-        assert abs(direction.z) < 1e-5, (pose_bone.name, direction)
+assert humanoid_tpose_solver.validate(armature)["total"] < .01
 
 # Saving during the candidate preview persists per-bone basis matrices.
 assert bpy.ops.ho.humanoid_tpose_save() == {"FINISHED"}
@@ -124,6 +124,7 @@ saved_basis = {
 # Toggling preview off restores the original channels and constraint state.
 assert bpy.ops.ho.humanoid_tpose_preview() == {"FINISHED"}
 assert not boneTPose.is_previewing(armature)
+assert armature.data.pose_position == "REST"
 assert not constraint.mute
 for pose_bone in armature.pose.bones:
     assert_matrix_close(pose_bone.matrix_basis, original_basis[pose_bone.name])

@@ -3,8 +3,8 @@
 import bpy
 from bpy.app.handlers import persistent
 from bpy.types import Operator
-from mathutils import Matrix, Vector
-from Exporter.HumanoidMappingExporter import HumanoidMappingExporter
+from mathutils import Matrix
+from . import humanoid_tpose_solver
 
 
 _PREVIEW_STATES = {}
@@ -15,7 +15,6 @@ _IDENTITY_VALUES = (
     0.0, 0.0, 1.0, 0.0,
     0.0, 0.0, 0.0, 1.0,
 )
-_ARM_SLOTS = ("shoulder", "upper_arm", "lower_arm", "hand")
 
 
 def _armature(context):
@@ -59,6 +58,7 @@ def _capture_preview_state(armature):
     animation_data = armature.animation_data
     return {
         "object": armature,
+        "pose_position": armature.data.pose_position,
         "basis": {
             pose_bone.name: pose_bone.matrix_basis.copy()
             for pose_bone in armature.pose.bones
@@ -136,6 +136,7 @@ def _restore_preview(armature):
         basis = state["basis"].get(pose_bone.name)
         if basis is not None:
             pose_bone.matrix_basis = basis
+    armature.data.pose_position = state["pose_position"]
     bpy.context.view_layer.update()
     return True
 
@@ -148,6 +149,8 @@ def _begin_preview(armature):
     _PREVIEW_STATES[key] = state
     try:
         _suspend_pose_inputs(armature, state)
+        armature.data.pose_position = "POSE"
+        bpy.context.view_layer.update()
     except Exception:
         _restore_preview(armature)
         raise
@@ -210,154 +213,9 @@ def _clear_calibration(armature):
     return count
 
 
-def _mapping_to_bone(armature):
-    result = {}
-    layout_slots = {
-        "Hips": "hips",
-        "Spine": "spine",
-        "Chest": "chest",
-        "UpperChest": "upperchest",
-        "Neck": "neck",
-        "Head": "head",
-        "LeftShoulder": "shoulder.L",
-        "RightShoulder": "shoulder.R",
-        "LeftUpperArm": "upper_arm.L",
-        "RightUpperArm": "upper_arm.R",
-        "LeftLowerArm": "lower_arm.L",
-        "RightLowerArm": "lower_arm.R",
-        "LeftHand": "hand.L",
-        "RightHand": "hand.R",
-    }
-    for bone in armature.data.bones:
-        props = getattr(bone, "hotools_boneprops", None)
-        mapping = getattr(props, "humanoidMapping", "").strip() if props else ""
-        if not mapping:
-            continue
-        human_name = HumanoidMappingExporter.to_unity_human_name(mapping)
-        slot = layout_slots.get(human_name, mapping)
-        if slot not in result:
-            result[slot] = bone.name
-    return result
-
-
-def _project_to_plane(vector, normal):
-    return vector - normal * vector.dot(normal)
-
-
-def _normalised(vector):
-    return vector.normalized() if vector.length > 1e-6 else None
-
-
-def _auto_arm_directions(armature):
-    mapping = _mapping_to_bone(armature)
-    data_bones = armature.data.bones
-
-    def bone_for(slot):
-        name = mapping.get(slot)
-        return data_bones.get(name) if name else None
-
-    hips = bone_for("hips")
-    head = bone_for("head")
-    chest = bone_for("chest")
-    spine = bone_for("spine")
-    if hips is not None:
-        body_center = hips.head_local.copy()
-    elif chest is not None:
-        body_center = chest.head_local.copy()
-    else:
-        body_center = Vector((0.0, 0.0, 0.0))
-
-    up = None
-    if hips is not None and head is not None:
-        up = _normalised(head.head_local - hips.head_local)
-    if up is None and hips is not None and chest is not None:
-        up = _normalised(chest.head_local - hips.head_local)
-    if up is None and spine is not None:
-        up = _normalised(spine.tail_local - spine.head_local)
-    if up is None and hips is not None:
-        up = _normalised(hips.tail_local - hips.head_local)
-    if up is None:
-        up = Vector((0.0, 0.0, 1.0))
-
-    left_anchor = bone_for("shoulder.L")
-    right_anchor = bone_for("shoulder.R")
-    if left_anchor is None:
-        left_anchor = bone_for("upper_arm.L")
-    if right_anchor is None:
-        right_anchor = bone_for("upper_arm.R")
-    lateral = None
-    if left_anchor is not None and right_anchor is not None:
-        lateral = _normalised(_project_to_plane(
-            right_anchor.head_local - left_anchor.head_local,
-            up,
-        ))
-
-    directions = {}
-    for side in ("L", "R"):
-        if lateral is not None:
-            outward = -lateral if side == "L" else lateral
-        else:
-            anchor = bone_for(f"shoulder.{side}")
-            if anchor is None:
-                anchor = bone_for(f"upper_arm.{side}")
-            outward = None
-            if anchor is not None:
-                outward = _normalised(_project_to_plane(
-                    anchor.head_local - body_center,
-                    up,
-                ))
-
-        if outward is None:
-            upper_arm = bone_for(f"upper_arm.{side}")
-            if upper_arm is not None:
-                outward = _normalised(_project_to_plane(
-                    upper_arm.tail_local - upper_arm.head_local,
-                    up,
-                ))
-        if outward is None:
-            continue
-
-        for slot in _ARM_SLOTS:
-            name = mapping.get(f"{slot}.{side}")
-            if name and name in armature.pose.bones:
-                directions[name] = outward.copy()
-
-    return directions
-
-
-def _align_bone_to_direction(pose_bone, target):
-    head = pose_bone.head.copy()
-    direction = pose_bone.tail - head
-    current = _normalised(direction)
-    if current is None:
-        return False
-    delta = current.rotation_difference(target)
-    pivot = Matrix.Translation(head)
-    desired = (
-        pivot
-        @ delta.to_matrix().to_4x4()
-        @ Matrix.Translation(-head)
-        @ pose_bone.matrix.copy()
-    )
-    pose_bone.matrix = desired
-    bpy.context.view_layer.update()
-    return True
-
-
-def _generate_auto_tpose(armature, directions):
-    if not directions:
-        raise ValueError("没有可用于自动 T-Pose 的 Humanoid 手臂映射")
-    mapping = _mapping_to_bone(armature)
+def _generate_auto_tpose(armature):
     _clear_pose_channels(armature)
-    for slot in _ARM_SLOTS:
-        for side in ("L", "R"):
-            name = mapping.get(f"{slot}.{side}")
-            pose_bone = armature.pose.bones.get(name) if name else None
-            if pose_bone is None:
-                continue
-            target = directions.get(name)
-            if target is not None:
-                _align_bone_to_direction(pose_bone, target)
+    return humanoid_tpose_solver.generate(armature)
 
 
 class OT_HumanoidTPosePreview(Operator):
@@ -412,7 +270,7 @@ class OT_HumanoidTPoseSave(Operator):
 class OT_HumanoidTPoseAuto(Operator):
     bl_idname = "ho.humanoid_tpose_auto"
     bl_label = "自动生成 T-Pose"
-    bl_description = "按 Humanoid 映射将肩、上臂、前臂和手水平外展；结果进入预览，可微调后保存"
+    bl_description = "按 Unity Humanoid 的方向与容差校正全身、手掌和手指；结果进入预览，可微调后保存"
 
     @classmethod
     def poll(cls, context):
@@ -420,19 +278,24 @@ class OT_HumanoidTPoseAuto(Operator):
 
     def execute(self, context):
         armature = _armature(context)
-        directions = _auto_arm_directions(armature)
-        if not directions:
-            self.report({"ERROR"}, "需要至少一侧有效的 Humanoid 手臂映射")
+        if not humanoid_tpose_solver.mapped_bones(armature):
+            self.report({"ERROR"}, "需要有效的 Humanoid 骨骼映射")
             return {"CANCELLED"}
         try:
             _begin_preview(armature)
-            _generate_auto_tpose(armature, directions)
+            errors = _generate_auto_tpose(armature)
         except Exception as error:
             if is_previewing(armature):
                 _restore_preview(armature)
             self.report({"ERROR"}, f"自动 T-Pose 失败：{error}")
             return {"CANCELLED"}
-        self.report({"INFO"}, "已生成 T-Pose 候选；可微调后保存当前姿态")
+        if errors["total"] > .01:
+            names = "、".join(errors["bones"])
+            if errors["position"] > .01:
+                names = (names + "、" if names else "") + "骨盆位置"
+            self.report({"WARNING"}, "已生成 T-Pose 候选，仍需检查：" + names)
+        else:
+            self.report({"INFO"}, "已生成 T-Pose 候选；可微调后保存当前姿态")
         return {"FINISHED"}
 
 
