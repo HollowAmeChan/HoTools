@@ -14,6 +14,7 @@ from bpy.props import (
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight, OP_SimpleDissolveBone
 from . import arpAssembly
+from .restPose import apply_rest_pose
 from Utils import bone_utils
 
 
@@ -107,9 +108,9 @@ class OP_ApplyRestPose(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def draw(self, context):
-        self.layout.label(text="本操作将应用骨架所有子级网格的全部'骨架'修改器")
+        self.layout.label(text="本操作将逐形态键烘焙绑定网格到当前骨架修改器这一层")
         self.layout.label(text="同时应用掉现在的姿态为静置姿态")
-        self.layout.label(text="如果子级网格物体有形态键，将会调用额外操作保证形态家的保留")
+        self.layout.label(text="保留形态键和骨架修改器；前置修改器会一并应用")
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
@@ -118,89 +119,13 @@ class OP_ApplyRestPose(Operator):
     def poll(cls, context):
         return context.active_object and context.active_object.type == 'ARMATURE'
 
-    def process_object(self, context, obj):
-        """智能处理单个物体"""
-
-        # 检查是否需要特殊处理形态键
-        needs_shapekey_processing = (
-            obj.data.shape_keys and
-            len(obj.data.shape_keys.key_blocks) > 1
-        )
-
-        # 如果有复杂形态键则使用新方法
-        if needs_shapekey_processing:
-            try:
-                # 设置当前活动对象
-                bpy.context.view_layer.objects.active = obj
-                if obj.select_get() is False:
-                    obj.select_set(True)
-
-                # 调用形态键保留操作符
-                bpy.ops.ho.apply_armature_modifiers_keepshapekeys()
-                return True
-            except Exception as e:
-                self.report({'WARNING'}, f"形态键处理失败: {str(e)}")
-                return False
-        # 普通处理流程
-        else:
-            for mod in obj.modifiers[:]:
-                if mod.type == 'ARMATURE' and mod.show_viewport:
-                    try:
-                        with bpy.context.temp_override(object=obj, modifier=mod):
-                            bpy.ops.object.modifier_apply(modifier=mod.name)
-                    except Exception as e:
-                        self.report(
-                            {'WARNING'}, f"应用失败: {obj.name} 的 {mod.name}")
-                        continue
-            return True
-
     def execute(self, context):
-
-        armature = context.active_object
-        original_mode = armature.mode
-
-        # 获取所有绑定物体（包含间接子级）
-        mesh_objects = [
-            obj
-            for obj in armature.children_recursive
-            if obj.type == 'MESH'
-            and bone_utils.object_is_deformed_by_armature(obj, armature)
-        ]
-        # print(mesh_objects[:])
-
-        if not mesh_objects:
-            self.report({'WARNING'}, "没有找到绑定到该骨架的网格对象")
+        try:
+            count = apply_rest_pose(context, context.active_object)
+        except Exception as exc:
+            self.report({'WARNING'}, f"应用骨架姿态已取消：{exc}")
             return {'CANCELLED'}
-
-        # 切换到 OBJECT 模式
-        bpy.ops.object.mode_set(mode='OBJECT')
-
-        # 处理所有网格物体
-        success_count = 0
-        for obj in mesh_objects:
-            if self.process_object(context, obj):
-                success_count += 1
-                
-
-        # 应用骨架姿态
-        bpy.context.view_layer.objects.active = armature
-        bpy.ops.object.mode_set(mode='POSE')
-        bpy.ops.pose.armature_apply()
-        bpy.ops.object.mode_set(mode=original_mode)
-
-        # 再次获取绑定的物体(防止进行行改期应用过程中，有物体的变动的情况)#TODO 这里又不用看有没有骨架修改器了，一锅端不太好，但是没办法了
-        mesh_objects = [
-            obj for obj in armature.children_recursive if obj.type == 'MESH'
-        ]
-
-        # 重新添加骨架修改器
-        for obj in mesh_objects:
-            new_mod = obj.modifiers.new(
-                name="Armature", type='ARMATURE')
-            new_mod.object = armature
-            print(obj.name,"恢复阶段成功")
-
-        self.report({'INFO'}, "成功处理"+ str(success_count) + "/" + str(len(mesh_objects)) +"个物体")
+        self.report({'INFO'}, f"已应用骨架姿态并保留形态键：{count} 个网格")
         return {'FINISHED'}
 
 class OP_ForceClearBoneRotation(Operator):

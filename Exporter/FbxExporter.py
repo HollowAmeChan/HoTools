@@ -78,10 +78,10 @@
 #     解决隐藏修改器仍参与 FBX 评估，阻塞形态键/骨架等预处理或产生意外导出结果的问题。
 #
 # 三、骨架与蒙皮处理
-# 12. 应用骨架姿态（默认开启）：对当前选中的骨架调用 HoTools 内部的
+# 12. 应用骨架姿态（默认关闭）：对当前选中的骨架调用 HoTools 内部的
 #     应用骨架姿态操作，把当前 Pose 应用为静置姿态，再以 REST 状态导出。
 #     解决 Blender FBX 导出骨架时忽略当前姿态、自动回到原始静置姿态的问题。
-#     内部操作失败时只跳过该骨架并警告，不使用 pose.armature_apply() 兜底。
+#     内部操作失败时中止导出并回滚场景，避免把未完成的蒙皮写入 FBX。
 # 13. 清理权重（默认关闭）：删除极小权重、限制每顶点最多 4 个骨骼影响并归一化。
 #     解决 Unity/运行时对骨骼影响数量有限制，以及微小权重造成不稳定变形的问题。
 # 14. 添加叶骨（默认开启）：为无子级且确实有权重的末端骨补充叶骨，并加入原骨骼集合。
@@ -2824,7 +2824,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
     exportBsCorrective:BoolProperty(name="导出BS修型(JSON)",description="从 HoTools BS 修型中控导出源骨骼局部旋转规则；导出预处理仅在需要时应用 MCH 转换",default=True) # type: ignore
     exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成Rig约束IR、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
-    applyArmaturePose:BoolProperty(name="应用骨架姿态",description="导出前调用 HoTools 的应用骨架姿态操作，将当前选中骨架的 Pose 应用为静置姿态。操作失败时跳过该骨架并提示警告。不留痕",default=True) # type: ignore
+    applyArmaturePose:BoolProperty(name="应用骨架姿态",description="导出前调用 HoTools 强制应用姿态与网格，逐键保留形态键，并将当前 Pose 应用为静置姿态。失败时中止导出并回滚。不留痕",default=False) # type: ignore
     # 保留 RNA 属性名以兼容已保存的预设；界面名称已扩展为同时处理曲线和共享网格对象。
     meshifyCurves:BoolProperty(name="网格化对象",description="导出前把选中的曲线临时转换为网格，并为共享 Mesh 数据的对象（包括 Alt+D）创建独立数据，让 HoFBX 能正确导出。不留痕",default=True) # type: ignore
     triangulateMeshes:BoolProperty(name="三角化",description="导出前使用 Blender Triangulate 修改器固定四边形为 FIXED、多边形为 BEAUTY、最少顶点为4，并开启保持法向。不留痕",default=False) # type: ignore
@@ -2926,7 +2926,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         failed_data_transfer_count = 0
         failed_material_sort_count = 0
         failed_triangulate_count = 0
-        failed_armature_pose_count = 0
 
         #准备操作，全显场景中的对象与集合，并且全选
         if bpy.ops.object.mode_set.poll():
@@ -3046,33 +3045,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     f"创建了 {made_single_user} 个独立 Mesh 数据"
                 )
 
-            # 形态键 + 待评估修改器（几何节点等）：先烘焙再导出，否则 Blender 原生导出
-            # 走求值网格会把形态键静默丢掉（物体能导出，但 BlendShape 没了）。
-            # 隐式操作、无开关：用户不需要知道这件事，但一旦出问题就会“形态键没了”。
-            # 须在数据传递/三角化等“应用修改器”步骤之前：烘焙后这些步骤才能正常生效；
-            # 三角化一并交给烘焙步骤（形态键会阻止单独应用三角化修改器）。
-            (
-                baked_shape_keys,
-                skipped_shape_keys,
-                failed_shape_keys,
-            ) = FBXExporter.bake_shape_keys_through_modifiers(
-                selection, triangulate=self.triangulateMeshes
-            )
-            if baked_shape_keys:
-                print("[HoTools FBX] 形态键烘焙穿过修改器：")
-                for line in baked_shape_keys:
-                    print(f"  {line}")
-            for ob_name, reason in skipped_shape_keys:
-                print(f"[HoTools FBX] 形态键烘焙跳过 {ob_name}：{reason}")
-            for ob_name, exc in failed_shape_keys:
-                print(f"[HoTools FBX] 形态键烘焙失败 {ob_name}：{type(exc).__name__}: {exc}")
-            if skipped_shape_keys or failed_shape_keys:
-                self.report(
-                    {"WARNING"},
-                    f"{len(skipped_shape_keys) + len(failed_shape_keys)} 个物体的形态键"
-                    f"未能烘焙穿过修改器，详见控制台",
-                )
-
             # 数据传递修改器已在预处理最前面手动应用（见 apply_data_transfer_modifiers
             # 的调用位置与说明），这里不再重复处理。
             if self.applyArmaturePose:
@@ -3110,19 +3082,45 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                         )
                 finally:
                     FBXExporter.restore_pose_constraint_mute(muted_states)
-                failed_armature_pose_count = len(failed_armatures)
                 if failed_armatures:
                     print("[HoTools FBX] Failed to apply armature poses:")
                     for ob_name, exc in failed_armatures:
                         print(f"  {ob_name}: {type(exc).__name__}: {exc}")
-                    self.report(
-                        {"WARNING"},
-                        f"{len(failed_armatures)} 个骨架应用姿态失败，已跳过，详见控制台",
+                    raise RuntimeError(
+                        f"{len(failed_armatures)} 个骨架应用姿态失败，已中止导出："
+                        + "；".join(f"{name}：{exc}" for name, exc in failed_armatures)
                     )
                 print(f"[HoTools FBX] 应用骨架姿态：成功处理 {applied_armatures} 个骨架")
 
             # 应用姿态后再切换到 REST 显示，避免 FBX 导出时回到原始静置姿态。
             FBXExporter.set_armatures_pose_position(armature_objects, "REST")
+
+            # 形态键 + 待评估修改器（几何节点等）：先烘焙再导出，否则 Blender 原生导出
+            # 走求值网格会把形态键静默丢掉（物体能导出，但 BlendShape 没了）。
+            # 隐式操作、无开关：用户不需要知道这件事，但一旦出问题就会“形态键没了”。
+            # 先由 HoTools 强制应用姿态，再烘焙其余修改器，保持原栈的先后关系。
+            # 三角化一并交给烘焙步骤（形态键会阻止单独应用三角化修改器）。
+            (
+                baked_shape_keys,
+                skipped_shape_keys,
+                failed_shape_keys,
+            ) = FBXExporter.bake_shape_keys_through_modifiers(
+                selection, triangulate=self.triangulateMeshes
+            )
+            if baked_shape_keys:
+                print("[HoTools FBX] 形态键烘焙穿过修改器：")
+                for line in baked_shape_keys:
+                    print(f"  {line}")
+            for ob_name, reason in skipped_shape_keys:
+                print(f"[HoTools FBX] 形态键烘焙跳过 {ob_name}：{reason}")
+            for ob_name, exc in failed_shape_keys:
+                print(f"[HoTools FBX] 形态键烘焙失败 {ob_name}：{type(exc).__name__}: {exc}")
+            if skipped_shape_keys or failed_shape_keys:
+                self.report(
+                    {"WARNING"},
+                    f"{len(skipped_shape_keys) + len(failed_shape_keys)} 个物体的形态键"
+                    f"未能烘焙穿过修改器，详见控制台",
+                )
 
             if self.triangulateMeshes:
                 (
@@ -3394,7 +3392,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             failed_data_transfer_count
             or failed_material_sort_count
             or failed_triangulate_count
-            or failed_armature_pose_count
         ):
             warning_parts = []
             if failed_data_transfer_count:
@@ -3405,10 +3402,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 warning_parts.append("导出网格按材质整理面顺序失败")
             if failed_triangulate_count:
                 warning_parts.append("导出网格三角化失败")
-            if failed_armature_pose_count:
-                warning_parts.append(
-                    f"{failed_armature_pose_count} 个骨架应用姿态失败"
-                )
             self.report(
                 {"WARNING"},
                 f"导出成功，但 {'，'.join(warning_parts)}，详见控制台",

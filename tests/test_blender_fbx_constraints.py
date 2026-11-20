@@ -243,6 +243,7 @@ try:
         assert bpy.ops.ho.final_fbx_export(
             "EXEC_DEFAULT",
             filepath=str(filepath),
+            applyArmaturePose=True,
             **{**NO_METADATA, **operator_kwargs},
         ) == {"FINISHED"}
         # 导出后约束要还原（静音与删除都随 undo 回滚）
