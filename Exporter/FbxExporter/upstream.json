@@ -1,0 +1,24 @@
+{
+  "blender_version": "4.5.8 LTS",
+  "fbx_io_version": [
+    5,
+    13,
+    1
+  ],
+  "fbx_file_version": 7400,
+  "source": "Blender 4.5.8 official distribution, scripts/addons_core/io_scene_fbx",
+  "upstream_sha256": {
+    "export_fbx_bin.py": "c36fc169a77dcf8184b5b8407ef35c4c6f68eadd6260526b30c129ca5b4317ad",
+    "fbx_utils.py": "cc97d1260a623df23940b02b6ea60c4bbfe74ce4bcf2c2a703b4325808abdfe0",
+    "encode_bin.py": "5de48173bc0206e1a724c1a8ffc740c1449acfeaa8ecc75087d9a6ad5e2c889c",
+    "data_types.py": "24328144f5b60338b1b47cc47ff76e8aee5c97c89ca4a419482978bb961f18fa",
+    "fbx_utils_threading.py": "b298c446704de85107b06653f9da3c68a87fe3cba30d52f10becbd1c643a9ef1"
+  },
+  "upstream_lf_sha256": {
+    "export_fbx_bin.py": "6bb90e1f1250a7f7469e2295fc528a60a326f3b312cb1c6635f2032082d1a280",
+    "fbx_utils.py": "ffabd204b2cce48670b47de6bb77e8dba06daa77b7efab037c4f157f1ffa80b6",
+    "encode_bin.py": "3322a809e0073947e107de8f7e5839dff0956578271e88506eab7a7627f3323f",
+    "data_types.py": "1697b26e84cdabdebf8cf8c1dbb6e3b303705917aaf84eab835f0cdad6b26e20",
+    "fbx_utils_threading.py": "ddf8d90b87b51e057212c9b5f3c73caea49fddf2915140eb2e3206f7dad757a3"
+  }
+}

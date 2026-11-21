@@ -31,7 +31,7 @@ if str(ADDON_ROOT) not in sys.path:
 
 from HoTools.Exporter import FbxExporter as fbx_module  # noqa: E402
 
-EXPORTER_SOURCE = (ADDON_ROOT / "Exporter" / "FbxExporter.py").read_text(encoding="utf-8")
+EXPORTER_SOURCE = (ADDON_ROOT / "Exporter" / "FbxExporter" / "operator.py").read_text(encoding="utf-8")
 
 TRANSFERRED_NORMAL = (0.7071068, 0.0, 0.7071068)  # 与目标自身面法线 (0,0,1) 明显不同
 
