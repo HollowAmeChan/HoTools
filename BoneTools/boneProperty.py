@@ -60,14 +60,14 @@ def _replace_aux_constraints(pose_bone, constraints):
 
 
 def inspect_existing_aim_pair(pose_bone):
-    from Exporter.ConstraintIRExporter import ConstraintIRExporter
+    from RigConstraints.semantics import inspect_aim_pair
     if pose_bone is None:
         raise ValueError("请选择带 Damped Track＋Locked Track 的骨骼")
     armature = pose_bone.id_data
     aux = pose_bone.bone.hotools_boneprops.auxBone
     if aux.isAuxBone and aux.auxType not in {"NONE", "AIM"}:
         raise ValueError(f"{pose_bone.name} 已属于 {aux.auxType}，不会覆盖其他辅助骨关系")
-    info = ConstraintIRExporter.inspect_aim_pair(armature, pose_bone)
+    info = inspect_aim_pair(armature, pose_bone)
     if info is None:
         raise ValueError(f"{pose_bone.name} 需要一组相邻的完整 World Damped＋Locked，目标和轴须匹配 Aim v1")
     return info

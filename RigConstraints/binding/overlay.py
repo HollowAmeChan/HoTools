@@ -9,7 +9,7 @@ from copy import deepcopy
 
 from ..codec import fingerprint
 from ..semantics import translate
-from ..source import capture_armature
+from ..source import capture_armature, capture_binding_context
 
 
 def _identity(source):
@@ -160,10 +160,9 @@ def refresh_final_context(document, armature):
     therefore keeps the earlier conservative full-matrix requirement rather
     than deciding a source became position-only just because consumers vanished.
     """
-    from Exporter.ConstraintIRExporter import ConstraintIRExporter
     result = deepcopy(document)
     prior = {b["boneName"]: b for b in result["bindings"]["bindingContext"]["bones"]}
-    context = ConstraintIRExporter._binding_context(armature, list(armature.data.bones))
+    context = capture_binding_context(armature)
     context["fbxBoneAxes"] = "Y_X"
     for bone in context["bones"]:
         old = prior.get(bone["boneName"])

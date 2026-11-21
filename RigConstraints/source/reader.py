@@ -2,6 +2,8 @@
 
 from ..codec import fingerprint
 from ..model import new_document
+from .constraint import capture_constraint
+from .context import capture_binding_context
 
 
 def excluded_bone(bone):
@@ -19,12 +21,7 @@ def _version():
 
 
 def capture_armature(armature, *, capture_stage="AUTHORING"):
-    """Read facts and declarations without claiming, muting or rewriting data.
-
-    The existing RNA serializer is reused during the compatibility migration;
-    it does not choose a backend. Model/codec modules remain host-independent.
-    """
-    from Exporter.ConstraintIRExporter import ConstraintIRExporter as Raw
+    """Read v4 facts and explicit declarations without rewriting author data."""
     from ..blender.metadata import iter_groups
     if getattr(armature, "type", None) != "ARMATURE":
         raise ValueError("Select an armature object")
@@ -32,7 +29,7 @@ def capture_armature(armature, *, capture_stage="AUTHORING"):
         raise ValueError("骨架姿态尚未初始化；请更新场景后重试")
     doc = new_document(armature.name, _version(), capture_stage)
     bones = list(armature.data.bones)
-    doc["sourceContext"] = Raw._binding_context(armature, bones)
+    doc["sourceContext"] = capture_binding_context(armature, bones)
     doc["declarations"] = []
     doc["mchPlans"] = [b.name for b in bones if not excluded_bone(b)
                        and getattr(getattr(b, "hotools_boneprops", None), "generateMCH", False)]
@@ -48,7 +45,7 @@ def capture_armature(armature, *, capture_stage="AUTHORING"):
             doc["sources"].append({
                 "sourceId": sid, "ownerBone": name, "ownerKind": kind,
                 "captureStage": capture_stage,
-                "constraint": Raw._raw_constraint(constraint, armature, index).to_dict(),
+                "constraint": capture_constraint(constraint, armature, index),
             })
         if kind == "BONE":
             aux = getattr(getattr(owner.bone, "hotools_boneprops", None), "auxBone", None)
