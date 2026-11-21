@@ -102,6 +102,8 @@ def make_rig(label, transform="identity", shared=False, side_joint=False):
                 weight = .5999 if name.startswith("Thigh") else .3999
             else:
                 weight = .0001
+            if index == 2 and name.endswith(".L"):
+                weight = 1e-8  # Below the old blur normalization EPS cutoff.
             group.add([index], weight, "REPLACE")
     untouched = obj.vertex_groups.new(name="Unrelated")
     untouched.add(list(range(len(POINTS))), .125, "REPLACE")
@@ -138,10 +140,17 @@ def check(label, rig, obj, before, fans_by_side, split=True, center_untouched=Fa
     source_by_fan = fan_sources(rig, fans)
     max_error, leaked = 0, 0
     for source, original in before.items():
+        source_sides = {side for side, names in fans_by_side.items()
+                        if any(source_by_fan[name] == source for name in names)}
         for index, wanted in enumerate(original):
             actual = weight(obj, source, index) + sum(weight(obj, name, index) for name in fans if source_by_fan[name] == source)
             max_error = max(max_error, abs(actual - wanted))
             assert abs(actual - wanted) < TOLERANCE, (label, "channel conservation", source, index, actual, wanted)
+            if split and len(source_sides) == 1 and next(iter(source_sides)) * POINTS[index][0] < -EPS:
+                # A tolerance-based channel sum would miss deletion of a 1e-8
+                # preexisting weight. Outside this channel's domain even its
+                # main group must remain bit-for-bit unchanged.
+                assert weight(obj, source, index) == wanted, (label, "outside main weight changed", source, index, weight(obj, source, index), wanted)
     for side, names in fans_by_side.items():
         for index, point in enumerate(POINTS):
             forbidden = side * point[0] < -EPS or center_untouched and abs(point[0]) <= EPS
