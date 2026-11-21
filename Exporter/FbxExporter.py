@@ -2245,7 +2245,12 @@ class FBXExporter:
     def export_armature_constraint_ir(ob, fbx_filepath, *, schema_version=3,
                                      authoring_document=None, mch_map=None,
                                      allow_native_approximation=False):
-        """Write the armature's neutral rig constraint IR next to the FBX."""
+        """Write companion IR; legacy direct callers keep v3 unless explicit.
+
+        HoFBX's operator defaults to v4 and supplies its captured authoring
+        document. Keeping this helper's old default preserves scripts that call
+        it directly without the operator's authoring/final-binding lifecycle.
+        """
         from .ConstraintIRExporter import ConstraintIRExporter
 
         if schema_version == 4:
@@ -2842,7 +2847,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     rigConstraintIRVersion:EnumProperty(
         name="约束 IR 版本", items=(('3', 'v3（兼容）', '兼容现有导入器'),
                                      ('4', 'v4（三层契约）', '需要支持 v4 的 HoUnityTools；保留作者事实和最终绑定')),
-        default='3',
+        default='4',
     ) # type: ignore
     allowNativeConstraintApproximation:BoolProperty(
         name="允许原生约束近似", default=False,

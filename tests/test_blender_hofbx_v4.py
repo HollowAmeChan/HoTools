@@ -127,13 +127,14 @@ def build(name, *, empty=False, muted=False):
     return rig.name, skin.name, fan_names, twist_names
 
 
-def run_case(directory, label, *, version="4", empty=False, muted=False, apply_pose=False, allow_approximate=False):
+def run_case(directory, label, *, version=None, empty=False, muted=False, apply_pose=False, allow_approximate=False):
     rig_name, mesh_name, fans, twists = build("HoFbx_" + label, empty=empty, muted=muted)
     before = state(rig_name, mesh_name)
     authored = deepcopy(before["document"])
     path = directory / (label + ".fbx")
+    version_options = {} if version is None else {"rigConstraintIRVersion": version}
     result = bpy.ops.ho.final_fbx_export("EXEC_DEFAULT", filepath=str(path),
-        rigConstraintIRVersion=version, generateMCHBones=not empty,
+        **version_options, generateMCHBones=not empty,
         exportUnityMetadata=True, addLeafBones=False, applyArmaturePose=apply_pose,
         fixObjectTransform=True, applyExportConstraints=False,
         allowNativeConstraintApproximation=allow_approximate,
@@ -193,6 +194,7 @@ def run_case(directory, label, *, version="4", empty=False, muted=False, apply_p
 register_bones()
 bpy.utils.register_class(ApplyModifiers)
 bpy.utils.register_class(FbxExporter.OP_FinalFBXExport)
+assert bpy.ops.ho.final_fbx_export.get_rna_type().properties["rigConstraintIRVersion"].default == "4"
 try:
     context = tempfile.TemporaryDirectory(prefix="hotools_hofbx_v4_")
     try:
