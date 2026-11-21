@@ -155,6 +155,31 @@ for snapshot in (before, after):
     snapshot.pop("inputFingerprint", None)
 results["scan_is_read_only"] = before == after
 
+# Ordinary sources referencing an omitted large HoAux stack retain their exact
+# source facts, but never become a known executable semantic.
+for constraint in list(rig.pose.bones["Owner"].constraints):
+    rig.pose.bones["Owner"].constraints.remove(constraint)
+metadata.clear_groups(rig.data.bones["Owner"])
+for kind in ("COPY_LOCATION", "COPY_ROTATION", "ARMATURE"):
+    owner = rig.pose.bones["Owner"]
+    for constraint in list(owner.constraints):
+        owner.constraints.remove(constraint)
+    metadata.clear_groups(owner.bone)
+    if kind == "ARMATURE":
+        constraint = owner.constraints.new(kind)
+        row = constraint.targets.new()
+        row.target, row.subtarget, row.weight = rig, "Excluded", 1
+    else:
+        constraint = add("Owner", kind, "Excluded")
+        if kind == "COPY_ROTATION":
+            declare("Owner", constraint)
+    before = capture_armature(rig)
+    report = review.scan(rig)
+    results["excluded_dependency_" + kind.lower()] = (
+        all(row["ownerBone"] != "Owner" for row in report["known"])
+        and any(row["ownerBone"] == "Owner" and "已排除的大型 HoAux 骨" in row["message"] for row in report["broken"])
+        and report["document"]["sources"] == before["sources"])
+
 # Drawing only consumes an existing report. No scans or authoring writes occur.
 class Layout:
     def operator(self, *args, **kwargs):

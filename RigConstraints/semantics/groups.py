@@ -92,7 +92,10 @@ def source_reference_reasons(source, document):
     reasons = []
     if type_record.get("targetRequired") and not c.get("targetObjectName"):
         reasons.append("约束目标对象缺失")
-    bone_names = {b["boneName"] for b in document.get("sourceContext", {}).get("bones", ())}
+    context = document.get("sourceContext", {})
+    if source.get("captureStage") == "EXPORT_GENERATED":
+        context = document.get("bindings", {}).get("bindingContext", context)
+    bone_names = {b["boneName"] for b in context.get("bones", ())}
     target = c.get("targetBoneName")
     if c.get("targetObjectName") == document["armatureName"] and target and target not in bone_names:
         reasons.append("目标骨缺失：" + target)
@@ -106,4 +109,53 @@ def source_reference_reasons(source, document):
                 reasons.append("Armature 来源对象缺失")
             elif p["target"].get("name") == document["armatureName"] and p.get("subtarget") not in bone_names:
                 reasons.append("Armature 来源骨缺失：" + p.get("subtarget", ""))
+    reasons += _excluded_dependency_reasons(source, document)
     return list(dict.fromkeys(reasons))
+
+
+def _excluded_dependency_reasons(source, document):
+    """Observe the ordinary-export boundary without opening excluded stacks."""
+    excluded = set(document.get("excludedOwners", ()))
+    if not excluded:
+        return []
+    armature = document["armatureName"]
+    reasons = []
+
+    def inspect(constraint, owner, context, excluded_names, stage):
+        parents = {b["boneName"]: b.get("parentBone", "") for b in context.get("bones", ())}
+        dependencies = []
+        if source["ownerKind"] == "BONE":
+            dependencies.append(("所属骨", owner))
+        if constraint.get("targetObjectName") == armature:
+            dependencies.append(("目标骨", constraint.get("targetBoneName", "")))
+        if constraint.get("constraintType") == "ARMATURE":
+            for row in constraint.get("references", {}).get("targets", ()):
+                p = row.get("properties", {})
+                if (p.get("target") or {}).get("name") == armature:
+                    dependencies.append(("Armature 来源骨", p.get("subtarget", "")))
+        for role, name in dependencies:
+            current, visited = name, set()
+            while current:
+                if current in visited:
+                    reasons.append("{}{}父链循环，无法检查已排除的大型 HoAux 骨边界".format(stage, role))
+                    break
+                if current in excluded_names:
+                    reasons.append("{}{}依赖已排除的大型 HoAux 骨：{}；其约束栈不在本轮普通约束导出中".format(stage, role, current))
+                    break
+                visited.add(current)
+                if current not in parents:
+                    reasons.append("{}{}依赖边界不完整，无法检查已排除的大型 HoAux 骨：{}".format(stage, role, current))
+                    break
+                current = parents[current]
+
+    overlay = document.get("bindings")
+    generated = source.get("captureStage") == "EXPORT_GENERATED" and overlay
+    inspect(source["constraint"], source["ownerBone"], overlay.get("bindingContext", {}) if generated else document.get("sourceContext", {}), excluded, "生成源" if generated else "作者态")
+    if overlay:
+        final_excluded = excluded | {row["exportBone"] for row in overlay.get("boneMap", ())
+                                     if row["sourceBone"] in excluded}
+        change = next((row for row in overlay.get("constraintMap", ()) if row["sourceId"] == source["sourceId"]), {})
+        constraint = dict(source["constraint"])
+        constraint.update({key: change[key] for key in ("targetObjectName", "targetBoneName", "references") if key in change})
+        inspect(constraint, change.get("ownerBone", source["ownerBone"]), overlay.get("bindingContext", {}), final_excluded, "最终绑定")
+    return reasons
