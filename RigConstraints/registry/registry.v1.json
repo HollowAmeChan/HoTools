@@ -1976,7 +1976,8 @@
         "ownerInput": {
           "poseBasis": "IDENTITY",
           "inheritScale": "FULL",
-          "animation": "NONE"
+          "animation": "NONE",
+          "inheritRotation": true
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
@@ -2009,12 +2010,24 @@
           "LEGACY"
         ]
       },
-      "availability": "PLANNED",
-      "fidelity": "UNSPECIFIED",
+      "availability": "IMPLEMENTED",
+      "fidelity": "EXACT",
       "verification": {
-        "status": "UNTESTED",
-        "scope": "UNITY_END_TO_END_REQUIRED",
-        "evidence": []
+        "status": "TESTED",
+        "scope": "BLENDER_FBX_UNITY_NUMERICAL",
+        "environments": [
+          "Blender 4.5.8 LTS",
+          "Blender 5.2.0 LTS",
+          "Unity 6000.3.15f1"
+        ],
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV4/Run-local.ps1",
+          "HoTools/tests/export_copyr_v4_fixture.py"
+        ],
+        "measurementsPerBlender": 15048,
+        "maxPositionErrorM": 9.05e-07,
+        "maxRotationErrorDeg": 0.05058,
+        "maxScaleError": 2.7e-06
       },
       "artifacts": [
         "HoAuxRig"
@@ -2023,7 +2036,9 @@
         "copy-rotation-local-fbx-golden"
       ],
       "notes": [
-        "Not executable until Blender-to-FBX-to-Unity numerical acceptance passes."
+        "All XYZ, REPLACE, static neutral owner with FULL inheritance; dynamic source/parents and sequential stacks.",
+        "Authoring and final source/owner rest frames must preserve their world binding meaning. Applied poses that rebase these inputs are rejected.",
+        "Singular or sheared inputs are diagnosed; this does not claim arbitrary affine-scale equivalence."
       ]
     },
     {
@@ -2040,7 +2055,8 @@
         "ownerInput": {
           "poseBasis": "IDENTITY",
           "inheritScale": "FULL",
-          "animation": "NONE"
+          "animation": "NONE",
+          "inheritRotation": true
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
@@ -2073,12 +2089,24 @@
           "LEGACY"
         ]
       },
-      "availability": "PLANNED",
-      "fidelity": "UNSPECIFIED",
+      "availability": "IMPLEMENTED",
+      "fidelity": "EXACT",
       "verification": {
-        "status": "UNTESTED",
-        "scope": "UNITY_END_TO_END_REQUIRED",
-        "evidence": []
+        "status": "TESTED",
+        "scope": "BLENDER_FBX_UNITY_NUMERICAL",
+        "environments": [
+          "Blender 4.5.8 LTS",
+          "Blender 5.2.0 LTS",
+          "Unity 6000.3.15f1"
+        ],
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV4/Run-local.ps1",
+          "HoTools/tests/export_copyr_v4_fixture.py"
+        ],
+        "measurementsPerBlender": 15048,
+        "maxPositionErrorM": 9.05e-07,
+        "maxRotationErrorDeg": 0.05058,
+        "maxScaleError": 2.7e-06
       },
       "artifacts": [
         "HoAuxRig"
@@ -2087,7 +2115,9 @@
         "copy-rotation-local-fbx-golden"
       ],
       "notes": [
-        "Not executable until Blender-to-FBX-to-Unity numerical acceptance passes."
+        "All XYZ, REPLACE, static neutral owner with FULL inheritance; dynamic source/parents and sequential stacks.",
+        "Authoring and final source/owner rest frames must preserve their world binding meaning. Applied poses that rebase these inputs are rejected.",
+        "Singular or sheared inputs are diagnosed; this does not claim arbitrary affine-scale equivalence."
       ]
     }
   ]

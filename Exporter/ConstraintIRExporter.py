@@ -443,6 +443,7 @@ class ConstraintIRExporter:
                 "restMatrix": matrix(getattr(b, "matrix_local", None)),
                 "poseBasis": matrix(getattr(cls._bone_get(getattr(getattr(armature, "pose", None), "bones", ()), b.name), "matrix_basis", None)),
                 "inheritScale": str(getattr(b, "inherit_scale", "FULL")),
+                "inheritRotation": bool(getattr(b, "use_inherit_rotation", True)),
                 "connected": bool(getattr(b, "use_connect", False)),
                 "positionOnly": b.name in position_only,
                 "hasPoseAnimation": cls._has_pose_animation(armature, b.name),

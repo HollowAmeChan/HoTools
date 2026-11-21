@@ -8,7 +8,7 @@ The table registers capabilities; it is not a claim that all parameters of a Ble
 
 - Blender baseline: 4.5.8, 5.2.0.
 - Constraint types: 29; direct semantics: 2; group-only members: 5; UnknownSemantic: 22.
-- Semantic definitions: 7; implementation contracts: 23; implemented legacy/current paths: 21; planned: 2.
+- Semantic definitions: 7; implementation contracts: 23; implemented legacy/current paths: 23; planned: 0.
 - Full-type completion, parameter-domain completion and real SDK validation are deliberately not conflated.
 
 copyR requires explicit generated/adopted ownership metadata. A manually authored raw Copy Rotation remains a source fact and is not guessed into copyR; v2/v3 retain their compatibility interpretation.
@@ -88,8 +88,8 @@ Exact/conditional/approximate is a contract declaration. Verification evidence i
 | `vrc.twist.legacy@1` | TWIST@1 | Vrc | IMPLEMENTED | LEGACY | SHIM_ONLY | legacy-aux-regression |
 | `vrc.fan.legacy@1` | FAN@1 | Vrc | IMPLEMENTED | LEGACY | SHIM_ONLY | legacy-aux-regression |
 | `vrc.aim.object_position@1` | AIM@1 | Vrc | IMPLEMENTED | EXACT | SHIM_ONLY | constraint-ir-v3-regression |
-| `hoaux.copy_rotation.local@1` | COPY_ROTATION@1 | HoAux | PLANNED | UNSPECIFIED | UNTESTED | copy-rotation-local-fbx-golden |
-| `hoaux.copy_rotation.owner_orient@1` | COPY_ROTATION@1 | HoAux | PLANNED | UNSPECIFIED | UNTESTED | copy-rotation-local-fbx-golden |
+| `hoaux.copy_rotation.local@1` | COPY_ROTATION@1 | HoAux | IMPLEMENTED | EXACT | TESTED | copy-rotation-local-fbx-golden |
+| `hoaux.copy_rotation.owner_orient@1` | COPY_ROTATION@1 | HoAux | IMPLEMENTED | EXACT | TESTED | copy-rotation-local-fbx-golden |
 
 ## Evidence and boundaries
 

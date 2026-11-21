@@ -223,14 +223,16 @@ class RegistryTests(unittest.TestCase):
         implementation["conditions"]["ownerSpaces"] = ["BROKEN"]
         self.assertEqual(["WORLD"], registry.find_implementation("hoaux.copy_rotation.world", 1)["conditions"]["ownerSpaces"])
 
-    def test_local_is_planned_and_vrc_evidence_is_not_numerical_equivalence(self):
+    def test_local_has_numerical_evidence_and_vrc_is_not_equivalence(self):
         choices = registry.implementations_for("COPY_ROTATION", "HoAux")
         self.assertEqual(3, len(choices))
-        self.assertEqual(2, sum(row["availability"] == "PLANNED" for row in choices))
+        self.assertEqual(3, sum(row["availability"] == "IMPLEMENTED" for row in choices))
         for suffix in ("local", "owner_orient"):
             item = registry.find_implementation("hoaux.copy_rotation." + suffix, 1)
-            self.assertEqual("PLANNED", item["availability"])
-            self.assertEqual("UNTESTED", item["verification"]["status"])
+            self.assertEqual("IMPLEMENTED", item["availability"])
+            self.assertEqual("TESTED", item["verification"]["status"])
+            self.assertEqual(15048, item["verification"]["measurementsPerBlender"])
+            self.assertLess(item["verification"]["maxRotationErrorDeg"], .1)
         for item in registry.load_registry()["implementations"]:
             if item["backendId"] == "Vrc":
                 self.assertEqual("SHIM_ONLY", item["verification"]["status"])
