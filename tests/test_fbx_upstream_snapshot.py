@@ -1,4 +1,4 @@
-"""Keep upgrades reviewable: unchanged upstream dependencies and one small hook."""
+"""Keep upgrades reviewable: unchanged dependencies and explicit scoped patches."""
 
 import ast
 import hashlib
@@ -13,6 +13,11 @@ HOOK = (
     "    from ..cleanup import optimize_fbx_tree\n"
     "    optimize_fbx_tree(root)\n\n"
 )
+EMPTY_PARENT_HOOK = (
+    "\n        # HoTools: exported Empty grouping parents keep a real local transform (see ../UPSTREAM.md).\n"
+    "        if ob_obj.parent and ob_obj.parent.type == 'EMPTY' and ob_obj.has_valid_parent(objects):\n"
+    "            ob_obj.parented_to_armature = False\n"
+)
 
 
 class UpstreamSnapshotTests(unittest.TestCase):
@@ -25,11 +30,12 @@ class UpstreamSnapshotTests(unittest.TestCase):
                 source = (PACKAGE / "_vendor" / name).read_text(encoding="utf-8")
                 self.assertEqual(hashlib.sha256(source.encode("utf-8")).hexdigest(), expected)
 
-    def test_exporter_diff_is_only_the_prewrite_hook(self):
+    def test_exporter_diff_is_only_the_registered_patches(self):
         manifest = json.loads((PACKAGE / "upstream.json").read_text(encoding="utf-8"))
         source = (PACKAGE / "_vendor" / "export_fbx_bin.py").read_text(encoding="utf-8")
         self.assertEqual(source.count(HOOK), 1)
-        restored = source.replace(HOOK, "")
+        self.assertEqual(source.count(EMPTY_PARENT_HOOK), 1)
+        restored = source.replace(HOOK, "").replace(EMPTY_PARENT_HOOK, "")
         self.assertEqual(hashlib.sha256(restored.encode("utf-8")).hexdigest(),
                          manifest["upstream_lf_sha256"]["export_fbx_bin.py"])
         self.assertLess(source.index(HOOK), source.index("    encode_bin.write(filepath, root, FBX_VERSION)"))

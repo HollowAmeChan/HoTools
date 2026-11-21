@@ -2187,6 +2187,10 @@ def fbx_skeleton_from_armature(scene, settings, arm_obj, objects, data_meshes,
         # Needed to handle matrices/spaces (since we do not parent them to 'armature' in FBX :/ ).
         ob_obj.parented_to_armature = True
 
+        # HoTools: exported Empty grouping parents keep a real local transform (see ../UPSTREAM.md).
+        if ob_obj.parent and ob_obj.parent.type == 'EMPTY' and ob_obj.has_valid_parent(objects):
+            ob_obj.parented_to_armature = False
+
     objects.update(bones)
 
 

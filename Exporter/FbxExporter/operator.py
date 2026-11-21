@@ -93,9 +93,37 @@ def reset_export_undo():
 class FBXExporter:
     UNITY_METADATA_DIRECTORY = "HoFBX"
     CURVE_OBJECT_TYPES = {"CURVE"}
-    # 内置导出只带走这两类物体（getParams 的 object_types）。导出范围告警也按它过滤，
-    # 否则选中的空物体/未网格化的曲线会被误报成“脱离导出范围”。
-    EXPORT_OBJECT_TYPES = {"MESH", "ARMATURE"}
+    # Empty 是层级分组节点，必须与网格、骨架一同保留。范围告警使用同一份类型表。
+    EXPORT_OBJECT_TYPES = {"MESH", "ARMATURE", "EMPTY"}
+
+    @staticmethod
+    def resolve_export_selection(selection, view_layer, *, include_curves=False):
+        """Keep selected content and the Empty ancestors needed for its hierarchy.
+
+        Do not expand descendants or pull an unselected mesh/armature into the
+        export. Such a non-Empty ancestor remains a deliberate selection boundary.
+        """
+        result = list(selection)
+        included = set(result)
+        content_types = FBXExporter.EXPORT_OBJECT_TYPES | (FBXExporter.CURVE_OBJECT_TYPES if include_curves else set())
+        for obj in selection:
+            if obj.type not in content_types:
+                continue
+            ancestors = []
+            parent = obj.parent
+            while parent is not None:
+                if parent.name not in view_layer.objects:
+                    break
+                if parent not in included:
+                    if parent.type != "EMPTY" or parent.instance_type != "NONE":
+                        break
+                    ancestors.append(parent)
+                parent = parent.parent
+            for parent in reversed(ancestors):
+                if parent not in included:
+                    included.add(parent)
+                    result.append(parent)
+        return result
 
     @staticmethod
     def unity_metadata_directory(fbx_filepath):
@@ -186,8 +214,9 @@ class FBXExporter:
         bpy.ops.object.transform_apply(location = False, rotation = True, scale = False)
     @staticmethod
     def fix_object(ob):
-        # Only fix objects in current view layer
-        if ob.name in bpy.context.view_layer.objects:
+        # Empty has no geometry to absorb an applied rotation. Preserve its
+        # grouping/socket frame (including bone parenting), then visit children.
+        if ob.type != "EMPTY" and ob.name in bpy.context.view_layer.objects:
 
             # Reset parent's inverse so we can work with local transform directly
             FBXExporter.reset_parent_inverse(ob)
@@ -2742,12 +2771,12 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         """返回写死的 export_scene.fbx 参数。
 
         不再依赖 Blender 的 FBX 导出预设：关键参数全部固定（仅选中、仅
-        MESH+ARMATURE、单位全部应用等）。add_leaf_bones 固定为 False——叶骨
+        MESH+ARMATURE+EMPTY、单位全部应用等）。add_leaf_bones 固定为 False——叶骨
         改由 HoTools 自己实现（build_leaf_bones，导出前已建好），不再走原生。
         """
         params = {
             "filepath": self.filepath,
-            # 范围：仅选中物体，仅导出 MESH 与 ARMATURE
+            # 范围：所选内容及其必要 Empty 分组祖先；不导出相机/灯光。
             "use_selection": True,
             "use_visible": False,
             "use_active_collection": False,
@@ -2814,6 +2843,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
 
         selection = list(bpy.context.selected_objects)
         active_object = bpy.context.view_layer.objects.active
+        selection = FBXExporter.resolve_export_selection(
+            selection, context.view_layer, include_curves=self.meshifyCurves,
+        )
         pose_position_state = []
         removed_hidden_modifiers = []
         exported_json = []
@@ -3260,18 +3292,24 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                         handle.write(dump_ir(document) + "\n")
 
             #重置物体与集合的可见可选。
+            # 必需的 Empty 分组必须保持可选到 FBX 写出，否则 hidden ancestor
+            # 虽在 working selection 中仍会从 context.selected_objects 消失。
+            # 这些临时可见性和选择变化统一由写出后的 undo 恢复。
+            export_empty_names = {ob.name for ob in selection if ob.type == "EMPTY"}
             # 名单是导出开头记下的，中间可能有物体被副本顶替（见 object_is_alive），
             # 失效引用直接跳过：否则这一行会抛 ReferenceError 把整个导出打断。
             for ob in hidden_objects:
-                if FBXExporter.object_is_alive(ob):
+                if FBXExporter.object_is_alive(ob) and ob.name not in export_empty_names:
                     ob.hide_set(True)
             for ob in disabled_objects:
-                if FBXExporter.object_is_alive(ob):
+                if FBXExporter.object_is_alive(ob) and ob.name not in export_empty_names:
                     ob.hide_viewport = True
             for col in hidden_collections:
-                col.hide_viewport = True
+                if not any(name in col.collection.all_objects for name in export_empty_names):
+                    col.hide_viewport = True
             for col in disabled_collections:
-                col.collection.hide_viewport = True
+                if not any(name in col.collection.all_objects for name in export_empty_names):
+                    col.collection.hide_viewport = True
 
             # 重置选择状态
             FBXExporter.restore_selection(selection, active_object)
@@ -3285,7 +3323,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             # 后面按名字跟踪的步骤就会把它从导出范围里丢掉——FBX 里整个物体消失且毫无提示。
             # 这里显式对比一次，把静默丢物体变成可见告警。
             # 注意：selected_objects 是 Object 的列表，不能拿字符串去 in（永远 False，会全员误报）；
-            # 而且内置导出按 object_types 过滤，非 MESH/ARMATURE 的物体本来就不导出，不该报警。
+            # 而且内置导出按 object_types 过滤，不导出的物体类型不该报警。
             exported_names = {item.name for item in bpy.context.selected_objects}
             vanished = [
                 ob.name

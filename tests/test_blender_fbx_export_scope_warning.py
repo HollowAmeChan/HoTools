@@ -33,6 +33,7 @@ NO_METADATA = {
     "exportBoneConstraint": False,
     "exportBoneCollection": False,
     "exportHumanoidMapping": False,
+    "exportBsCorrective": False,
 }
 
 WARNING_PREFIX = "[HoTools FBX] 警告：以下物体在预处理中脱离了导出范围"
@@ -83,9 +84,9 @@ def export_and_capture(tag):
 
 bpy.utils.register_class(FbxExporter.OP_FinalFBXExport)
 try:
-    # ── 1. 正常导出：不误报（选中里带空物体，属于非导出类型，也不该报）─────────
+    # ── 1. 正常导出：Empty 是正式导出类型，保留它也不该误报 ──────────────────
     armature, ob, empty = build_rig("clean")
-    clean_names = (armature.name, ob.name)  # 导出末尾 undo 回滚会让旧引用失效
+    clean_names = (armature.name, ob.name, empty.name)  # 导出末尾 undo 回滚会让旧引用失效
     activate_all([armature, ob, empty], armature)
     result, output = export_and_capture("clean")
     assert result == {"FINISHED"}, result
@@ -117,6 +118,25 @@ try:
     assert result == {"FINISHED"}, result
     assert WARNING_PREFIX in output, f"物体脱离导出范围时必须告警：\n{output}"
     assert vanished_name in output, output
+
+    # Empty 分组若真的在预处理中漏选，也必须与 Mesh 一样报警。
+    def sabotage_empty(selection, active_object=None):
+        result = original_restore(selection, active_object)
+        for target in selection:
+            if target.type == "EMPTY":
+                target.select_set(False)
+        return result
+
+    armature_empty, mesh_empty, empty_lost = build_rig("empty_vanished")
+    empty_name = empty_lost.name
+    activate_all([armature_empty, mesh_empty, empty_lost], armature_empty)
+    FbxExporter.FBXExporter.restore_selection = staticmethod(sabotage_empty)
+    try:
+        result, output = export_and_capture("empty_vanished")
+    finally:
+        FbxExporter.FBXExporter.restore_selection = original_restore
+    assert result == {"FINISHED"}, result
+    assert WARNING_PREFIX in output and empty_name in output, output
 finally:
     bpy.utils.unregister_class(FbxExporter.OP_FinalFBXExport)
 

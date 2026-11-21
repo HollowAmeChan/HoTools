@@ -4,6 +4,17 @@
 
 ## 自动化验证
 
+- Empty 是长期支持的层级节点。`test_blender_fbx_empty_hierarchy.py` 在 Blender 4.5.8／5.2.0
+  各通过 10 例实际导出：显式 Empty、多层必要祖先补全、隐藏分组、Empty-only、rig-only，
+  分别开启／关闭变换纠正；检查 FBX Models／OO 连接、蒙皮 Mesh 的局部矩阵、Shape 和 Undo。
+- `test_blender_fbx_empty_frames.py` 两版各通过 4 例：骨骼／物体父级 Empty、变换纠正开关、
+  writer 前完整世界矩阵、子网格回导和源状态精确恢复。Empty 矩阵最大误差 4.77e-7，
+  子网格回导最大误差 5.06e-7 m。
+- Unity 6000.3.15f1 隔离工程实测非单位 Empty 下的蒙皮 Mesh：分组路径保留，
+  Mesh Model 局部矩阵与 Skin 绑定空间一致，`BakeMesh(mesh, true)` 世界点最大误差 2.50e-7 m。
+  此数值来自合成资产，未保存用户角色工程。Blender 回导会把蒙皮 Mesh 自动重父到骨架，
+  因此不能只用其对象 parent 来判断原 FBX 分组是否保留；上述测试直接检查原 FBX 连接。
+
 - `tests/test_fbx_backend_cleanup.py`：20 项内存树契约测试，覆盖姿态合并、冲突保留、
   不同骨架、部分姿态、外部引用、未知元数据、非有限矩阵、压缩零权重、极小非零权重、
   全空 Skin、Definitions 更新、无部分写入及幂等性。
