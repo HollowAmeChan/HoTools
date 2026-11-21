@@ -45,7 +45,7 @@ bpy.utils.register_class(FbxExporter.OP_FinalFBXExport)
 results = {}
 try:
     with tempfile.TemporaryDirectory(prefix="hotools_completion_edges_") as directory:
-        for apply_pose in (False, True):
+        for label, apply_pose, applied_constraints in (("unposed", False, False), ("posed", True, False), ("applied", False, True)):
             bpy.ops.wm.read_factory_settings(use_empty=True)
             data = bpy.data.armatures.new("CompletionData")
             rig = bpy.data.objects.new("CompletionRig", data)
@@ -70,6 +70,12 @@ try:
                 pose.rotation_mode = "QUATERNION"
                 pose.rotation_quaternion = Euler(angles).to_quaternion()
             CopyRotationCore.configure(rig, ["Owner"], "Main", influence=.3)
+            unknown = rig.pose.bones["Probe"].constraints.new("LIMIT_ROTATION")
+            unknown.name, unknown.use_limit_x, unknown.min_x, unknown.max_x = "UnimplementedProbeLimit", True, -.21, .73
+            expected_minimum = float(unknown.min_x)
+            raw_copy = rig.pose.bones["Probe"].constraints.new("COPY_ROTATION")
+            raw_copy.name, raw_copy.target, raw_copy.subtarget = "ManualCopyUnknown", rig, "Main"
+            rig.pose.bones["Probe"].keyframe_insert(data_path="rotation_quaternion", frame=1)
             rig.data.bones["Main"].hotools_boneprops.generateMCH = True
             mesh = bpy.data.meshes.new("CompletionMesh")
             mesh.from_pydata([(0,0,.6), (.2,0,.6), (0,.2,.6)], [], [(0,1,2)])
@@ -82,11 +88,11 @@ try:
             skin.select_set(True)
             bpy.context.view_layer.update()
             author = capture_armature(rig)
-            label = "posed" if apply_pose else "unposed"
             path = Path(directory) / (label + ".fbx")
             assert bpy.ops.ho.final_fbx_export("EXEC_DEFAULT", filepath=str(path),
                 rigConstraintIRVersion="4", generateMCHBones=True, exportUnityMetadata=True,
                 addLeafBones=False, applyArmaturePose=apply_pose, fixObjectTransform=True,
+                applyExportConstraints=applied_constraints,
                 exportBsCorrective=False) == {"FINISHED"}
             sidecar = next((path.parent / "HoFBX").glob(label + "_*_constraint.json"))
             exported = loads(sidecar.read_text(encoding="utf-8"))
@@ -98,6 +104,17 @@ try:
                              for a, b in zip(bone["restMatrix"], actual_bones[bone["boneName"]]["restMatrix"]))
             results[label + "_final_bind_matrices"] = object_error < 1e-5 and rest_error < 1e-5
             results[label + "_author_inputs_preserved"] = exported["sources"][:len(author["sources"])] == author["sources"] and exported["sourceContext"] == author["sourceContext"]
+            results[label + "_export_options"] = exported["exportOptions"] == {
+                "appliedConstraints": applied_constraints, "appliedArmaturePose": apply_pose, "fixedObjectTransform": True}
+            authored_bones = {bone["boneName"]: bone for bone in exported["sourceContext"]["bones"]}
+            final_bones = {bone["boneName"]: bone for bone in binding["bones"]}
+            results[label + "_animation_input_preserved"] = authored_bones["Probe"]["hasPoseAnimation"] and final_bones["Probe"]["hasPoseAnimation"]
+            raw = next(source for source in exported["sources"] if source["constraint"]["name"] == "ManualCopyUnknown")
+            unknown_limit = next(source for source in exported["sources"] if source["constraint"]["name"] == "UnimplementedProbeLimit")
+            results[label + "_unknown_sources_preserved"] = (
+                unknown_limit["constraint"]["parameters"]["min_x"] == expected_minimum and
+                any(row["status"] == "UNKNOWN" and raw["sourceId"] in row["sourceIds"] for row in exported["diagnostics"]) and
+                not any(raw["sourceId"] in row["sourceIds"] for row in exported["semantics"]))
             if apply_pose:
                 owner = next(bone for bone in actual["bones"] if bone["boneName"] == "Owner")
                 identity = [1.0 if row == column else 0.0 for row in range(4) for column in range(4)]
