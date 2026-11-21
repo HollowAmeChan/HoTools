@@ -22,10 +22,10 @@ from Exporter.FbxExporter import FBXExporter
 from Exporter.ConstraintIRExporter import ConstraintIRExporter
 from RigConstraints import codec
 from RigConstraints.binding import build_export_document
-from RigConstraints.blender.metadata import register_group
 from RigConstraints.blender.properties import PROPERTY_CLASSES, PG_RigConstraintGroup
 from RigConstraints.source.reader import capture_armature
 from RigConstraints.semantics.translate import translate
+from RigConstraints.registry import implementations_for
 
 
 class FixtureBoneProps(PropertyGroup):
@@ -112,7 +112,6 @@ def build():
             c.target_space, c.owner_space, c.mix_mode = target_space, owner_space, "REPLACE"
             c.influence = influence
             owner.bone.hotools_boneprops.auxBone.constraintNames.add().name = c.name
-            register_group(owner, "COPY_ROTATION", [c], generator_id="hotools.aux.copy_r.stack."+str(stage), roles=["rotation"], owns_bone=False)
     return rig, inputs, [name for name, _ in operations]
 
 
@@ -148,7 +147,40 @@ def sample_current():
 
 
 authoring = capture_armature(rig)
-translated = translate(authoring)
+
+
+def explicit_test_stacks(document):
+    """Author extra atomic v4 semantics for runtime stack tests, explicitly.
+
+    The current copyR UI owns one instance per owner. Its first-stage record and
+    all 32 non-stack owners pass through production capture/translate/binding.
+    Extra Blender stack constraints are sampled as real facts, then this fixture
+    authors their semantic records; this is not presented as multi-copyR UI.
+    """
+    added = []
+    for source in document["sources"]:
+        if not source["constraint"]["name"].startswith("HoTools_COPY_R_Stack_"):
+            continue
+        source_id = source["sourceId"]
+        semantic_id = "fixture_stack_"+source_id
+        document["semantics"].append({"semanticId": semantic_id, "semanticType": "COPY_ROTATION", "semanticVersion": 1,
+            "ownerBone": source["ownerBone"], "sourceIds": [source_id], "ruleId": "group.copy_r", "ruleVersion": 1,
+            "evidence": "EXPLICIT", "parameters": {"auxType": "COPY_R", "generatorId": "hotools.aux.copy_r", "ownsBone": False,
+                "testOnlyExplicitStack": True}})
+        for implementation in implementations_for("COPY_ROTATION"):
+            document["implementationBindings"].append({"semanticId": semantic_id, "backendId": implementation["backendId"],
+                "implementationId": implementation["id"], "contractVersion": implementation["contractVersion"],
+                "selection": "CANDIDATE", "fallbackPolicy": "EXACT_ONLY"})
+        added.append(source_id)
+    document["diagnostics"] = [row for row in document["diagnostics"] if not (row["status"] == "UNKNOWN" and set(row.get("sourceIds", ())).issubset(added))]
+    document["fixtureAuthorship"] = {"singleCopyR": "Production configure/capture/translate/binding path",
+        "extraStackStages": "Explicit test-authored v4 atomic semantic records; not a multi-instance copyR UI feature",
+        "explicitStackSourceIds": added}
+    assert not document["diagnostics"], document["diagnostics"]
+    return document
+
+
+translated = explicit_test_stacks(translate(authoring))
 (out / "authoring_v4.json").write_text(codec.dumps(translated), encoding="utf-8")
 before = []
 for label, motions in samples:
@@ -160,7 +192,7 @@ def export_variant(label, rest_basis=None, *, mch_map=None):
     apply({}, rest_basis)
     # The unmodified authoring facts plus final binding overlay are available
     # for the real v4 planner once its PLANNED local contracts are released.
-    final_v4=build_export_document(authoring,rig,mch_map=mch_map)
+    final_v4=explicit_test_stacks(build_export_document(authoring,rig,mch_map=mch_map))
     (out/(label+"_v4.json")).write_text(codec.dumps(final_v4),encoding="utf-8")
     ir = ConstraintIRExporter.export_to_dict(rig)
     ir["bindingContext"]["fbxBoneAxes"] = "Y_X"
