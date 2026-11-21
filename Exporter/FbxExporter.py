@@ -2953,6 +2953,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         humanoid_mapping_data = None
         humanoid_reference_data = {}
         ordinary_constraint_snapshots = {}
+        ordinary_constraint_sidecars = {}
         failed_data_transfer_count = 0
         failed_material_sort_count = 0
         failed_triangulate_count = 0
@@ -3272,6 +3273,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                         allow_native_approximation=self.allowNativeConstraintApproximation,
                     )
                     if json_path:
+                        if self.rigConstraintIRVersion == '4':
+                            ordinary_constraint_sidecars[ob.name] = json_path
                         exported_json.append(json_path)
                         metadata_entries.append({
                             "kind": "rigConstraintIR",
@@ -3362,6 +3365,27 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 if json_path:
                     exported_json.append(json_path)
                     metadata_entries.append({"kind": "humanoid", "file": os.path.basename(json_path)})
+
+            # Object rotation correction changes armature rest frames after the
+            # constraints have been removed. Final FBX matrices are sampled now;
+            # source facts and final target maps remain the pre-cleanup snapshot.
+            if ordinary_constraint_sidecars:
+                from RigConstraints.binding.overlay import refresh_final_context
+                from RigConstraints.codec import loads as load_ir, dumps as dump_ir
+                for ob in selected_armature_objects:
+                    sidecar = ordinary_constraint_sidecars.get(ob.name)
+                    if sidecar is None:
+                        continue
+                    with open(sidecar, "r", encoding="utf-8") as handle:
+                        document = load_ir(handle.read())
+                    document = refresh_final_context(document, ob)
+                    document["exportOptions"] = {
+                        "appliedConstraints": bool(self.applyExportConstraints),
+                        "appliedArmaturePose": bool(self.applyArmaturePose),
+                        "fixedObjectTransform": bool(self.fixObjectTransform),
+                    }
+                    with open(sidecar, "w", encoding="utf-8") as handle:
+                        handle.write(dump_ir(document) + "\n")
 
             #重置物体与集合的可见可选。
             # 名单是导出开头记下的，中间可能有物体被副本顶替（见 object_is_alive），

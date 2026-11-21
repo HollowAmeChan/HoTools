@@ -151,3 +151,25 @@ def build_export_document(authoring_document, armature, *, mch_map=None):
             raise ValueError("生成 MCH 语义无效：" + diagnostic["message"])
     document["inputFingerprint"] = fingerprint(document)
     return document
+
+
+def refresh_final_context(document, armature):
+    """Refresh matrices after object correction, without re-reading removed facts.
+
+    Constraint cleanup precedes object correction in HoFBX. Consumer analysis
+    therefore keeps the earlier conservative full-matrix requirement rather
+    than deciding a source became position-only just because consumers vanished.
+    """
+    from Exporter.ConstraintIRExporter import ConstraintIRExporter
+    result = deepcopy(document)
+    prior = {b["boneName"]: b for b in result["bindings"]["bindingContext"]["bones"]}
+    context = ConstraintIRExporter._binding_context(armature, list(armature.data.bones))
+    context["fbxBoneAxes"] = "Y_X"
+    for bone in context["bones"]:
+        old = prior.get(bone["boneName"])
+        if old is not None:
+            bone["positionOnly"] = old.get("positionOnly", False) and bone["positionOnly"]
+            bone["hasPoseAnimation"] = old.get("hasPoseAnimation", False) or bone["hasPoseAnimation"]
+    result["bindings"]["bindingContext"] = context
+    result["inputFingerprint"] = fingerprint(result)
+    return result
