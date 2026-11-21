@@ -11,7 +11,7 @@ The table registers capabilities; it is not a claim that all parameters of a Ble
 - Semantic definitions: 7; implementation contracts: 23; implemented legacy/current paths: 23; planned: 0.
 - Full-type completion, parameter-domain completion and real SDK validation are deliberately not conflated.
 
-copyR requires explicit generated/adopted ownership metadata. A manually authored raw Copy Rotation remains a source fact and is not guessed into copyR; v2/v3 retain their compatibility interpretation.
+copyR requires explicit generated/adopted ownership metadata. A manually authored raw Copy Rotation remains a source fact and is not guessed into copyR; only IR v4 is supported.
 
 ## Three parallel columns
 
@@ -67,27 +67,27 @@ Exact/conditional/approximate is a contract declaration. Verification evidence i
 
 | Implementation | Semantic | Backend | Availability | Fidelity | Verification | Test suite |
 | --- | --- | --- | --- | --- | --- | --- |
-| `standard.copy_location.world@1` | COPY_LOCATION@1 | Standard | IMPLEMENTED | EXACT | TESTED | constraint-ir-v3-regression |
-| `standard.copy_rotation.world@1` | COPY_ROTATION@1 | Standard | IMPLEMENTED | CONDITIONAL | TESTED | constraint-ir-v3-regression |
-| `standard.armature.linear@1` | ARMATURE@1 | Standard | IMPLEMENTED | APPROXIMATE | TESTED | constraint-ir-v3-regression |
-| `standard.mch.parent@1` | MCH@1 | Standard | IMPLEMENTED | CONDITIONAL | LEGACY_EVIDENCE | legacy-aux-regression |
-| `standard.twist.legacy@1` | TWIST@1 | Standard | IMPLEMENTED | LEGACY | LEGACY_EVIDENCE | legacy-aux-regression |
-| `standard.fan.legacy@1` | FAN@1 | Standard | IMPLEMENTED | LEGACY | LEGACY_EVIDENCE | legacy-aux-regression |
-| `standard.aim.object_position@1` | AIM@1 | Standard | IMPLEMENTED | EXACT | TESTED | constraint-ir-v3-regression |
-| `hoaux.copy_location.world@1` | COPY_LOCATION@1 | HoAux | IMPLEMENTED | EXACT | TESTED | constraint-ir-v3-regression |
-| `hoaux.copy_rotation.world@1` | COPY_ROTATION@1 | HoAux | IMPLEMENTED | EXACT | TESTED | constraint-ir-v3-regression |
-| `hoaux.armature.linear@1` | ARMATURE@1 | HoAux | IMPLEMENTED | CONDITIONAL | TESTED | constraint-ir-v3-regression |
-| `hoaux.mch.parent@1` | MCH@1 | HoAux | IMPLEMENTED | CONDITIONAL | LEGACY_EVIDENCE | legacy-aux-regression |
-| `hoaux.twist.legacy@1` | TWIST@1 | HoAux | IMPLEMENTED | LEGACY | LEGACY_EVIDENCE | legacy-aux-regression |
-| `hoaux.fan.legacy@1` | FAN@1 | HoAux | IMPLEMENTED | LEGACY | LEGACY_EVIDENCE | legacy-aux-regression |
-| `hoaux.aim.object_position@1` | AIM@1 | HoAux | IMPLEMENTED | EXACT | TESTED | constraint-ir-v3-regression |
-| `vrc.copy_location.world@1` | COPY_LOCATION@1 | Vrc | IMPLEMENTED | EXACT | SHIM_ONLY | constraint-ir-v3-regression |
-| `vrc.copy_rotation.world@1` | COPY_ROTATION@1 | Vrc | IMPLEMENTED | CONDITIONAL | SHIM_ONLY | constraint-ir-v3-regression |
-| `vrc.armature.linear@1` | ARMATURE@1 | Vrc | IMPLEMENTED | APPROXIMATE | SHIM_ONLY | constraint-ir-v3-regression |
-| `vrc.mch.parent@1` | MCH@1 | Vrc | IMPLEMENTED | CONDITIONAL | SHIM_ONLY | legacy-aux-regression |
-| `vrc.twist.legacy@1` | TWIST@1 | Vrc | IMPLEMENTED | LEGACY | SHIM_ONLY | legacy-aux-regression |
-| `vrc.fan.legacy@1` | FAN@1 | Vrc | IMPLEMENTED | LEGACY | SHIM_ONLY | legacy-aux-regression |
-| `vrc.aim.object_position@1` | AIM@1 | Vrc | IMPLEMENTED | EXACT | SHIM_ONLY | constraint-ir-v3-regression |
+| `standard.copy_location.world@1` | COPY_LOCATION@1 | Standard | IMPLEMENTED | EXACT | TESTED | constraint-ir-v4-regression |
+| `standard.copy_rotation.world@1` | COPY_ROTATION@1 | Standard | IMPLEMENTED | CONDITIONAL | TESTED | constraint-ir-v4-regression |
+| `standard.armature.linear@1` | ARMATURE@1 | Standard | IMPLEMENTED | APPROXIMATE | TESTED | constraint-ir-v4-regression |
+| `standard.mch.parent@1` | MCH@1 | Standard | IMPLEMENTED | CONDITIONAL | LEGACY_EVIDENCE | ordinary-aux-regression |
+| `standard.twist.legacy@1` | TWIST@1 | Standard | IMPLEMENTED | LEGACY | LEGACY_EVIDENCE | ordinary-aux-regression |
+| `standard.fan.legacy@1` | FAN@1 | Standard | IMPLEMENTED | LEGACY | LEGACY_EVIDENCE | ordinary-aux-regression |
+| `standard.aim.object_position@1` | AIM@1 | Standard | IMPLEMENTED | EXACT | TESTED | constraint-ir-v4-regression |
+| `hoaux.copy_location.world@1` | COPY_LOCATION@1 | HoAux | IMPLEMENTED | EXACT | TESTED | constraint-ir-v4-regression |
+| `hoaux.copy_rotation.world@1` | COPY_ROTATION@1 | HoAux | IMPLEMENTED | EXACT | TESTED | constraint-ir-v4-regression |
+| `hoaux.armature.linear@1` | ARMATURE@1 | HoAux | IMPLEMENTED | CONDITIONAL | TESTED | constraint-ir-v4-regression |
+| `hoaux.mch.parent@1` | MCH@1 | HoAux | IMPLEMENTED | CONDITIONAL | LEGACY_EVIDENCE | ordinary-aux-regression |
+| `hoaux.twist.legacy@1` | TWIST@1 | HoAux | IMPLEMENTED | LEGACY | LEGACY_EVIDENCE | ordinary-aux-regression |
+| `hoaux.fan.legacy@1` | FAN@1 | HoAux | IMPLEMENTED | LEGACY | LEGACY_EVIDENCE | ordinary-aux-regression |
+| `hoaux.aim.object_position@1` | AIM@1 | HoAux | IMPLEMENTED | EXACT | TESTED | constraint-ir-v4-regression |
+| `vrc.copy_location.world@1` | COPY_LOCATION@1 | Vrc | IMPLEMENTED | EXACT | SHIM_ONLY | constraint-ir-v4-regression |
+| `vrc.copy_rotation.world@1` | COPY_ROTATION@1 | Vrc | IMPLEMENTED | CONDITIONAL | SHIM_ONLY | constraint-ir-v4-regression |
+| `vrc.armature.linear@1` | ARMATURE@1 | Vrc | IMPLEMENTED | APPROXIMATE | SHIM_ONLY | constraint-ir-v4-regression |
+| `vrc.mch.parent@1` | MCH@1 | Vrc | IMPLEMENTED | CONDITIONAL | SHIM_ONLY | ordinary-aux-regression |
+| `vrc.twist.legacy@1` | TWIST@1 | Vrc | IMPLEMENTED | LEGACY | SHIM_ONLY | ordinary-aux-regression |
+| `vrc.fan.legacy@1` | FAN@1 | Vrc | IMPLEMENTED | LEGACY | SHIM_ONLY | ordinary-aux-regression |
+| `vrc.aim.object_position@1` | AIM@1 | Vrc | IMPLEMENTED | EXACT | SHIM_ONLY | constraint-ir-v4-regression |
 | `hoaux.copy_rotation.local@1` | COPY_ROTATION@1 | HoAux | IMPLEMENTED | EXACT | TESTED | copy-rotation-local-fbx-golden |
 | `hoaux.copy_rotation.owner_orient@1` | COPY_ROTATION@1 | HoAux | IMPLEMENTED | EXACT | TESTED | copy-rotation-local-fbx-golden |
 
@@ -99,9 +99,9 @@ Axes describe existing suites, not an automatically proven Cartesian product. Co
 
 | Suite | Runners | Observed axes |
 | --- | --- | --- |
-| constraint-ir-v3-regression | HoTools: `tests/export_wtd_ir_v3_fixture.py`<br>HoUnityTools: `Tests~/ConstraintIRV3/Run.ps1` | backend: HoAux, Standard, Vrc shim<br>channels: Copy Location, Copy Rotation, Armature, Aim<br>lifecycle: runtime, repeat evaluation, prefab, merge<br>limits: VRC real SDK/client untested; native approximations retain per-contract limits |
-| legacy-aux-regression | HoTools: `tests/test_blender_aux_constraint_ownership.py`<br>HoTools: `tests/test_blender_fbx_mch_local_rotation.py`<br>HoTools: `tests/test_blender_hofbx_v4.py`<br>HoUnityTools: `Tests~/ConstraintIRV3/Run.ps1`<br>HoUnityTools: `Tests~/ConstraintIRV4/RunImport.ps1` | blender: 4.5.8, 5.2.0<br>semantics: MCH, Twist, Fan<br>lifecycle: ownership, source preservation, v3 compatibility, v4 assembly, reimport, undo<br>limits: legacy behavior is not full-domain numerical equivalence |
-| copy-rotation-local-fbx-golden | HoTools: `tests/export_copyr_v4_fixture.py`<br>HoUnityTools: `Tests~/ConstraintIRV4/Run-local.ps1` | blender: 4.5.8, 5.2.0<br>spaces: WORLD to WORLD, LOCAL to LOCAL, LOCAL_OWNER_ORIENT to LOCAL<br>influence: 0, 0.3, 0.5, 1<br>bones: different rest axes, left/right, dynamic owner and target parents, reflected per-bone bases, ordered stacks<br>routes: Raw, MCH, serialized prefab, missing-reference recovery, merge<br>frames: first, repeat<br>rigRoot: positive uniform TRS, zero rejected, odd negative rejected, even negative rejected, nonuniform rejected, ancestor shear rejected, valid recovery<br>tolerance: position 1e-4 m, rotation 0.1 deg, scale 1e-4<br>limits: single-owner UI creates one copyR; explicit stack fixtures test IR/runtime separately |
+| constraint-ir-v4-regression | HoTools: `tests/export_direct_v4_fixture.py`<br>HoUnityTools: `Tests~/ConstraintIRV4/Run-direct.ps1` | backend: HoAux, Standard, Vrc shim<br>channels: Copy Location, Copy Rotation, Armature, Aim<br>lifecycle: v4 planner/runtime, repeat evaluation, prefab, merge<br>limits: VRC real SDK/client untested; native approximations retain per-contract limits |
+| ordinary-aux-regression | HoTools: `tests/test_blender_aux_constraint_ownership.py`<br>HoTools: `tests/test_blender_fbx_mch_local_rotation.py`<br>HoTools: `tests/test_blender_hofbx_v4.py`<br>HoUnityTools: `Tests~/ConstraintIRV4/RunImport.ps1` | blender: 4.5.8, 5.2.0<br>semantics: MCH, Twist, Fan<br>lifecycle: ownership, source preservation, v4 source/planner, v4 assembly, reimport, undo<br>limits: legacy behavior is not full-domain numerical equivalence |
+| copy-rotation-local-fbx-golden | HoTools: `tests/export_copyr_v4_fixture.py`<br>HoUnityTools: `Tests~/ConstraintIRV4/Run-local.ps1` | blender: 4.5.8, 5.2.0<br>spaces: WORLD to WORLD, LOCAL to LOCAL, LOCAL_OWNER_ORIENT to LOCAL<br>influence: 0, 0.3, 0.5, 1<br>bones: different rest axes, left/right, dynamic owner and target parents, reflected per-bone bases, ordered stacks<br>routes: Raw, MCH, serialized prefab, missing-reference recovery, merge<br>frames: first, repeat<br>rigRoot: positive uniform TRS, zero rejected, odd negative rejected, even negative rejected, nonuniform rejected, ancestor shear rejected, valid recovery<br>tolerance: position 1e-4 m, rotation 0.1 deg, scale 1e-4<br>limits: single-owner UI creates one copyR; explicit stack fixtures test IR/v4 planner/runtime separately |
 
 ## Evidence and boundaries
 

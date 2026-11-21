@@ -31,8 +31,8 @@ def semantic(semantic_id="s0", source_ids=None):
     return {
         "semanticId": semantic_id, "semanticType": "COPY_ROTATION", "semanticVersion": 1,
         "ownerBone": "Owner", "sourceIds": ["c0"] if source_ids is None else source_ids,
-        "ruleId": "direct.copy_rotation", "ruleVersion": 1,
-        "evidence": "RAW_TYPE", "parameters": {},
+        "ruleId": "group.copy_r", "ruleVersion": 1,
+        "evidence": "GENERATED", "parameters": {},
     }
 
 
@@ -132,6 +132,17 @@ class CodecTests(unittest.TestCase):
         document = example()
         document["sources"][0]["constraint"]["stackIndex"] = True
         self.assert_code(document, "INVALID_STRUCTURE")
+
+    def test_retired_protocols_and_inferred_legacy_evidence_are_rejected(self):
+        for version in (2, 3):
+            document = example()
+            document["schemaVersion"] = version
+            self.assert_code(document, "UNSUPPORTED_VERSION")
+        document = example()
+        document["semantics"][0]["evidence"] = "LEGACY"
+        self.assertTrue(validate_document(document))
+        with self.assertRaises(ValueError):
+            codec.dumps(document)
 
     def test_bad_references_and_duplicate_identities_are_reported(self):
         document = example()

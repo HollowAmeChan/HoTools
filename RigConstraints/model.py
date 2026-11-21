@@ -11,7 +11,7 @@ SCHEMA = "hotools.rig-constraint-ir"
 SCHEMA_VERSION = 4
 BACKENDS = ("Standard", "HoAux", "Vrc")
 CAPTURE_STAGES = ("AUTHORING", "POSTPROCESS", "EXPORT_GENERATED")
-EVIDENCE_KINDS = ("RAW_TYPE", "GENERATED", "EXPLICIT", "LEGACY")
+EVIDENCE_KINDS = ("RAW_TYPE", "GENERATED", "EXPLICIT")
 
 
 def new_document(armature_name, blender_version="", capture_stage="AUTHORING"):

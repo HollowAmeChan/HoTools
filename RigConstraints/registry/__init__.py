@@ -164,7 +164,7 @@ def generate_coverage(registry=None):
         "- Constraint types: {}; direct semantics: {}; group-only members: {}; UnknownSemantic: {}.".format(len(rows), direct, grouped, unknown),
         "- Semantic definitions: {}; implementation contracts: {}; implemented legacy/current paths: {}; planned: {}.".format(len(data["semanticDefinitions"]), len(implementations), implemented, planned),
         "- Full-type completion, parameter-domain completion and real SDK validation are deliberately not conflated.", "",
-        "copyR requires explicit generated/adopted ownership metadata. A manually authored raw Copy Rotation remains a source fact and is not guessed into copyR; v2/v3 retain their compatibility interpretation.", "",
+        "copyR requires explicit generated/adopted ownership metadata. A manually authored raw Copy Rotation remains a source fact and is not guessed into copyR; only IR v4 is supported.", "",
         "## Three parallel columns", "",
         "| Blender source type | Blender versions | Admitted owners | Semantic translation | Unity implementation references |",
         "| --- | --- | --- | --- | --- |",

@@ -503,17 +503,13 @@
       "registrationRequired": true,
       "acceptedEvidence": [
         "GENERATED",
-        "EXPLICIT",
-        "LEGACY"
-      ],
-      "legacyRuleIds": [
-        "direct.copy_rotation"
+        "EXPLICIT"
       ],
       "generatorIds": [
         "hotools.aux.copy_r"
       ],
       "notes": [
-        "Ordinary copyR is explicitly created/registered. A raw manually authored Copy Rotation is preserved as a source fact but is not automatically adopted into COPY_R ownership. v2/v3 compatibility keeps its original interpretation."
+        "Ordinary copyR is explicitly created/registered. A raw manually authored Copy Rotation is preserved as a source fact but is not automatically adopted into COPY_R ownership."
       ]
     },
     {
@@ -647,7 +643,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "WORLD"
         ],
@@ -676,7 +672,7 @@
         "status": "TESTED",
         "scope": "EXISTING_ISOLATED_REGRESSION",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
@@ -684,7 +680,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": []
     },
@@ -706,7 +702,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "WORLD"
         ],
@@ -734,8 +730,7 @@
         "registration": "VALIDATED_EXPLICIT_OR_GENERATED_COPY_R_GROUP",
         "acceptedEvidence": [
           "GENERATED",
-          "EXPLICIT",
-          "LEGACY"
+          "EXPLICIT"
         ]
       },
       "availability": "IMPLEMENTED",
@@ -744,7 +739,7 @@
         "status": "TESTED",
         "scope": "EXISTING_ISOLATED_REGRESSION",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
@@ -752,7 +747,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": [
         "Native rotational interpolation is not guaranteed equal to Blender Slerp; existing Standard comparison covers 0.3, endpoint and half-weight subsets."
@@ -777,7 +772,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "WORLD"
         ],
@@ -803,7 +798,7 @@
         "status": "TESTED",
         "scope": "EXISTING_ISOLATED_REGRESSION",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
@@ -811,7 +806,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": [
         "Rigid multi-source Parent mapping does not preserve full affine blend or dynamic pre-state."
@@ -835,8 +830,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "EXPLICIT_OR_LEGACY_GENERATED_MCH",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_GENERATED_MCH",
         "maintainOffset": true,
         "parameters": {
           "use_location_x": true,
@@ -864,7 +859,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "legacy-aux-regression"
+        "ordinary-aux-regression"
       ],
       "notes": [
         "Existing generated MCH rigid parent semantics; no claim for arbitrary manually authored Child Of."
@@ -888,8 +883,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "EXPLICIT_OR_LEGACY_TWIST_GROUP",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_TWIST_GROUP",
         "orderedMemberRoles": [
           "rotation",
           "stretch"
@@ -939,7 +934,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "legacy-aux-regression"
+        "ordinary-aux-regression"
       ],
       "notes": [
         "Preserves the existing Twist path. HoAux legacy Local and Owner Orientation behavior is shared and is not a general local Copy Rotation guarantee."
@@ -963,8 +958,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "EXPLICIT_OR_LEGACY_FAN_GROUP",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_FAN_GROUP",
         "auxTypes": [
           "FAN",
           "FAN_SINGLE",
@@ -1003,7 +998,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "legacy-aux-regression"
+        "ordinary-aux-regression"
       ],
       "notes": [
         "Preserves the existing generated Fan behavior rather than reinterpreting raw zero-offset Copy Rotation."
@@ -1027,8 +1022,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "VALIDATED_EXPLICIT_OR_LEGACY_AIM_GROUP",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_VALIDATED_EXPLICIT_AIM_GROUP",
         "orderedMemberRoles": [
           "aim",
           "up"
@@ -1058,7 +1053,7 @@
         "status": "TESTED",
         "scope": "EXISTING_ISOLATED_REGRESSION",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
@@ -1066,7 +1061,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": []
     },
@@ -1089,7 +1084,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "WORLD"
         ],
@@ -1119,14 +1114,14 @@
         "status": "TESTED",
         "scope": "EXISTING_ISOLATED_REGRESSION",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
         "HoAuxRig"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": []
     },
@@ -1148,7 +1143,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "WORLD"
         ],
@@ -1176,8 +1171,7 @@
         "registration": "VALIDATED_EXPLICIT_OR_GENERATED_COPY_R_GROUP",
         "acceptedEvidence": [
           "GENERATED",
-          "EXPLICIT",
-          "LEGACY"
+          "EXPLICIT"
         ],
         "rigSpace": "FINITE_POSITIVE_UNIFORM_TRS"
       },
@@ -1187,14 +1181,14 @@
         "status": "TESTED",
         "scope": "EXISTING_ISOLATED_REGRESSION",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
         "HoAuxRig"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": []
     },
@@ -1217,7 +1211,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "WORLD"
         ],
@@ -1244,14 +1238,14 @@
         "status": "TESTED",
         "scope": "EXISTING_ISOLATED_REGRESSION",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
         "HoAuxRig"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": [
         "Affine blend is retained; runtime rejects non-representable TRS/shear, with consumer-proven position-only exception."
@@ -1275,8 +1269,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "EXPLICIT_OR_LEGACY_GENERATED_MCH",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_GENERATED_MCH",
         "maintainOffset": true,
         "parameters": {
           "use_location_x": true,
@@ -1303,7 +1297,7 @@
         "HoAuxRig"
       ],
       "testSuites": [
-        "legacy-aux-regression"
+        "ordinary-aux-regression"
       ],
       "notes": [
         "Existing generated MCH rigid parent semantics; no claim for arbitrary manually authored Child Of."
@@ -1327,8 +1321,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "EXPLICIT_OR_LEGACY_TWIST_GROUP",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_TWIST_GROUP",
         "orderedMemberRoles": [
           "rotation",
           "stretch"
@@ -1385,7 +1379,7 @@
         "HoAuxRig"
       ],
       "testSuites": [
-        "legacy-aux-regression"
+        "ordinary-aux-regression"
       ],
       "notes": [
         "Preserves the existing Twist path. HoAux legacy Local and Owner Orientation behavior is shared and is not a general local Copy Rotation guarantee."
@@ -1409,8 +1403,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "EXPLICIT_OR_LEGACY_FAN_GROUP",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_FAN_GROUP",
         "auxTypes": [
           "FAN",
           "FAN_SINGLE",
@@ -1448,7 +1442,7 @@
         "HoAuxRig"
       ],
       "testSuites": [
-        "legacy-aux-regression"
+        "ordinary-aux-regression"
       ],
       "notes": [
         "Preserves the existing generated Fan behavior rather than reinterpreting raw zero-offset Copy Rotation."
@@ -1472,8 +1466,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "VALIDATED_EXPLICIT_OR_LEGACY_AIM_GROUP",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_VALIDATED_EXPLICIT_AIM_GROUP",
         "orderedMemberRoles": [
           "aim",
           "up"
@@ -1504,14 +1498,14 @@
         "status": "TESTED",
         "scope": "EXISTING_ISOLATED_REGRESSION",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
         "HoAuxRig"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": []
     },
@@ -1534,7 +1528,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "WORLD"
         ],
@@ -1563,7 +1557,7 @@
         "status": "SHIM_ONLY",
         "scope": "ISOLATED_API_SERIALIZATION_ONLY",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
@@ -1571,7 +1565,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": [
         "No real SDK/client numerical equivalence claim; shim evidence covers assembly and serialization only."
@@ -1595,7 +1589,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "WORLD"
         ],
@@ -1623,8 +1617,7 @@
         "registration": "VALIDATED_EXPLICIT_OR_GENERATED_COPY_R_GROUP",
         "acceptedEvidence": [
           "GENERATED",
-          "EXPLICIT",
-          "LEGACY"
+          "EXPLICIT"
         ]
       },
       "availability": "IMPLEMENTED",
@@ -1633,7 +1626,7 @@
         "status": "SHIM_ONLY",
         "scope": "ISOLATED_API_SERIALIZATION_ONLY",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
@@ -1641,7 +1634,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": [
         "Native rotational interpolation is not guaranteed equal to Blender Slerp; existing Standard comparison covers 0.3, endpoint and half-weight subsets.",
@@ -1667,7 +1660,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "WORLD"
         ],
@@ -1693,7 +1686,7 @@
         "status": "SHIM_ONLY",
         "scope": "ISOLATED_API_SERIALIZATION_ONLY",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
@@ -1701,7 +1694,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": [
         "Rigid multi-source Parent mapping does not preserve full affine blend or dynamic pre-state.",
@@ -1726,8 +1719,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "EXPLICIT_OR_LEGACY_GENERATED_MCH",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_GENERATED_MCH",
         "maintainOffset": true,
         "parameters": {
           "use_location_x": true,
@@ -1755,7 +1748,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "legacy-aux-regression"
+        "ordinary-aux-regression"
       ],
       "notes": [
         "Existing generated MCH rigid parent semantics; no claim for arbitrary manually authored Child Of.",
@@ -1780,8 +1773,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "EXPLICIT_OR_LEGACY_TWIST_GROUP",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_TWIST_GROUP",
         "orderedMemberRoles": [
           "rotation",
           "stretch"
@@ -1831,7 +1824,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "legacy-aux-regression"
+        "ordinary-aux-regression"
       ],
       "notes": [
         "Preserves the existing Twist path. HoAux legacy Local and Owner Orientation behavior is shared and is not a general local Copy Rotation guarantee.",
@@ -1856,8 +1849,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "EXPLICIT_OR_LEGACY_FAN_GROUP",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_FAN_GROUP",
         "auxTypes": [
           "FAN",
           "FAN_SINGLE",
@@ -1896,7 +1889,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "legacy-aux-regression"
+        "ordinary-aux-regression"
       ],
       "notes": [
         "Preserves the existing generated Fan behavior rather than reinterpreting raw zero-offset Copy Rotation.",
@@ -1921,8 +1914,8 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
-        "registration": "VALIDATED_EXPLICIT_OR_LEGACY_AIM_GROUP",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
+        "registration": "VALIDATED_VALIDATED_EXPLICIT_AIM_GROUP",
         "orderedMemberRoles": [
           "aim",
           "up"
@@ -1952,7 +1945,7 @@
         "status": "SHIM_ONLY",
         "scope": "ISOLATED_API_SERIALIZATION_ONLY",
         "evidence": [
-          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+          "HoUnityTools/Tests~/ConstraintIRV4/READER.md"
         ]
       },
       "artifacts": [
@@ -1960,7 +1953,7 @@
         "OWNED_STAGE_HELPERS"
       ],
       "testSuites": [
-        "constraint-ir-v3-regression"
+        "constraint-ir-v4-regression"
       ],
       "notes": [
         "No real SDK/client numerical equivalence claim; shim evidence covers assembly and serialization only."
@@ -1985,7 +1978,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "LOCAL"
         ],
@@ -2010,8 +2003,7 @@
         "registration": "VALIDATED_EXPLICIT_OR_GENERATED_COPY_R_GROUP",
         "acceptedEvidence": [
           "GENERATED",
-          "EXPLICIT",
-          "LEGACY"
+          "EXPLICIT"
         ],
         "rigSpace": "FINITE_POSITIVE_UNIFORM_TRS"
       },
@@ -2068,7 +2060,7 @@
         },
         "requiredBinding": "FINAL_FBX",
         "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
-        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "dependencyPolicy": "ACYCLIC_NO_COMPOSITE_FEEDBACK",
         "ownerSpaces": [
           "LOCAL"
         ],
@@ -2093,8 +2085,7 @@
         "registration": "VALIDATED_EXPLICIT_OR_GENERATED_COPY_R_GROUP",
         "acceptedEvidence": [
           "GENERATED",
-          "EXPLICIT",
-          "LEGACY"
+          "EXPLICIT"
         ],
         "rigSpace": "FINITE_POSITIVE_UNIFORM_TRS"
       },
@@ -2135,17 +2126,17 @@
   ],
   "testSuiteDefinitions": [
     {
-      "id": "constraint-ir-v3-regression",
+      "id": "constraint-ir-v4-regression",
       "runners": [
         {
           "repository": "HoTools",
-          "path": "tests/export_wtd_ir_v3_fixture.py",
-          "input": "read-only private blend; external fixture, never committed"
+          "path": "tests/export_direct_v4_fixture.py",
+          "input": "-- <output directory>"
         },
         {
           "repository": "HoUnityTools",
-          "path": "Tests~/ConstraintIRV3/Run.ps1",
-          "input": "-Fixture <Blender fixture> -TestVrcApiShim"
+          "path": "Tests~/ConstraintIRV4/Run-direct.ps1",
+          "input": "-Fixture <Blender fixture>"
         }
       ],
       "axes": {
@@ -2161,7 +2152,7 @@
           "Aim"
         ],
         "lifecycle": [
-          "runtime",
+          "v4 planner/runtime",
           "repeat evaluation",
           "prefab",
           "merge"
@@ -2172,7 +2163,7 @@
       }
     },
     {
-      "id": "legacy-aux-regression",
+      "id": "ordinary-aux-regression",
       "runners": [
         {
           "repository": "HoTools",
@@ -2185,11 +2176,6 @@
         {
           "repository": "HoTools",
           "path": "tests/test_blender_hofbx_v4.py"
-        },
-        {
-          "repository": "HoUnityTools",
-          "path": "Tests~/ConstraintIRV3/Run.ps1",
-          "input": "-Fixture <Blender fixture> -TestVrcApiShim"
         },
         {
           "repository": "HoUnityTools",
@@ -2210,7 +2196,7 @@
         "lifecycle": [
           "ownership",
           "source preservation",
-          "v3 compatibility",
+          "v4 source/planner",
           "v4 assembly",
           "reimport",
           "undo"
@@ -2231,7 +2217,7 @@
         {
           "repository": "HoUnityTools",
           "path": "Tests~/ConstraintIRV4/Run-local.ps1",
-          "input": "-Fixture <Blender fixture> -UseV4"
+          "input": "-Fixture <Blender fixture>"
         }
       ],
       "axes": {
@@ -2245,10 +2231,10 @@
           "LOCAL_OWNER_ORIENT to LOCAL"
         ],
         "influence": [
-          0,
-          0.3,
-          0.5,
-          1
+          "0",
+          "0.3",
+          "0.5",
+          "1"
         ],
         "bones": [
           "different rest axes",
@@ -2283,7 +2269,7 @@
           "scale 1e-4"
         ],
         "limits": [
-          "single-owner UI creates one copyR; explicit stack fixtures test IR/runtime separately"
+          "single-owner UI creates one copyR; explicit stack fixtures test IR/v4 planner/runtime separately"
         ]
       }
     }
