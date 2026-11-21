@@ -36,7 +36,7 @@ def _owners(armature, owner_names):
 
 
 def _registered(owner):
-    groups = metadata.iter_groups(owner.bone, pose_bone=owner)
+    groups = metadata.iter_groups(owner.bone)
     foreign = [group for group in groups if group["generatorId"] != GENERATOR_ID]
     if foreign:
         raise ValueError(owner.name + " 已有其他用途登记，不覆盖")

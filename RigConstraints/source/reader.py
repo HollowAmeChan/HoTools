@@ -49,7 +49,7 @@ def capture_armature(armature, *, capture_stage="AUTHORING"):
             })
         if kind == "BONE":
             aux = getattr(getattr(owner.bone, "hotools_boneprops", None), "auxBone", None)
-            for group in iter_groups(owner.bone, pose_bone=owner):
+            for group in iter_groups(owner.bone):
                 declaration = dict(group)
                 declaration["ownerBone"] = name
                 declaration["auxType"] = str(getattr(aux, "auxType", "") or "")

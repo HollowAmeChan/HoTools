@@ -42,7 +42,7 @@ class PG_Hotools_BoneRef(PropertyGroup):
 
 
 def _register_aux_constraint(pose_bone, constraint):
-    """Compatibility entry for the ordinary constraint name index."""
+    """Update the current ordinary constraint name index."""
     return _constraint_metadata._register_aux_constraint(pose_bone, constraint)
 
 
@@ -55,7 +55,7 @@ def _ensure_aux_constraint_name_available(pose_bone, constraint_name, constraint
 
 
 def _replace_aux_constraints(pose_bone, constraints):
-    """Compatibility entry for complete ordinary semantic-group registration."""
+    """Commit complete ordinary semantic-group registration."""
     return _constraint_metadata._replace_aux_constraints(pose_bone, constraints)
 
 
@@ -437,7 +437,7 @@ def _aux_group_constraints(armature, bone_names, *, strict=False):
         pose_bone = armature.pose.bones.get(name)
         if pose_bone is None:
             continue
-        if _constraint_metadata.owns_aux_bone(pose_bone.bone, pose_bone=pose_bone):
+        if _constraint_metadata.owns_aux_bone(pose_bone.bone):
             constraints.extend(pose_bone.constraints)
             continue
         try:
@@ -707,7 +707,7 @@ class AuxBoneRemover:
         for name in removal_names:
             pose_bone = armature.pose.bones.get(name)
             data_bone = armature.data.bones.get(name)
-            if _constraint_metadata.owns_aux_bone(data_bone, pose_bone=pose_bone):
+            if _constraint_metadata.owns_aux_bone(data_bone):
                 owned_names.append(name)
             else:
                 try:

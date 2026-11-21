@@ -50,7 +50,6 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
         "op.ignoreGeometryNodes",
         "op.ignoreOutlineModifiers",
         "op.exportBoneConstraint",
-        "op.rigConstraintIRVersion",
         "op.allowNativeConstraintApproximation",
         "op.exportBoneCollection",
         "op.exportHumanoidMapping",
@@ -2136,51 +2135,32 @@ class FBXExporter:
         )
 
     @staticmethod
-    def export_armature_constraint_ir(ob, fbx_filepath, *, schema_version=3,
-                                     authoring_document=None, mch_map=None,
-                                     allow_native_approximation=False):
-        """Write companion IR; legacy direct callers keep v3 unless explicit.
+    def export_armature_constraint_ir(ob, fbx_filepath, *, authoring_document=None,
+                                     mch_map=None, allow_native_approximation=False):
+        """Write the v4 source, semantic and implementation contract companion."""
+        from RigConstraints.binding import build_export_document
+        from RigConstraints.source import capture_armature
+        from RigConstraints.codec import dumps
 
-        HoFBX's operator defaults to v4 and supplies its captured authoring
-        document. Keeping this helper's old default preserves scripts that call
-        it directly without the operator's authoring/final-binding lifecycle.
-        """
-        from ..ConstraintIRExporter import ConstraintIRExporter
-
-        if schema_version == 4:
-            from RigConstraints.binding import build_export_document
-            from RigConstraints.source import capture_armature
-            from RigConstraints.codec import dumps
-            source = authoring_document if authoring_document is not None else capture_armature(ob)
-            document = build_export_document(source, ob, mch_map=mch_map or {})
-            document["importPolicy"] = {"allowNativeApproximation": bool(allow_native_approximation)}
-            if allow_native_approximation:
-                # Explicit authoring policy is part of the fingerprint; it never
-                # lets an importer silently swap the pinned implementation ID.
-                for binding in document["implementationBindings"]:
-                    if binding["backendId"] in {"Standard", "Vrc"} and binding["fallbackPolicy"] == "EXACT_ONLY":
-                        binding["fallbackPolicy"] = "ALLOW_APPROXIMATE"
-            payload = dumps(document)
-        elif schema_version == 3:
-            constraint_ir = ConstraintIRExporter.build_ir(ob)
-            constraint_ir.binding_context["fbxBoneAxes"] = "Y_X"
-            if constraint_ir.is_empty():
-                return None
-            payload = json.dumps(constraint_ir.to_dict(), indent=2, ensure_ascii=False, allow_nan=False)
-        else:
-            raise ValueError("Unsupported Rig Constraint export version: " + str(schema_version))
-        # Facts about this companion FBX, whose bone axes are fixed by getParams.
-        # Standalone neutral IR snapshots do not assert a particular FBX preset.
-
+        source = authoring_document if authoring_document is not None else capture_armature(ob)
+        document = build_export_document(source, ob, mch_map=mch_map or {})
+        document["importPolicy"] = {"allowNativeApproximation": bool(allow_native_approximation)}
+        if allow_native_approximation:
+            # Policy changes the fingerprint and never substitutes a pinned implementation.
+            for binding in document["implementationBindings"]:
+                if binding["backendId"] in {"Standard", "Vrc"} and binding["fallbackPolicy"] == "EXACT_ONLY":
+                    binding["fallbackPolicy"] = "ALLOW_APPROXIMATE"
+        payload = dumps(document)
         base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
         json_path = FBXExporter.unity_metadata_path(
             fbx_filepath,
             f"{base_name}_{ob.name}_constraint.json",
         )
-        with open(json_path, "w", encoding="utf-8") as f:
-            f.write(payload)
-            f.write("\n")
+        with open(json_path, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.write("\n")
         return json_path
+
     @staticmethod
     def export_armature_collections_json(ob, fbx_filepath):
         """分析本骨架的骨骼集合并写出 JSON。返回写出的文件路径，无集合则返回 None。
@@ -2738,11 +2718,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
     exportBoneConstraint:BoolProperty(name="导出Rig约束IR(JSON)",description="导出Aux骨、原始Blender约束参数和MCH绑定的中立IR；最终运行时方案由导入端决定",default=False) # type: ignore
-    rigConstraintIRVersion:EnumProperty(
-        name="约束 IR 版本", items=(('3', 'v3（兼容）', '兼容现有导入器'),
-                                     ('4', 'v4（三层契约）', '需要支持 v4 的 HoUnityTools；保留作者事实和最终绑定')),
-        default='4',
-    ) # type: ignore
     allowNativeConstraintApproximation:BoolProperty(
         name="允许原生约束近似", default=False,
         description="v4 明确允许 Standard/VRC 使用已登记的近似契约；保留原始事实并在 Unity 显示差异，不影响 HoAux",
@@ -2865,7 +2840,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         FBXExporter.unhide_objects()
 
         try:
-            if (self.exportUnityMetadata or self.exportBoneConstraint) and self.rigConstraintIRVersion == '4':
+            if self.exportUnityMetadata or self.exportBoneConstraint:
                 from RigConstraints.source import capture_armature
                 ordinary_constraint_snapshots = {ob.name: capture_armature(ob) for ob in selected_armature_objects}
             pose_position_state = FBXExporter.capture_armatures_pose_position(
@@ -3150,8 +3125,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 ob.name for ob in selection if ob.type == "ARMATURE"
             }
 
-            # 导出中立 Rig 约束 IR。约束目标保留 MCH 预处理后的 Blender 事实
-            # （所以必须排在 MCH 之后），且必须早于下面清空约束——JSON 是约束的唯一载体。
+            # Bind immutable author facts to final MCH targets before clearing constraints.
+            # The companion v4 document is the sole carrier of ordinary constraints.
             # 这里也不依赖可见性/选择状态，提前写不会影响后面的预处理。
             export_constraints = self.exportUnityMetadata or self.exportBoneConstraint
             export_collections = self.exportUnityMetadata or self.exportBoneCollection
@@ -3166,14 +3141,12 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                         continue
                     json_path = FBXExporter.export_armature_constraint_ir(
                         ob, self.filepath,
-                        schema_version=int(self.rigConstraintIRVersion),
                         authoring_document=ordinary_constraint_snapshots.get(ob.name),
                         mch_map=mch_name_maps.get(ob.name, {}),
                         allow_native_approximation=self.allowNativeConstraintApproximation,
                     )
                     if json_path:
-                        if self.rigConstraintIRVersion == '4':
-                            ordinary_constraint_sidecars[ob.name] = json_path
+                        ordinary_constraint_sidecars[ob.name] = json_path
                         exported_json.append(json_path)
                         metadata_entries.append({
                             "kind": "rigConstraintIR",
@@ -3449,9 +3422,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         json_col = json_box.column(align=True)
         json_col.prop(self, "exportUnityMetadata")
         if self.exportUnityMetadata or self.exportBoneConstraint:
-            json_col.prop(self, "rigConstraintIRVersion")
-            if self.rigConstraintIRVersion == '4':
-                json_col.prop(self, "allowNativeConstraintApproximation")
+            json_col.prop(self, "allowNativeConstraintApproximation")
         if self.exportUnityMetadata:
             info = json_col.row()
             info.enabled = False

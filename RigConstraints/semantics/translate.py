@@ -49,7 +49,7 @@ def translate(document):
         kind = group["semanticType"]
         rule = "group.copy_r" if kind == "COPY_ROTATION" else "group." + kind.lower()
         _add(doc, kind, group["ownerBone"], [s["sourceId"] for s in resolved],
-             rule, group.get("evidence", "LEGACY"), parameters)
+             rule, group.get("evidence", ""), parameters)
         consumed.update(s["sourceId"] for s in resolved)
     catalog = {r["type"]: r for r in load_registry()["constraintTypes"]}
     for sid, source in sources.items():
