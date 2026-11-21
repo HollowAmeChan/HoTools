@@ -5,7 +5,7 @@ from pathlib import Path
 import bpy
 from bpy.props import BoolProperty, CollectionProperty, PointerProperty, StringProperty
 from bpy.types import PropertyGroup
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 
 
 ADDON_DIR = Path(__file__).resolve().parents[1]
@@ -262,7 +262,7 @@ armature_target.weight = 0.4
 reference_probe = ConstraintIRExporter.export_to_dict(armature)
 raw_armature = next(
     item["constraint"]
-    for item in reference_probe["unknownConstraints"]
+    for item in reference_probe["knownConstraints"]
     if item["ownerBone"] == "Leaf"
     and item["constraint"]["name"] == "RawArmatureTargets"
 )
