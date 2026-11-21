@@ -80,7 +80,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "COPY_ROTATION",
@@ -100,7 +101,8 @@
         "5.2.0"
       ],
       "registrationRequired": true,
-      "authoringAuxType": "COPY_R"
+      "authoringAuxType": "COPY_R",
+      "targetRequired": true
     },
     {
       "type": "COPY_SCALE",
@@ -114,7 +116,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "COPY_TRANSFORMS",
@@ -128,7 +131,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "LIMIT_DISTANCE",
@@ -142,7 +146,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "LIMIT_LOCATION",
@@ -240,7 +245,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "DAMPED_TRACK",
@@ -256,7 +262,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "IK",
@@ -285,7 +292,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "SPLINE_IK",
@@ -314,7 +322,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "TRACK_TO",
@@ -328,7 +337,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "ACTION",
@@ -342,7 +352,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "ARMATURE",
@@ -374,7 +385,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "FLOOR",
@@ -388,7 +400,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "FOLLOW_PATH",
@@ -402,7 +415,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     },
     {
       "type": "GEOMETRY_ATTRIBUTE",
@@ -444,7 +458,8 @@
       "blenderVersions": [
         "4.5.8",
         "5.2.0"
-      ]
+      ],
+      "targetRequired": true
     }
   ],
   "semanticDefinitions": [

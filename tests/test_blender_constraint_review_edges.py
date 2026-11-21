@@ -65,6 +65,14 @@ report = review.scan(rig)
 results["copy_r_generator_gate"] = bool(report["broken"]) and not report["known"]
 metadata.clear_groups(rig.data.bones["Owner"])
 
+# A registered generator with an incompatible evidence kind must not bypass its
+# authoring rule merely by copying the generator string into raw metadata.
+declare("Owner", c1)
+rig.data.bones["Owner"].hotools_boneprops.constraintGroups[0].evidence = "RAW_TYPE"
+report = review.scan(rig)
+results["copy_r_evidence_gate"] = bool(report["broken"]) and not report["known"]
+metadata.clear_groups(rig.data.bones["Owner"])
+
 # Two groups sharing the same owner-local group identity are corrupt even when
 # they reference disjoint constraints; duplicate membership is a separate case.
 declare("Owner", c1)
@@ -131,6 +139,12 @@ cx.target = None
 report = review.scan(rig)
 results["large_hoaux_owners_excluded"] = report["excludedCount"] == 1 and all(
     row["ownerBone"] != "Excluded" for category in ("known", "broken", "unknown") for row in report[category])
+
+# Data validity remains observable even for a type with no semantic translator.
+shrink = rig.pose.bones["Standalone"].constraints.new("SHRINKWRAP")
+report = review.scan(rig)
+results["unknown_missing_required_target"] = any(
+    row["ownerBone"] == "Standalone" and "目标对象缺失" in row["message"] for row in report["broken"])
 
 # Scan changes neither actual source facts nor persistent declaration metadata.
 before = capture_armature(rig)

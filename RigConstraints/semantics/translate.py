@@ -13,10 +13,12 @@ def translate(document):
     declarations = doc.get("declarations", ())
     declared, consumed = set(), set()
     memberships = {}
-    group_counts = {}
+    group_counts, generator_counts = {}, {}
     for group in declarations:
         key = (group["ownerBone"], group["groupId"])
         group_counts[key] = group_counts.get(key, 0) + 1
+        generator = (group["ownerBone"], group["semanticType"], group.get("generatorId", ""))
+        generator_counts[generator] = generator_counts.get(generator, 0) + 1
         for sid in group.get("memberSourceIds", ()):
             if sid:
                 memberships.setdefault(sid, []).append(group)
@@ -25,6 +27,8 @@ def translate(document):
         resolved, reasons = inspect_group(group, doc)
         if not group.get("groupId") or group_counts[(group["ownerBone"], group["groupId"])] > 1:
             reasons.append("语义组 ID 缺失或重复")
+        if generator_counts[(group["ownerBone"], group["semanticType"], group.get("generatorId", ""))] > 1:
+            reasons.append("同一生成来源的语义组重复")
         for s in resolved:
             reasons += source_reference_reasons(s, doc)
             if len(memberships[s["sourceId"]]) > 1:

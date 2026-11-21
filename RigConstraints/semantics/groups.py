@@ -87,10 +87,10 @@ def _aim_reasons(sources, group, document):
 def source_reference_reasons(source, document):
     """Validate resolvable ordinary bone targets; external facts stay intact."""
     c = source["constraint"]
-    required = {"COPY_LOCATION", "COPY_ROTATION", "COPY_SCALE", "COPY_TRANSFORMS",
-                "DAMPED_TRACK", "LOCKED_TRACK", "TRACK_TO", "STRETCH_TO", "CHILD_OF"}
+    type_record = next((r for r in load_registry()["constraintTypes"]
+                        if r["type"] == c["constraintType"]), {})
     reasons = []
-    if c["constraintType"] in required and not c.get("targetObjectName"):
+    if type_record.get("targetRequired") and not c.get("targetObjectName"):
         reasons.append("约束目标对象缺失")
     bone_names = {b["boneName"] for b in document.get("sourceContext", {}).get("bones", ())}
     target = c.get("targetBoneName")
