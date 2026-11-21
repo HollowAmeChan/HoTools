@@ -13,7 +13,9 @@ if str(ADDON_DIR) not in sys.path:
     sys.path.insert(0, str(ADDON_DIR))
 
 from Exporter.FbxExporter import FBXExporter
-from Exporter.ConstraintIRExporter import ConstraintIRExporter
+from RigConstraints.source import capture_armature
+from RigConstraints.semantics import translate
+from RigConstraints.blender.properties import PROPERTY_CLASSES, PG_RigConstraintGroup
 from BoneTools.auxBone.boneTwist import TwistBoneCore
 from BoneTools.boneProperty import _register_aux_constraint, _replace_aux_constraints
 from BoneTools.boneOperators import OP_ForceClearBoneRotation
@@ -36,6 +38,7 @@ class TestAuxInfo(PropertyGroup):
 class TestBoneProps(PropertyGroup):
     generateMCH: BoolProperty(default=False)
     auxBone: PointerProperty(type=TestAuxInfo)
+    constraintGroups: CollectionProperty(type=PG_RigConstraintGroup)
 
 
 def assert_matrix_close(actual, expected, tolerance=1e-5):
@@ -103,6 +106,8 @@ def read_fbx_bone_parents(filepath, bone_names):
 
 bpy.utils.register_class(TestBoneRef)
 bpy.utils.register_class(TestAuxInfo)
+for cls in PROPERTY_CLASSES:
+    bpy.utils.register_class(cls)
 bpy.utils.register_class(TestBoneProps)
 bpy.types.Bone.hotools_boneprops = PointerProperty(type=TestBoneProps)
 
@@ -222,33 +227,21 @@ assert any(
 assert FBXExporter.clear_pose_bone_transforms(armature, name_map) == 2
 bpy.context.view_layer.update()
 
-constraint_data = ConstraintIRExporter.export_to_dict(armature)
-binding_map = {
-    item["mchBone"]: item
-    for item in constraint_data["mchBindings"]
-}
-assert binding_map["MCH_First"]["sourceBone"] == "First"
-assert binding_map["MCH_Second"]["sourceBone"] == "Second"
-assert binding_map["MCH_First"]["constraint"]["constraintType"] == "CHILD_OF"
-assert binding_map["MCH_First"]["constraint"]["parameters"]["influence"] == 1.0
-assert binding_map["MCH_First"]["constraint"]["parameters"]["use_scale_x"] is False
-assert binding_map["MCH_First"]["constraint"]["parameters"]["use_rotation_y"] is True
-assert "type" not in binding_map["MCH_First"]["constraint"]
-aux_map = {item["boneName"]: item for item in constraint_data["auxBones"]}
-assert set(aux_map) == {"MCH_First", "MCH_Second"}
+constraint_data = translate(capture_armature(armature))
+groups = {item["ownerBone"]: item for item in constraint_data["declarations"]}
+sources = {row["sourceId"]: row for row in constraint_data["sources"]}
+assert set(groups) == {"MCH_First", "MCH_Second"}
 for source_name, mch_name in name_map.items():
-    assert aux_map[mch_name]["auxType"] == "MCH"
-    assert aux_map[mch_name]["sourceBones"] == [source_name]
-    assert aux_map[mch_name]["constraintNames"] == [
-        FBXExporter.MCH_PARENT_CONSTRAINT_NAME
-    ]
-    assert aux_map[mch_name]["constraints"] == []
-assert constraint_data["unknownConstraints"] == []
-assert [item["relationType"] for item in constraint_data["knownConstraints"]] == [
-    "MCH_BINDING",
-    "MCH_BINDING",
-]
-assert {item["auxType"] for item in constraint_data["knownConstraints"]} == {"MCH"}
+    group = groups[mch_name]
+    assert group["semanticType"] == "MCH" and group["sourceBones"] == [source_name]
+    raw = sources[group["memberSourceIds"][0]]["constraint"]
+    assert raw["name"] == FBXExporter.MCH_PARENT_CONSTRAINT_NAME
+    assert raw["constraintType"] == "CHILD_OF" and raw["targetBoneName"] == source_name
+    assert raw["parameters"]["influence"] == 1.0
+    assert raw["parameters"]["use_scale_x"] is False and raw["parameters"]["use_rotation_y"] is True
+    assert "type" not in raw
+assert not constraint_data["diagnostics"]
+assert [row["semanticType"] for row in constraint_data["semantics"]] == ["MCH", "MCH"]
 
 # RNA collections must preserve every target entry rather than serialize the
 # bpy_prop_collection itself as an empty RNA struct.
@@ -259,10 +252,10 @@ armature_target = armature_constraint.targets.new()
 armature_target.target = armature
 armature_target.subtarget = "First"
 armature_target.weight = 0.4
-reference_probe = ConstraintIRExporter.export_to_dict(armature)
+reference_probe = capture_armature(armature)
 raw_armature = next(
     item["constraint"]
-    for item in reference_probe["knownConstraints"]
+    for item in reference_probe["sources"]
     if item["ownerBone"] == "Leaf"
     and item["constraint"]["name"] == "RawArmatureTargets"
 )

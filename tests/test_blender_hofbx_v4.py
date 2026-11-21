@@ -1,4 +1,4 @@
-"""Actual HoFBX operator v4/v3 sidecars and normal undo restoration.
+"""Actual HoFBX operator v4 sidecars and normal undo restoration.
 
 Uses only disposable synthetic scenes. Optional -- ABSOLUTE_OUTPUT_DIRECTORY
 keeps the generated FBX/HoFBX files for Unity interoperability checks.
@@ -127,14 +127,13 @@ def build(name, *, empty=False, muted=False):
     return rig.name, skin.name, fan_names, twist_names
 
 
-def run_case(directory, label, *, version=None, empty=False, muted=False, apply_pose=False, allow_approximate=False):
+def run_case(directory, label, *, empty=False, muted=False, apply_pose=False, allow_approximate=False):
     rig_name, mesh_name, fans, twists = build("HoFbx_" + label, empty=empty, muted=muted)
     before = state(rig_name, mesh_name)
     authored = deepcopy(before["document"])
     path = directory / (label + ".fbx")
-    version_options = {} if version is None else {"rigConstraintIRVersion": version}
     result = bpy.ops.ho.final_fbx_export("EXEC_DEFAULT", filepath=str(path),
-        **version_options, generateMCHBones=not empty,
+        generateMCHBones=not empty,
         exportUnityMetadata=True, addLeafBones=False, applyArmaturePose=apply_pose,
         fixObjectTransform=True, applyExportConstraints=False,
         allowNativeConstraintApproximation=allow_approximate,
@@ -147,13 +146,6 @@ def run_case(directory, label, *, version=None, empty=False, muted=False, apply_
     assert len(files) == 1, (label, files)
     manifest = json.loads((directory / "HoFBX" / (label + "_unity.json")).read_text(encoding="utf-8"))
     assert any(entry["kind"] == "rigConstraintIR" and entry["file"] == files[0].name for entry in manifest["files"])
-    if version == "3":
-        doc = json.loads(files[0].read_text(encoding="utf-8"))
-        assert doc["schemaVersion"] == 3 and "knownConstraints" in doc
-        assert doc["mchBindings"]
-        assert any(row["auxType"] == "TWIST" for row in doc["auxBones"])
-        print("HOFBX_CASE_OK", label, "v3")
-        return
     doc = loads(files[0].read_text(encoding="utf-8"))
     assert doc["schemaVersion"] == 4 and doc["captureStage"] == "AUTHORING"
     assert doc["sourceContext"] == authored["sourceContext"]
@@ -194,7 +186,7 @@ def run_case(directory, label, *, version=None, empty=False, muted=False, apply_
 register_bones()
 bpy.utils.register_class(ApplyModifiers)
 bpy.utils.register_class(FbxExporter.OP_FinalFBXExport)
-assert bpy.ops.ho.final_fbx_export.get_rna_type().properties["rigConstraintIRVersion"].default == "4"
+assert "rigConstraintIRVersion" not in bpy.ops.ho.final_fbx_export.get_rna_type().properties
 try:
     context = tempfile.TemporaryDirectory(prefix="hotools_hofbx_v4_")
     try:
@@ -203,7 +195,7 @@ try:
         for label, options in (("ordinary_v4", {}), ("muted_v4", {"muted": True}),
                                ("apply_pose_v4", {"apply_pose": True}),
                                ("approximate_v4", {"allow_approximate": True}),
-                               ("compat_v3", {"version": "3"}), ("empty_v4", {"empty": True})):
+                               ("empty_v4", {"empty": True})):
             run_case(output, label, **options)
         if "--" in sys.argv:
             print("HOFBX_V4_FIXTURE", output)

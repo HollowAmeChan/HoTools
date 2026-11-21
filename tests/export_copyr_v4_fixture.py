@@ -20,11 +20,10 @@ from BoneTools.boneProperty import PG_Hotools_AuxBoneInfo, PG_Hotools_BoneRef
 from BoneTools.auxBone.copyRotation import CopyRotationCore
 from Exporter.FbxExporter import FBXExporter
 from Exporter.FbxExporter import OP_FinalFBXExport
-from Exporter.ConstraintIRExporter import ConstraintIRExporter
 from RigConstraints import codec
 from RigConstraints.binding import build_export_document
 from RigConstraints.blender.properties import PROPERTY_CLASSES, PG_RigConstraintGroup
-from RigConstraints.source.reader import capture_armature
+from RigConstraints.source import capture_armature, capture_binding_context
 from RigConstraints.semantics.translate import translate
 from RigConstraints.registry import implementations_for
 
@@ -214,7 +213,7 @@ def export_operator_variants():
         current = next(obj for obj in context.selected_objects if obj.type == "ARMATURE")
         captured[Path(self.filepath).stem] = {
             "bones": {bone.name: current.matrix_world @ bone.matrix_local for bone in current.data.bones},
-            "context": ConstraintIRExporter._binding_context(current, list(current.data.bones)),
+            "context": capture_binding_context(current),
         }
         return original_get_params(self, context, report_errors)
 
@@ -233,7 +232,7 @@ def export_operator_variants():
             bpy.context.view_layer.update()
             target = out / (label+".fbx")
             assert bpy.ops.ho.final_fbx_export("EXEC_DEFAULT", filepath=str(target),
-                rigConstraintIRVersion="4", exportUnityMetadata=False, exportBoneConstraint=True,
+                exportUnityMetadata=False, exportBoneConstraint=True,
                 exportBoneCollection=False, exportHumanoidMapping=False, exportBsCorrective=False,
                 addLeafBones=False, generateMCHBones=mch, applyArmaturePose=False,
                 fixObjectTransform=True, applyExportConstraints=False) == {"FINISHED"}
@@ -276,19 +275,6 @@ def export_variant(label, rest_basis=None, *, mch_map=None):
     # for the real v4 planner once its PLANNED local contracts are released.
     final_v4=explicit_test_stacks(build_export_document(authoring,rig,mch_map=mch_map))
     (out/(label+"_v4.json")).write_text(codec.dumps(final_v4),encoding="utf-8")
-    ir = ConstraintIRExporter.export_to_dict(rig)
-    ir["bindingContext"]["fbxBoneAxes"] = "Y_X"
-    # The numerical fixture targets the production direct evaluator. Keep raw
-    # Copy Rotation records direct even when legacy Aux ownership claimed them.
-    ir["knownConstraints"] = [record for record in ir["knownConstraints"] if record["relationType"] == "MCH_BINDING"]
-    for owner_name in owners:
-        owner = rig.pose.bones[owner_name]
-        for index, constraint in enumerate(owner.constraints):
-            ir["knownConstraints"].append({"ownerBone": owner_name, "relationType": "DIRECT_CONSTRAINT", "constraint": ConstraintIRExporter._raw_constraint(constraint, rig, index).to_dict()})
-    ir["auxBones"] = [row for row in ir["auxBones"] if row["auxType"] == "MCH"]
-    ir["unknownConstraints"] = []
-    ir["aimBindings"] = []
-    save(label+"_runtime_ir.json", ir)
     rests = [{"name": bone.name, "matrix": flat(bone.matrix_local)} for bone in rig.data.bones]
     actual_samples = []
     max_authoring_error = 0

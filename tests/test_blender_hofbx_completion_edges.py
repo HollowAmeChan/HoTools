@@ -19,8 +19,7 @@ for name, directory in (("HoTools", ROOT), ("HoTools.ShapekeyTools", ROOT / "Sha
 from BoneTools import register as register_bones, unregister as unregister_bones
 from BoneTools.auxBone.copyRotation import CopyRotationCore
 from Exporter import FbxExporter
-from Exporter.ConstraintIRExporter import ConstraintIRExporter
-from RigConstraints.source import capture_armature
+from RigConstraints.source import capture_armature, capture_binding_context
 from RigConstraints.codec import loads
 
 ApplyModifiers = importlib.import_module("HoTools.ShapekeyTools.operators").OP_ApplyArmatureModifiersKeepShapekeys
@@ -34,7 +33,7 @@ def traced_params(self, context, report_errors=True):
     rigs = [obj for obj in context.selected_objects if obj.type == "ARMATURE"]
     if rigs:
         rig = rigs[0]
-        actual_contexts[Path(self.filepath).stem] = ConstraintIRExporter._binding_context(rig, list(rig.data.bones))
+        actual_contexts[Path(self.filepath).stem] = capture_binding_context(rig)
     return original_get_params(self, context, report_errors)
 
 
@@ -90,7 +89,7 @@ try:
             author = capture_armature(rig)
             path = Path(directory) / (label + ".fbx")
             assert bpy.ops.ho.final_fbx_export("EXEC_DEFAULT", filepath=str(path),
-                rigConstraintIRVersion="4", generateMCHBones=True, exportUnityMetadata=True,
+                generateMCHBones=True, exportUnityMetadata=True,
                 addLeafBones=False, applyArmaturePose=apply_pose, fixObjectTransform=True,
                 applyExportConstraints=applied_constraints,
                 exportBsCorrective=False) == {"FINISHED"}

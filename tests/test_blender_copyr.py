@@ -99,7 +99,7 @@ assert not (constraint.invert_x or constraint.invert_y or constraint.invert_z)
 aux = owner.bone.hotools_boneprops.auxBone
 assert aux.isAuxBone and aux.auxType == "COPY_R"
 assert [ref.name for ref in aux.sourceBones] == ["Thigh"]
-group = metadata.iter_groups(owner.bone, pose_bone=owner)[0]
+group = metadata.iter_groups(owner.bone)[0]
 assert group["semanticType"] == "COPY_ROTATION"
 assert group["generatorId"] == "hotools.aux.copy_r"
 assert group["members"] == [{"constraintName": constraint.name, "constraintType": "COPY_ROTATION", "role": "rotation", "order": 0}]
@@ -112,7 +112,7 @@ assert bpy.ops.ho.copyr_generate() == {"FINISHED"}
 assert owner.constraints.get(CopyRotationCore.CONSTRAINT_NAME).as_pointer() == constraint_pointer
 assert len(owner.constraints) == 2 and owner.constraints.get("UserOtherRotation") == manual
 assert abs(constraint.influence - .3) < 1e-6
-assert metadata.iter_groups(owner.bone, pose_bone=owner)[0]["groupId"] == group_id
+assert metadata.iter_groups(owner.bone)[0]["groupId"] == group_id
 
 # Different rest axes retain the owner's rest orientation and match the
 # owner-orientation conjugation, including parent motion and partial influence.
@@ -177,7 +177,7 @@ with tempfile.TemporaryDirectory(prefix="hotools_copyr_") as directory:
     rig = bpy.data.objects["CopyRTest"]
     bpy.context.view_layer.objects.active = rig
     owner = rig.pose.bones["SkirtRoot"]
-    persisted = metadata.iter_groups(owner.bone, pose_bone=owner)[0]
+    persisted = metadata.iter_groups(owner.bone)[0]
     assert persisted["groupId"] == group_id and persisted["generatorId"] == CopyRotationCore.GENERATOR_ID
     CopyRotationCore.configure(rig, ["SkirtRoot"], "Thigh", influence=.5)
     assert len(owner.constraints) == 2
@@ -201,7 +201,7 @@ bpy.ops.object.mode_set(mode="POSE")
 owner = rig.pose.bones["SkirtRoot"]
 assert owner.constraints.get("UserOtherRotation") is not None
 assert len(owner.constraints) == 1
-assert metadata.iter_groups(owner.bone, pose_bone=owner) == []
+assert metadata.iter_groups(owner.bone) == []
 assert not owner.bone.hotools_boneprops.auxBone.isAuxBone
 assert len(rig.data.bones) == initial_count
 assert weights_before == [vertex_group.weight(index) for index in (0, 1)]

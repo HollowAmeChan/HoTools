@@ -85,7 +85,7 @@ try:
     stretch = TwistBoneCore._ensure_stretch_to_constraint(owner, rig, "Target")
     assert len(owner.bone.hotools_boneprops.constraintGroups) == 0
     boneProperty._replace_aux_constraints(owner, [rotation, stretch])
-    groups = metadata.iter_groups(owner.bone, pose_bone=owner)
+    groups = metadata.iter_groups(owner.bone)
     assert len(groups) == 1 and groups[0]["semanticType"] == "TWIST"
     assert [m["role"] for m in groups[0]["members"]] == ["rotation", "stretch"]
     assert [m["constraintType"] for m in groups[0]["members"]] == ["COPY_ROTATION", "STRETCH_TO"]
@@ -104,7 +104,7 @@ try:
     # A deleted actual member does not erase or replace its recorded evidence.
     rotation_name = rotation.name
     owner.constraints.remove(rotation)
-    damaged = metadata.iter_groups(owner.bone, pose_bone=owner)[0]
+    damaged = metadata.iter_groups(owner.bone)[0]
     assert damaged["evidence"] == "GENERATED"
     assert damaged["members"][0]["constraintName"] == rotation_name
     rotation = TwistBoneCore._ensure_copy_rotation_constraint(owner, rig, "Target", .4)
@@ -118,7 +118,7 @@ try:
         name = core._fan_name(core.AUX_TYPE, "out", 1, 2)
         fan = tag(rig, name, core.AUX_TYPE, ("Source", "Target"))
         core._add_fan_constraints(rig, [fan.name], ["Target"])
-        fan_groups = metadata.iter_groups(fan.bone, pose_bone=fan)
+        fan_groups = metadata.iter_groups(fan.bone)
         assert len(fan_groups) == 1 and fan_groups[0]["semanticType"] == "FAN"
         assert fan_groups[0]["members"][0]["role"] == "rotation"
         assert fan_groups[0]["generatorId"].endswith(core.AUX_TYPE.lower())
@@ -133,7 +133,7 @@ try:
     locked.track_axis, locked.lock_axis = "TRACK_NEGATIVE_Z", "LOCK_X"
     boneProperty.register_existing_aim_pair(aim)
     boneProperty.register_existing_aim_pair(aim)
-    aim_groups = metadata.iter_groups(aim.bone, pose_bone=aim)
+    aim_groups = metadata.iter_groups(aim.bone)
     assert len(aim_groups) == 1 and aim_groups[0]["semanticType"] == "AIM"
     assert not aim_groups[0]["ownsBone"]
     assert [m["constraintName"] for m in aim_groups[0]["members"]] == [damped.name, locked.name]
@@ -158,31 +158,22 @@ try:
     assert not identity.bone.hotools_boneprops.auxBone.constraintNames
     assert identity.constraints.get(copied.name) is not None
 
-    # Legacy minimal PropertyGroups and pure-Python fakes need no new collection.
+    # Old Aux identity is preserved as author data, never synthesized into a group.
     aux = NS(isAuxBone=True, auxType="TWIST", sourceBones=Refs([NS(name="Source")]),
-             constraintNames=Refs(), aimVersion=1)
+             constraintNames=Refs([NS(name="OldRotation"), NS(name="OldStretch")]), aimVersion=1)
     fake_bone = NS(hotools_boneprops=NS(auxBone=aux, hoAux=NS(sentinel="preserved")))
     fake = NS(name="Fake", bone=fake_bone, id_data=None,
               constraints=Stack([NS(name="OldRotation", type="COPY_ROTATION"), NS(name="OldStretch", type="STRETCH_TO")]))
-    boneProperty._replace_aux_constraints(fake, fake.constraints)
-    assert [r.name for r in aux.constraintNames] == ["OldRotation", "OldStretch"]
     before_names = [r.name for r in aux.constraintNames]
-    legacy = metadata.iter_groups(fake_bone, pose_bone=fake)
-    assert legacy[0]["evidence"] == "LEGACY"
-    assert legacy[0]["ownsBone"]
+    assert metadata.iter_groups(fake_bone) == []
     fake.constraints.pop(0)
-    missing = metadata.iter_groups(fake_bone, pose_bone=fake)[0]
-    assert missing["members"][0]["constraintName"] == "OldRotation"
-    assert missing["members"][0]["constraintType"] == "COPY_ROTATION"
+    assert metadata.iter_groups(fake_bone) == []
     assert before_names == [r.name for r in aux.constraintNames]
-
-    # Old Aim ownership can include an independent Copy Location before its pair.
     aux.auxType = "AIM"
     aux.constraintNames = Refs([NS(name=n) for n in ("Location", "Aim", "Up")])
     fake.constraints = Stack([NS(name="Location", type="COPY_LOCATION"), NS(name="Aim", type="DAMPED_TRACK"), NS(name="Up", type="LOCKED_TRACK")])
-    old_aim = metadata.iter_groups(fake_bone, pose_bone=fake)[0]
-    assert [m["constraintName"] for m in old_aim["members"]] == ["Aim", "Up"]
-    assert not old_aim["ownsBone"]
+    assert metadata.iter_groups(fake_bone) == []
+    assert [r.name for r in aux.constraintNames] == ["Location", "Aim", "Up"]
     metadata.reset_aux_info(fake_bone)
     assert aux.auxType == "NONE" and not aux.isAuxBone and not aux.constraintNames
     assert fake_bone.hotools_boneprops.hoAux.sentinel == "preserved"
@@ -192,10 +183,10 @@ try:
     generated = add_constraint(copy_owner, "COPY_ROTATION", "GeneratedCopyR", rig)
     manual = add_constraint(copy_owner, "COPY_ROTATION", "ManualCopyRotation", rig)
     boneProperty._replace_aux_constraints(copy_owner, [generated])
-    copy_group = metadata.iter_groups(copy_owner.bone, pose_bone=copy_owner)[0]
+    copy_group = metadata.iter_groups(copy_owner.bone)[0]
     assert copy_group["semanticType"] == "COPY_ROTATION" and not copy_group["ownsBone"]
     assert copy_group["generatorId"] == "hotools.aux.copy_r"
-    assert not metadata.owns_aux_bone(copy_owner.bone, pose_bone=copy_owner)
+    assert not metadata.owns_aux_bone(copy_owner.bone)
     toggle_group = next(group for group in boneProperty._collect_aux_groups(rig.data) if group["auxType"] == "COPY_R")
     assert boneProperty._aux_group_constraint_state(rig, [copy_owner.name]) == (1, 0)
     assert bpy.ops.hotools.aux_group_constraint_toggle(key=toggle_group["key"]) == {"FINISHED"}

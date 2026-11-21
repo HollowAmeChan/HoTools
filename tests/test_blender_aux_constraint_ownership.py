@@ -17,7 +17,9 @@ from BoneTools.auxBone.boneFanSide import BoneFanSideCore
 from BoneTools.auxBone.boneFanSingle import BoneFanSingleCore
 from BoneTools.auxBone.boneTwist import TwistBoneCore
 from BoneTools.boneProperty import _replace_aux_constraints
-from Exporter.ConstraintIRExporter import ConstraintIRExporter
+from RigConstraints.source import capture_armature
+from RigConstraints.semantics import translate
+from RigConstraints.blender.properties import PROPERTY_CLASSES, PG_RigConstraintGroup
 from Utils import bone_utils
 
 
@@ -35,6 +37,7 @@ class TestAuxInfo(PropertyGroup):
 class TestBoneProps(PropertyGroup):
     generateMCH: BoolProperty(default=False)
     auxBone: PointerProperty(type=TestAuxInfo)
+    constraintGroups: CollectionProperty(type=PG_RigConstraintGroup)
 
 
 def tag_aux(data_bone, aux_type, sources):
@@ -54,7 +57,7 @@ def add_manual_name_collision(pose_bone, constraint_type, name):
     return constraint
 
 
-for cls in (TestBoneRef, TestAuxInfo, TestBoneProps):
+for cls in (TestBoneRef, TestAuxInfo, *PROPERTY_CLASSES, TestBoneProps):
     bpy.utils.register_class(cls)
 bpy.types.Bone.hotools_boneprops = PointerProperty(type=TestBoneProps)
 
@@ -219,35 +222,18 @@ for bone_name, aux_type, core in fan_types:
         generated.name
     ]
 
-constraint_data = ConstraintIRExporter.export_to_dict(
-    armature,
-    export_time="test",
-)
-known = constraint_data["knownConstraints"]
-unknown = constraint_data["unknownConstraints"]
-known_keys = {
-    (item["ownerBone"], item["constraint"]["stackIndex"])
-    for item in known
-}
-unknown_keys = {
-    (item["ownerBone"], item["constraint"]["stackIndex"])
-    for item in unknown
-}
-all_keys = {
-    (pose_bone.name, stack_index)
-    for pose_bone in armature.pose.bones
-    for stack_index, _constraint in enumerate(pose_bone.constraints)
-}
-assert len(known_keys) == len(known) == 7
-assert len(unknown_keys) == len(unknown) == 0
-assert known_keys.isdisjoint(unknown_keys)
-assert known_keys | unknown_keys == all_keys
-assert {item["relationType"] for item in known} == {"AUX_CONSTRAINT"}
-assert {item["auxType"] for item in known} == {
-    "TWIST",
-    "FAN",
-    "FAN_SINGLE",
-    "FAN_SIDE",
-}
+constraint_data = translate(capture_armature(armature))
+sources = constraint_data["sources"]
+source_keys = {(item["ownerBone"], item["constraint"]["stackIndex"]) for item in sources}
+all_keys = {(pose.name, index) for pose in armature.pose.bones for index, _ in enumerate(pose.constraints)}
+assert len(source_keys) == len(sources) == 7
+assert source_keys == all_keys
+assert len(constraint_data["declarations"]) == 5
+assert {row["semanticType"] for row in constraint_data["declarations"]} == {"TWIST", "FAN"}
+assert {row["auxType"] for row in constraint_data["declarations"]} == {"TWIST", "FAN", "FAN_SINGLE", "FAN_SIDE"}
+claimed = [sid for row in constraint_data["semantics"] for sid in row["sourceIds"]]
+assert len(claimed) == len(set(claimed)) == len(sources)
+assert set(claimed) == {row["sourceId"] for row in sources}
+assert not constraint_data["diagnostics"]
 
 print("AUX_CONSTRAINT_OWNERSHIP_OK", bpy.app.version_string)

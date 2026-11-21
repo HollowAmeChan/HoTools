@@ -13,8 +13,14 @@ if "Exporter" not in sys.modules:
     package.__path__ = [str(EXPORTER_DIR)]
     sys.modules["Exporter"] = package
 
-from Exporter.ConstraintIR import SCHEMA, SCHEMA_VERSION
-from Exporter.ConstraintIRExporter import ConstraintIRExporter
+sys.path.insert(0, str(EXPORTER_DIR.parent))
+from RigConstraints.model import SCHEMA, SCHEMA_VERSION
+from RigConstraints.source import (capture_armature, capture_constraint, capture_parameters,
+                                   capture_references, capture_custom_properties)
+from RigConstraints.semantics import translate
+# Pure-Python fixtures have no Blender runtime; version is deliberately absent.
+import RigConstraints.source.reader as source_reader
+source_reader._version = lambda: ""
 
 
 class BoneCollection(list):
@@ -53,7 +59,7 @@ def bone(name, *, mch=False, aux_type=None, sources=(), constraint_names=()):
     )
     return SimpleNamespace(
         name=name,
-        hotools_boneprops=SimpleNamespace(generateMCH=mch, auxBone=aux),
+        hotools_boneprops=SimpleNamespace(generateMCH=mch, auxBone=aux, constraintGroups=[]),
     )
 
 
@@ -102,7 +108,7 @@ def build_armature_fixture():
         ]
     )
     pose_bones = BoneCollection(
-        [SimpleNamespace(name=item.name, constraints=[]) for item in data_bones]
+        [SimpleNamespace(name=item.name, bone=item, constraints=[]) for item in data_bones]
     )
     armature = SimpleNamespace(
         type="ARMATURE",
@@ -201,99 +207,33 @@ def build_armature_fixture():
     return armature
 
 
-def test_neutral_ir_contract():
+def test_source_snapshot_retains_raw_facts_without_invented_ownership():
     armature = build_armature_fixture()
-    data = ConstraintIRExporter.export_to_dict(
-        armature,
-        export_time="2026-08-03T00:00:00Z",
-    )
-
-    assert list(data) == [
-        "schema",
-        "schemaVersion",
-        "exportTime",
-        "armatureName",
-        "mchEnabledBones",
-        "mchBindings",
-        "auxBones",
-        "knownConstraints",
-        "unknownConstraints",
-        "aimBindings",
-        "bindingContext",
-    ]
+    before = [(p.name, [(c.name, c.type) for c in p.constraints]) for p in armature.pose.bones]
+    data = capture_armature(armature)
     assert data["schema"] == SCHEMA == "hotools.rig-constraint-ir"
-    assert data["schemaVersion"] == SCHEMA_VERSION == 3
-    assert data["armatureName"] == "HeroRig"
-    assert data["mchEnabledBones"] == ["UpperArm"]
-
-    binding = data["mchBindings"][0]
-    assert binding["sourceBone"] == "UpperArm"
-    assert binding["mchBone"] == "SidecarBone"
-    assert binding["constraint"]["constraintType"] == "CHILD_OF"
-    assert binding["constraint"]["parameters"]["inverse_matrix"][0] == [
-        1.0,
-        0.0,
-        0.0,
-        0.0,
-    ]
-    assert binding["constraint"]["parameters"]["use_scale_y"] is False
-    assert "active" not in binding["constraint"]["parameters"]
-    assert "set_inverse_pending" not in binding["constraint"]["parameters"]
-
-    aux_map = {item["boneName"]: item for item in data["auxBones"]}
-    assert set(aux_map) == {"Fan01", "FanPin", "SidecarBone", "Twist01"}
-    assert aux_map["SidecarBone"]["auxType"] == "MCH"
-    assert aux_map["SidecarBone"]["sourceBones"] == ["UpperArm"]
-    assert aux_map["SidecarBone"]["constraintNames"] == ["HoTools_MCH_Parent"]
-    assert aux_map["SidecarBone"]["constraints"] == []
-    assert aux_map["Fan01"]["sourceBones"] == ["UpperArm", "Forearm"]
-    assert aux_map["Fan01"]["involvedBones"] == [
-        "UpperArm",
-        "Forearm",
-        "Fan01",
-        "FanPin",
-    ]
-    assert aux_map["FanPin"]["involvedBones"] == aux_map["Fan01"]["involvedBones"]
-
-    twist = aux_map["Twist01"]
-    assert twist["constraintNames"] == [
-        "HoTools_TWIST_CopyRotation",
-        "HoTools_TWIST_StretchTo",
-    ]
-    assert twist["involvedBones"] == ["UpperArm", "Twist01", "Forearm"]
-    assert [item["constraintType"] for item in twist["constraints"]] == [
-        "COPY_ROTATION",
-        "STRETCH_TO",
-    ]
-    assert [item["stackIndex"] for item in twist["constraints"]] == [0, 2]
-    assert twist["constraints"][0]["parameters"]["use_x"] is True
-    assert twist["constraints"][0]["parameters"]["owner_space"] == "LOCAL"
-    assert twist["constraints"][0]["parameters"]["target_space"] == "LOCAL_OWNER_ORIENT"
-    assert twist["constraints"][1]["parameters"]["rest_length"] == 1.75
-    assert twist["constraints"][1]["parameters"]["owner_space"] == "LOCAL_WITH_PARENT"
-    assert twist["constraints"][1]["parameters"]["target_space"] == "WORLD"
-
-    assert data["unknownConstraints"] == []
-    direct = next(x for x in data["knownConstraints"] if x["relationType"] == "DIRECT_CONSTRAINT")
-    assert direct["ownerBone"] == "Twist01"
-    assert direct["constraint"]["targetObjectName"] == "OtherRig"
-    assert direct["constraint"]["targetBoneName"] == "OtherBone"
-    assert [
-        (item["relationType"], item.get("auxType", ""))
-        for item in data["knownConstraints"]
-    ] == [
-        ("AUX_CONSTRAINT", "FAN"),
-        ("MCH_BINDING", "MCH"),
-        ("AUX_CONSTRAINT", "TWIST"),
-        ("DIRECT_CONSTRAINT", ""),
-        ("AUX_CONSTRAINT", "TWIST"),
-    ]
-
+    assert data["schemaVersion"] == SCHEMA_VERSION == 4
+    assert data["captureStage"] == "AUTHORING" and data["armatureName"] == "HeroRig"
+    assert data["mchPlans"] == ["UpperArm"]
+    assert not data["declarations"]  # Old aux names are data, never declarations.
+    rows = {(s["ownerBone"], s["constraint"]["stackIndex"]): s["constraint"] for s in data["sources"]}
+    assert len(rows) == len(data["sources"]) == 5
+    parent = rows[("SidecarBone", 0)]
+    assert parent["constraintType"] == "CHILD_OF" and parent["targetBoneName"] == "UpperArm"
+    assert parent["parameters"]["inverse_matrix"][0] == [1.0, 0.0, 0.0, 0.0]
+    assert parent["parameters"]["use_scale_y"] is False
+    assert "active" not in parent["parameters"] and "set_inverse_pending" not in parent["parameters"]
+    rotation = rows[("Twist01", 0)]
+    assert rotation["parameters"]["owner_space"] == "LOCAL"
+    assert rotation["parameters"]["target_space"] == "LOCAL_OWNER_ORIENT"
+    assert rows[("Twist01", 2)]["parameters"]["rest_length"] == 1.75
+    assert rows[("Twist01", 1)]["targetObjectName"] == "OtherRig"
     encoded = json.dumps(data)
-    assert '"type": "Rotation"' not in encoded
-    assert '"type": "Child"' not in encoded
-    assert '"semantic"' not in encoded
-    assert '"targetPath"' not in encoded
+    assert '"targetPath"' not in encoded and '"knownConstraints"' not in encoded
+    assert before == [(p.name, [(c.name, c.type) for c in p.constraints]) for p in armature.pose.bones]
+    translated = translate(data)
+    assert not translated["semantics"]
+    assert len(translated["diagnostics"]) == 5
 
 
 def test_blender_rna_fields_and_additional_references_are_preserved():
@@ -343,10 +283,10 @@ def test_blender_rna_fields_and_additional_references_are_preserved():
         },
     )
 
-    assert ConstraintIRExporter._constraint_parameters(item) == {
+    assert capture_parameters(item) == {
         "raw_new_option": "FUTURE_MODE"
     }
-    assert ConstraintIRExporter._constraint_references(item) == {
+    assert capture_references(item) == {
         "space_object": {"name": "SpaceRig", "rnaType": "Object"},
         "targets": [
             {
@@ -359,106 +299,36 @@ def test_blender_rna_fields_and_additional_references_are_preserved():
             }
         ],
     }
-    assert ConstraintIRExporter._custom_properties(item) == {
+    assert capture_custom_properties(item) == {
         "authorTag": "keep-me",
         "nested": {"mode": "raw", "weight": 0.5},
     }
 
 
-def test_known_and_unknown_scan_is_complete_and_deduplicated():
+def test_raw_capture_preserves_every_stack_entry_once():
     armature = build_armature_fixture()
-    armature.pose.bones.get("Forearm").constraints.append(
-        constraint(
-            armature,
-            "CHILD_OF",
-            "HoTools_MCH_Parent",
-            "UpperArm",
-        )
-    )
-    armature.pose.bones.get("FanPin").constraints.append(
-        constraint(
-            armature,
-            "COPY_ROTATION",
-            "User_Copy_Rotation",
-            "Forearm",
-        )
-    )
-    # A registered but malformed MCH constraint cannot fall through to the
-    # ordinary Aux claim path.
-    sidecar_aux = armature.data.bones.get(
-        "SidecarBone"
-    ).hotools_boneprops.auxBone
-    sidecar_aux.constraintNames.append(SimpleNamespace(name="Broken_MCH_Parent"))
-    armature.pose.bones.get("SidecarBone").constraints.append(
-        constraint(
-            armature,
-            "CHILD_OF",
-            "Broken_MCH_Parent",
-            "Forearm",
-        )
-    )
-
-    data = ConstraintIRExporter.export_to_dict(armature, export_time="test")
-    known_keys = {
-        (item["ownerBone"], item["constraint"]["stackIndex"])
-        for item in data["knownConstraints"]
-    }
-    unknown_keys = {
-        (item["ownerBone"], item["constraint"]["stackIndex"])
-        for item in data["unknownConstraints"]
-    }
-    all_keys = {
-        (pose_bone.name, stack_index)
-        for pose_bone in armature.pose.bones
-        for stack_index, _constraint in enumerate(pose_bone.constraints)
-    }
-
-    assert known_keys.isdisjoint(unknown_keys)
-    assert len(known_keys) == len(data["knownConstraints"])
-    assert len(unknown_keys) == len(data["unknownConstraints"])
-    assert known_keys | unknown_keys == all_keys
-    assert ("Forearm", 0) in unknown_keys
-    assert ("FanPin", 0) in known_keys
-    assert ("SidecarBone", 1) in unknown_keys
-    assert not any(
-        item["ownerBone"] == "SidecarBone"
-        and item["constraint"]["stackIndex"] == 1
-        for item in data["knownConstraints"]
-    )
+    armature.pose.bones.get("Forearm").constraints.append(constraint(armature, "CHILD_OF", "UnregisteredParent", "UpperArm"))
+    armature.pose.bones.get("FanPin").constraints.append(constraint(armature, "COPY_ROTATION", "User_Copy_Rotation", "Forearm"))
+    data = capture_armature(armature)
+    keys = [(s["ownerBone"], s["constraint"]["stackIndex"]) for s in data["sources"]]
+    expected = {(pose.name, i) for pose in armature.pose.bones for i, _ in enumerate(pose.constraints)}
+    assert len(keys) == len(set(keys)) and set(keys) == expected
+    assert not data["declarations"]
+    assert capture_constraint(armature.pose.bones.get("FanPin").constraints[0], armature, 7)["stackIndex"] == 7
 
 
-def test_mch_requires_one_exact_source_relation():
-    armature = build_armature_fixture()
-    sidecar_aux = armature.data.bones.get(
-        "SidecarBone"
-    ).hotools_boneprops.auxBone
-    sidecar_aux.sourceBones.append(SimpleNamespace(name="Forearm"))
-
-    data = ConstraintIRExporter.export_to_dict(armature, export_time="test")
-    assert data["mchBindings"] == []
-    assert any(
-        item["ownerBone"] == "SidecarBone"
-        and item["constraint"]["stackIndex"] == 0
-        for item in data["unknownConstraints"]
-    )
-    assert not any(
-        item["ownerBone"] == "SidecarBone"
-        for item in data["knownConstraints"]
-    )
-
-
-def test_non_armature_is_rejected():
-    try:
-        ConstraintIRExporter.build_ir(SimpleNamespace(type="MESH"))
-    except ValueError:
-        return
-    raise AssertionError("non-armature input must be rejected")
+def test_non_armature_and_uninitialized_pose_are_rejected():
+    for item in (SimpleNamespace(type="MESH"), SimpleNamespace(type="ARMATURE", name="Empty", pose=None)):
+        try:
+            capture_armature(item)
+        except ValueError:
+            continue
+        raise AssertionError("invalid armature input must be rejected")
 
 
 if __name__ == "__main__":
-    test_neutral_ir_contract()
+    test_source_snapshot_retains_raw_facts_without_invented_ownership()
     test_blender_rna_fields_and_additional_references_are_preserved()
-    test_known_and_unknown_scan_is_complete_and_deduplicated()
-    test_mch_requires_one_exact_source_relation()
-    test_non_armature_is_rejected()
-    print("constraint IR tests passed")
+    test_raw_capture_preserves_every_stack_entry_once()
+    test_non_armature_and_uninitialized_pose_are_rejected()
+    print("CONSTRAINT_SOURCE_UNIT_OK")

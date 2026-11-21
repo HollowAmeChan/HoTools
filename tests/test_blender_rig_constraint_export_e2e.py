@@ -15,7 +15,9 @@ if str(ADDON_DIR) not in sys.path:
 
 from BoneTools.auxBone.boneFan import BoneFanCore
 from BoneTools.auxBone.boneTwist import TwistBoneCore
-from Exporter.ConstraintIRExporter import ConstraintIRExporter
+from RigConstraints.source import capture_armature
+from RigConstraints.semantics import translate
+from RigConstraints.blender.properties import PROPERTY_CLASSES, PG_RigConstraintGroup
 from Exporter.FbxExporter import FBXExporter
 
 
@@ -33,10 +35,13 @@ class TestAuxInfo(PropertyGroup):
 class TestBoneProps(PropertyGroup):
     generateMCH: BoolProperty(default=False)
     auxBone: PointerProperty(type=TestAuxInfo)
+    constraintGroups: CollectionProperty(type=PG_RigConstraintGroup)
 
 
 bpy.utils.register_class(TestBoneRef)
 bpy.utils.register_class(TestAuxInfo)
+for cls in PROPERTY_CLASSES:
+    bpy.utils.register_class(cls)
 bpy.utils.register_class(TestBoneProps)
 bpy.types.Bone.hotools_boneprops = PointerProperty(type=TestBoneProps)
 
@@ -173,88 +178,39 @@ name_maps = FBXExporter.clear_armatures_bone_rotation(
 )
 assert name_maps == {armature.name: {"Upper": "MCH_Upper", "Forearm": "MCH_Forearm"}}
 
-constraint_data = json.loads(
-    ConstraintIRExporter.export_to_json(
-        armature,
-        export_time="2026-08-03T00:00:00Z",
-    )
-)
-
-assert constraint_data["mchEnabledBones"] == ["Forearm", "Upper"]
-binding_map = {item["sourceBone"]: item for item in constraint_data["mchBindings"]}
-assert set(binding_map) == {"Upper", "Forearm"}
+constraint_data = translate(capture_armature(armature))
+assert constraint_data["schemaVersion"] == 4
+assert sorted(constraint_data["mchPlans"]) == ["Forearm", "Upper"]
+declarations = {row["ownerBone"]: row for row in constraint_data["declarations"]}
+sources = {row["sourceId"]: row for row in constraint_data["sources"]}
+assert set(twist_names + fan_names + ["MCH_Upper", "MCH_Forearm"]) == set(declarations)
+for name in twist_names:
+    group = declarations[name]
+    assert group["semanticType"] == "TWIST" and group["sourceBones"] == ["Upper"]
+    members = [sources[sid]["constraint"] for sid in group["memberSourceIds"]]
+    assert [row["constraintType"] for row in members] == ["COPY_ROTATION", "STRETCH_TO"]
+    assert all(row["targetBoneName"] == "MCH_Forearm" for row in members)
+for name in fan_names:
+    group = declarations[name]
+    assert group["semanticType"] == "FAN" and group["sourceBones"] == ["Forearm", "Hand"]
+    assert [sources[sid]["constraint"]["constraintType"] for sid in group["memberSourceIds"]] == ["COPY_ROTATION"]
 for source_name in ("Upper", "Forearm"):
-    binding = binding_map[source_name]
-    assert binding["mchBone"] == f"MCH_{source_name}"
-    assert binding["constraint"]["constraintType"] == "CHILD_OF"
-    assert binding["constraint"]["targetObjectName"] == armature.name
-    assert binding["constraint"]["targetBoneName"] == source_name
+    group = declarations["MCH_" + source_name]
+    assert group["semanticType"] == "MCH" and group["sourceBones"] == [source_name]
+    assert group["ownsBone"]
+    raw = sources[group["memberSourceIds"][0]]["constraint"]
+    assert raw["name"] == FBXExporter.MCH_PARENT_CONSTRAINT_NAME
+    assert raw["constraintType"] == "CHILD_OF" and raw["targetBoneName"] == source_name
 
-aux_map = {item["boneName"]: item for item in constraint_data["auxBones"]}
-assert set(twist_names).issubset(aux_map)
-assert set(fan_names).issubset(aux_map)
-assert {"MCH_Upper", "MCH_Forearm"}.issubset(aux_map)
-
-for twist_name in twist_names:
-    twist = aux_map[twist_name]
-    assert twist["auxType"] == "TWIST"
-    assert twist["sourceBones"] == ["Upper"]
-    assert twist["constraintNames"] == [
-        "HoTools_TWIST_CopyRotation",
-        "HoTools_TWIST_StretchTo",
-    ]
-    assert [item["constraintType"] for item in twist["constraints"]] == [
-        "COPY_ROTATION",
-        "STRETCH_TO",
-    ]
-    assert all(
-        item["targetBoneName"] == "MCH_Forearm"
-        for item in twist["constraints"]
-    )
-    assert twist["involvedBones"]
-
-for fan_name in fan_names:
-    fan = aux_map[fan_name]
-    assert fan["auxType"] == "FAN"
-    assert fan["sourceBones"] == ["Forearm", "Hand"]
-    assert fan["constraintNames"] == ["HoTools_FAN_CopyRotation"]
-    assert [item["constraintType"] for item in fan["constraints"]] == [
-        "COPY_ROTATION"
-    ]
-
-for mch_name, source_name in (
-    ("MCH_Upper", "Upper"),
-    ("MCH_Forearm", "Forearm"),
-):
-    mch = aux_map[mch_name]
-    assert mch["auxType"] == "MCH"
-    assert mch["sourceBones"] == [source_name]
-    assert mch["constraintNames"] == [FBXExporter.MCH_PARENT_CONSTRAINT_NAME]
-    assert mch["constraints"] == []
-
-direct = {
-    (item["ownerBone"], item["constraint"]["name"]): item
-    for item in constraint_data["knownConstraints"] if item["relationType"] == "DIRECT_CONSTRAINT"
-}
-assert (twist_names[0], "User_Twist_Interference") in direct
-assert ("Forearm", "User_Main_Interference") in direct
-assert ("Hand", "HoTools_FAN_CopyRotation") in direct
-assert direct[("Forearm", "User_Main_Interference")]["constraint"][
-    "targetBoneName"
-] == "MCH_Upper"
-
-known_keys = {
-    (item["ownerBone"], item["constraint"]["stackIndex"])
-    for item in constraint_data["knownConstraints"]
-}
-unknown_keys = {
-    (item["ownerBone"], item["constraint"]["stackIndex"])
-    for item in constraint_data["unknownConstraints"]
-}
-all_keys = _constraint_keys(armature)
-assert known_keys.isdisjoint(unknown_keys)
-assert len(known_keys) == len(constraint_data["knownConstraints"])
-assert len(unknown_keys) == len(constraint_data["unknownConstraints"])
-assert known_keys | unknown_keys == all_keys
+raw_by_key = {(row["ownerBone"], row["constraint"]["name"]): row for row in sources.values()}
+manual = [(twist_names[0], "User_Twist_Interference"), ("Forearm", "User_Main_Interference"), ("Hand", "HoTools_FAN_CopyRotation")]
+claimed = {sid for group in declarations.values() for sid in group["memberSourceIds"]}
+assert all(raw_by_key[key]["sourceId"] not in claimed for key in manual)
+assert raw_by_key[("Forearm", "User_Main_Interference")]["constraint"]["targetBoneName"] == "MCH_Upper"
+unknown_copy = raw_by_key[("Hand", "HoTools_FAN_CopyRotation")]["sourceId"]
+assert any(row["status"] == "UNKNOWN" and unknown_copy in row["sourceIds"] for row in constraint_data["diagnostics"])
+keys = [(row["ownerBone"], row["constraint"]["stackIndex"]) for row in sources.values()]
+assert len(keys) == len(set(keys)) and set(keys) == _constraint_keys(armature)
+assert {row["semanticType"] for row in constraint_data["semantics"]} >= {"TWIST", "FAN", "MCH"}
 
 print("RIG_CONSTRAINT_E2E_OK", bpy.app.version_string)
