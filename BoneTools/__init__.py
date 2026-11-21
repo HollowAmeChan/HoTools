@@ -113,6 +113,8 @@ cls = [
 def register():
     hoAux.register()
     boneProperty.register()
+    from RigConstraints.blender import review_ui
+    review_ui.register()
     boneOperators.register()
     boneRename.register()
     boneSplit.register()
@@ -142,6 +144,8 @@ def unregister():
     boneDissolve.unregister()
     auxBone.unregister()
     boneHumanoid.unregister()
+    from RigConstraints.blender import review_ui
+    review_ui.unregister()
     boneProperty.unregister()
     hoAux.unregister()
 

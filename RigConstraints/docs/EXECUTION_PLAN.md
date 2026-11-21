@@ -128,9 +128,9 @@ Unity 使用 `Runtime/RigConstraints/ConstraintIR/` 存放纯数据/codec/版本
 
 ### P3 手动审查面板
 
-- [ ] 可测试的只读 scanner 与分类、对象级临时缓存。
-- [ ] 骨架数据折叠面板、手动刷新、计数/原因/定位、未检查状态。
-- [ ] 用户改名/删除/重排/缺目标及 MCH 计划的正反例；复杂 HoAux 被排除。
+- [x] 可测试的只读 scanner 与分类、对象级临时缓存。
+- [x] 骨架数据折叠面板、手动刷新、计数/原因/定位、未检查状态。
+- [x] 用户改名/删除/重排/缺目标及 MCH 计划的正反例；复杂 HoAux 被排除。
 
 ### P4 Unity v4 消费与兼容规划
 
@@ -168,8 +168,8 @@ Unity 使用 `Runtime/RigConstraints/ConstraintIR/` 存放纯数据/codec/版本
 | --- | --- | --- |
 | P0 | 已提交，目标 active | 文档提交 `22f1234b`；Blender 基线 `7b17a08f`；Unity 基线 `b406882` |
 | P1 | 已提交 `d3ee3d41` | 29 类型、7 语义、23 实现契约；17 项 codec/registry 测试通过；coverage --check 通过；LF 固定避免摘要漂移 |
-| P2 | 作者态及 copyR 完成（本阶段提交）；MCH caller 待 P5 | Blender 4.5.8/5.2.0 `CONSTRAINT_METADATA_OK`、`COPY_R_OK`；旧 ownership/v3/e2e/bone_pose_operations 两版 8 项通过；精准启停/删除不动既有骨与手工约束；元数据成员定义复用 registry |
-| P3 | 代码完成，分步验证/提交中 | Blender 4.5.8/5.2.0 `CONSTRAINT_REVIEW_OK`；记录在后续提交 |
+| P2 | 作者态及 copyR 已提交 `b877946d`；MCH caller 待 P5 | Blender 4.5.8/5.2.0 `CONSTRAINT_METADATA_OK`、`COPY_R_OK`；旧 ownership/v3/e2e/bone_pose_operations 两版 8 项通过；精准启停/删除不动既有骨与手工约束；元数据成员定义复用 registry |
+| P3 | 手动审查完成（本阶段提交） | Blender 4.5.8/5.2.0 `CONSTRAINT_REVIEW_OK` 及 11 项 `CONSTRAINT_REVIEW_EDGES_OK`；全插件注册/注销烟测通过。只读、共享Data缓存失效、重复认领/组ID、改名/重排/缺目标及copyR登记gate均验证。UI为RNA/布局与注册验证，未宣称视觉截图通过 |
 | P4–P6 | 实施中 | Unity 无损 reader/适配与局部旋转数值验证并行推进；尚未切默认 v4 |
 
 失败后先读取实际状态再修复；不盲重试写入。不提交用户既有改动、私有模型、商业源码、临时测试产物或运行时缓存。
