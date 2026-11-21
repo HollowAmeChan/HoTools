@@ -67,7 +67,7 @@ Unity 使用 `Runtime/RigConstraints/ConstraintIR/` 存放纯数据/codec/版本
 ### 4.2 语义
 
 - `semantics[]` 使用 `sourceIds[]` 引用源事实，包含语义 ID/版本、翻译规则 ID/版本、来源证据、参数、读写通道和必要的顺序/依赖。
-- 基础语义与用途注释分开；手工 Copy Rotation 不依赖辅助骨标记也可以已知。
+- 基础语义与用途注释分开。按本轮后续作者入口决定，新增 Copy Rotation 必须从普通辅助骨 `copyR` 入口创建并当场登记；未登记的手工 Copy Rotation 保留事实并显示 Unknown，不在审查/导出时猜测补写。旧 v2/v3 已导出数据维持原解释。
 - 组合规则统一登记：Twist=Copy Rotation + Stretch To；Aim=Damped Track + Locked Track；Fan 和 MCH 迁移为相应规则。Aim 不再拥有特殊顶层数据通路。
 - 组合是否成立由结构契约验证。原始成员永远保留；选用组合执行时禁止同时执行其原子实现。
 - UnknownSemantic、Invalid、完整但后端不支持分别报告；不得因无法装配而删除源事实。
@@ -110,20 +110,21 @@ Unity 使用 `Runtime/RigConstraints/ConstraintIR/` 存放纯数据/codec/版本
 ### P0 执行计划
 
 - [x] 本文独立提交，记录基线与范围（本提交）。
-- [ ] 提交成功后创建目标模式 objective；不设置用户未要求的 token budget。
+- [x] 提交成功后创建目标模式 objective；不设置用户未要求的 token budget。
 
 ### P1 公共契约与全类型目录
 
-- [ ] 新包、v4 纯数据 model/codec/校验、无损未知字段。
-- [ ] 按 Blender RNA 建全约束类型目录，标记 owner 适用域；未实现语义明确 Unknown。
-- [ ] 注册已有 Direct/MCH/Twist/Fan/Aim 语义和三后端契约；分开当前实现和验证证据。
-- [ ] 从同一 registry 生成可读三列表/实现表/覆盖进度，测试确保生成物不漂移。
+- [x] 新包、v4 纯数据 model/codec/校验、无损未知字段。
+- [x] 按 Blender RNA 建全约束类型目录，标记 owner 适用域；未实现语义明确 Unknown。
+- [x] 注册已有 Direct/MCH/Twist/Fan/Aim 语义和三后端契约；分开当前实现和验证证据。
+- [x] 从同一 registry 生成可读三列表/实现表/覆盖进度，测试确保生成物不漂移。
 
 ### P2 普通辅助骨登记与清理
 
 - [ ] 新元数据组和统一生命周期 API，兼容旧 PropertyGroup/测试最小对象。
 - [ ] Twist/Fan/Aim/MCH 实际生成接入；更新和重复生成不重复登记。
 - [ ] 清除身份、移除生成物、一键删除清理闭环；旧数据不自动修复。
+- [ ] 普通辅助骨额外功能新增 `copyR`，直接作用于选中的既有 owner，创建 Copy Rotation 同时登记语义；入口、分组、启停与删除沿用普通辅助骨工作流。删除仅移除登记约束和语义，保留原骨、父级、静置姿态与权重。
 
 ### P3 手动审查面板
 
@@ -165,11 +166,17 @@ Unity 使用 `Runtime/RigConstraints/ConstraintIR/` 存放纯数据/codec/版本
 
 | 阶段 | 状态 | 提交/测试证据 |
 | --- | --- | --- |
-| P0 | 执行文档基线（本提交）；目标待创建 | Blender 基线 `7b17a08f`；Unity 基线 `b406882` |
-| P1–P6 | 未开始 | 按上述顺序推进；允许无写冲突的独立模块并行 |
+| P0 | 已提交，目标 active | 文档提交 `22f1234b`；Blender 基线 `7b17a08f`；Unity 基线 `b406882` |
+| P1 | 已完成（本阶段提交） | 29 类型、7 语义、23 实现契约；17 项 codec/registry 测试通过；coverage --check 通过；LF 固定避免摘要漂移 |
+| P2/P3 | 代码完成，分步验证/提交中 | Blender 4.5.8/5.2.0 metadata/copyR/review 均通过；记录在后续提交 |
+| P4–P6 | 实施中 | Unity 无损 reader/适配与局部旋转数值验证并行推进；尚未切默认 v4 |
 
 失败后先读取实际状态再修复；不盲重试写入。不提交用户既有改动、私有模型、商业源码、临时测试产物或运行时缓存。
 
 ### 开发前测试基线
 
 2026-11-21，Blender 4.5.8 LTS 与 5.2.0 LTS：`test_blender_aux_constraint_ownership.py`、`test_blender_constraint_ir_v3.py`、`test_blender_rig_constraint_export_e2e.py` 均通过。`test_blender_fbx_mch_local_rotation.py` 两版均在第 263 行发生既有 StopIteration：该测试仍从 unknownConstraints 寻找已被 v3 归入 knownConstraints 的 ARMATURE。实施时修正此滞后预期并继续完成其数值断言，不能把原有失败归因于本轮代码。
+
+### 作者入口补充（2026-11-21）
+
+用户要求普通辅助骨新增 copyR 类型，避免通过手工添加再补登记。auxType=`COPY_R`，显示名=`copyR`，复用 `COPY_ROTATION@1` 语义并记录生成器 `hotools.aux.copy_r`。必须在操作成功时整体登记，不产生中间 Unknown 再修复。现有骨的接纳与工具生成骨的所有权分开，组记录 `ownsBone`；copyR 和显式接纳的 Aim 为 false，删除原骨只对确实由生成器拥有的骨生效。此条覆盖早先“手工复制旋转自动基础翻译”的建议，不改变旧格式行为。

@@ -1,4 +1,5 @@
 /OmniNode/ARCHITECTURE.md text eol=lf
+/RigConstraints/registry/*.json text eol=lf
 
 # 物理世界整棵子树由嵌套仓库 HoTools-Omninode-Physics 管理，其 .gitattributes
 # 统一为 LF（C++/Python）与 CRLF（.bat/.ps1）。父仓若按自身规则改回 CRLF，

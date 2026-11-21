@@ -1,0 +1,2079 @@
+{
+  "id": "hotools.rig-constraints.registry",
+  "version": 1,
+  "catalogSchemaVersion": 1,
+  "blenderCatalogVersions": [
+    "4.5.8",
+    "5.2.0"
+  ],
+  "catalogEvidence": {
+    "baseline": "Blender 4.5.8/5.2.0 RNA Constraint.type enums and object/pose constraint_add operators; 2026-11-21.",
+    "ownerKindsMeaning": "Operator-admitted owner domains, not proof every object subtype or parameter combination evaluates.",
+    "additionalObservedVersions": {
+      "5.2.0": {
+        "addedTypes": [
+          "GEOMETRY_ATTRIBUTE"
+        ],
+        "removedTypes": []
+      }
+    },
+    "additionalTypesPolicy": "Retain unknown raw source types without executable semantics until cataloged.",
+    "typeCountsByVersion": {
+      "4.5.8": 28,
+      "5.2.0": 29
+    }
+  },
+  "constraintTypes": [
+    {
+      "type": "CAMERA_SOLVER",
+      "label": "Camera Solver",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "FOLLOW_TRACK",
+      "label": "Follow Track",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "OBJECT_SOLVER",
+      "label": "Object Solver",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "COPY_LOCATION",
+      "label": "Copy Location",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [
+        "COPY_LOCATION"
+      ],
+      "translationStatus": "DIRECT",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "COPY_ROTATION",
+      "label": "Copy Rotation",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [
+        "COPY_ROTATION",
+        "TWIST",
+        "FAN"
+      ],
+      "translationStatus": "GROUP_ONLY",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ],
+      "registrationRequired": true,
+      "authoringAuxType": "COPY_R"
+    },
+    {
+      "type": "COPY_SCALE",
+      "label": "Copy Scale",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "COPY_TRANSFORMS",
+      "label": "Copy Transforms",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "LIMIT_DISTANCE",
+      "label": "Limit Distance",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "LIMIT_LOCATION",
+      "label": "Limit Location",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "LIMIT_ROTATION",
+      "label": "Limit Rotation",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "LIMIT_SCALE",
+      "label": "Limit Scale",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "MAINTAIN_VOLUME",
+      "label": "Maintain Volume",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "TRANSFORM",
+      "label": "Transformation",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "TRANSFORM_CACHE",
+      "label": "Transform Cache",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "CLAMP_TO",
+      "label": "Clamp To",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "DAMPED_TRACK",
+      "label": "Damped Track",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [
+        "AIM"
+      ],
+      "translationStatus": "GROUP_ONLY",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "IK",
+      "label": "Inverse Kinematics",
+      "ownerKinds": [
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "LOCKED_TRACK",
+      "label": "Locked Track",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [
+        "AIM"
+      ],
+      "translationStatus": "GROUP_ONLY",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "SPLINE_IK",
+      "label": "Spline IK",
+      "ownerKinds": [
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "STRETCH_TO",
+      "label": "Stretch To",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [
+        "TWIST"
+      ],
+      "translationStatus": "GROUP_ONLY",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "TRACK_TO",
+      "label": "Track To",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "ACTION",
+      "label": "Action",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "ARMATURE",
+      "label": "Armature",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [
+        "ARMATURE"
+      ],
+      "translationStatus": "DIRECT",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "CHILD_OF",
+      "label": "Child Of",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [
+        "MCH"
+      ],
+      "translationStatus": "GROUP_ONLY",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "FLOOR",
+      "label": "Floor",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "FOLLOW_PATH",
+      "label": "Follow Path",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "GEOMETRY_ATTRIBUTE",
+      "label": "Geometry Attribute",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "since": "5.2",
+      "blenderVersions": [
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "PIVOT",
+      "label": "Pivot",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    },
+    {
+      "type": "SHRINKWRAP",
+      "label": "Shrinkwrap",
+      "ownerKinds": [
+        "OBJECT",
+        "BONE"
+      ],
+      "semanticTypes": [],
+      "translationStatus": "UNKNOWN",
+      "blenderVersions": [
+        "4.5.8",
+        "5.2.0"
+      ]
+    }
+  ],
+  "semanticDefinitions": [
+    {
+      "type": "COPY_LOCATION",
+      "version": 1,
+      "ruleIds": [
+        "direct.copy_location"
+      ],
+      "sourceConstraintTypes": [
+        "COPY_LOCATION"
+      ],
+      "writeChannels": [
+        "POSITION"
+      ],
+      "members": [
+        {
+          "constraintType": "COPY_LOCATION",
+          "role": "location"
+        }
+      ]
+    },
+    {
+      "type": "COPY_ROTATION",
+      "version": 1,
+      "ruleIds": [
+        "group.copy_r"
+      ],
+      "sourceConstraintTypes": [
+        "COPY_ROTATION"
+      ],
+      "writeChannels": [
+        "ROTATION"
+      ],
+      "members": [
+        {
+          "constraintType": "COPY_ROTATION",
+          "role": "rotation"
+        }
+      ],
+      "registrationRequired": true,
+      "acceptedEvidence": [
+        "GENERATED",
+        "EXPLICIT",
+        "LEGACY"
+      ],
+      "legacyRuleIds": [
+        "direct.copy_rotation"
+      ],
+      "generatorIds": [
+        "hotools.aux.copy_r"
+      ],
+      "notes": [
+        "Ordinary copyR is explicitly created/registered. A raw manually authored Copy Rotation is preserved as a source fact but is not automatically adopted into COPY_R ownership. v2/v3 compatibility keeps its original interpretation."
+      ]
+    },
+    {
+      "type": "ARMATURE",
+      "version": 1,
+      "ruleIds": [
+        "direct.armature"
+      ],
+      "sourceConstraintTypes": [
+        "ARMATURE"
+      ],
+      "writeChannels": [
+        "POSITION",
+        "ROTATION",
+        "SCALE"
+      ],
+      "members": [
+        {
+          "constraintType": "ARMATURE",
+          "role": "armature"
+        }
+      ]
+    },
+    {
+      "type": "MCH",
+      "version": 1,
+      "ruleIds": [
+        "group.mch"
+      ],
+      "sourceConstraintTypes": [
+        "CHILD_OF"
+      ],
+      "writeChannels": [
+        "POSITION",
+        "ROTATION"
+      ],
+      "members": [
+        {
+          "constraintType": "CHILD_OF",
+          "role": "parent"
+        }
+      ]
+    },
+    {
+      "type": "TWIST",
+      "version": 1,
+      "ruleIds": [
+        "group.twist"
+      ],
+      "sourceConstraintTypes": [
+        "COPY_ROTATION",
+        "STRETCH_TO"
+      ],
+      "writeChannels": [
+        "POSITION",
+        "ROTATION",
+        "SCALE"
+      ],
+      "members": [
+        {
+          "constraintType": "COPY_ROTATION",
+          "role": "rotation"
+        },
+        {
+          "constraintType": "STRETCH_TO",
+          "role": "stretch"
+        }
+      ]
+    },
+    {
+      "type": "FAN",
+      "version": 1,
+      "ruleIds": [
+        "group.fan"
+      ],
+      "sourceConstraintTypes": [
+        "COPY_ROTATION"
+      ],
+      "writeChannels": [
+        "ROTATION"
+      ],
+      "members": [
+        {
+          "constraintType": "COPY_ROTATION",
+          "role": "rotation"
+        }
+      ]
+    },
+    {
+      "type": "AIM",
+      "version": 1,
+      "ruleIds": [
+        "group.aim"
+      ],
+      "sourceConstraintTypes": [
+        "DAMPED_TRACK",
+        "LOCKED_TRACK"
+      ],
+      "writeChannels": [
+        "ROTATION"
+      ],
+      "members": [
+        {
+          "constraintType": "DAMPED_TRACK",
+          "role": "aim"
+        },
+        {
+          "constraintType": "LOCKED_TRACK",
+          "role": "up"
+        }
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "id": "standard.copy_location.world",
+      "contractVersion": 1,
+      "semanticType": "COPY_LOCATION",
+      "semanticVersion": 1,
+      "backendId": "Standard",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE",
+          "connected": false
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false,
+          "head_tail": 0,
+          "use_bbone_shape": false,
+          "use_offset": false
+        },
+        "influence": {
+          "min": 0,
+          "max": 1
+        }
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "EXACT",
+      "verification": {
+        "status": "TESTED",
+        "scope": "EXISTING_ISOLATED_REGRESSION",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "UNITY_CONSTRAINT",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": []
+    },
+    {
+      "id": "standard.copy_rotation.world",
+      "contractVersion": 1,
+      "semanticType": "COPY_ROTATION",
+      "semanticVersion": 1,
+      "backendId": "Standard",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false,
+          "head_tail": 0,
+          "use_bbone_shape": false,
+          "use_offset": false
+        },
+        "influence": {
+          "min": 0,
+          "max": 1
+        },
+        "mixModes": [
+          "REPLACE"
+        ],
+        "registration": "VALIDATED_EXPLICIT_OR_GENERATED_COPY_R_GROUP",
+        "acceptedEvidence": [
+          "GENERATED",
+          "EXPLICIT",
+          "LEGACY"
+        ]
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "CONDITIONAL",
+      "verification": {
+        "status": "TESTED",
+        "scope": "EXISTING_ISOLATED_REGRESSION",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "UNITY_CONSTRAINT",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": [
+        "Native rotational interpolation is not guaranteed equal to Blender Slerp; existing Standard comparison covers 0.3, endpoint and half-weight subsets."
+      ]
+    },
+    {
+      "id": "standard.armature.linear",
+      "contractVersion": 1,
+      "semanticType": "ARMATURE",
+      "semanticVersion": 1,
+      "backendId": "Standard",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE",
+          "connected": false
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_deform_preserve_volume": false,
+          "use_bone_envelopes": false,
+          "use_current_location": false
+        },
+        "influence": {
+          "values": [
+            0,
+            1
+          ]
+        },
+        "sourceWeights": "FINITE_NONNEGATIVE_POSITIVE_TOTAL"
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "APPROXIMATE",
+      "verification": {
+        "status": "TESTED",
+        "scope": "EXISTING_ISOLATED_REGRESSION",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "UNITY_CONSTRAINT",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": [
+        "Rigid multi-source Parent mapping does not preserve full affine blend or dynamic pre-state."
+      ]
+    },
+    {
+      "id": "standard.mch.parent",
+      "contractVersion": 1,
+      "semanticType": "MCH",
+      "semanticVersion": 1,
+      "backendId": "Standard",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "EXPLICIT_OR_LEGACY_GENERATED_MCH",
+        "maintainOffset": true,
+        "parameters": {
+          "use_location_x": true,
+          "use_location_y": true,
+          "use_location_z": true,
+          "use_rotation_x": true,
+          "use_rotation_y": true,
+          "use_rotation_z": true,
+          "use_scale_x": false,
+          "use_scale_y": false,
+          "use_scale_z": false
+        }
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "CONDITIONAL",
+      "verification": {
+        "status": "LEGACY_EVIDENCE",
+        "scope": "EXISTING_LEGACY_PATH",
+        "evidence": [
+          "HoUnityTools/Editor/HoFbxImport/HoFbxImportProcessingWindow.cs"
+        ]
+      },
+      "artifacts": [
+        "UNITY_CONSTRAINT",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "legacy-aux-regression"
+      ],
+      "notes": [
+        "Existing generated MCH rigid parent semantics; no claim for arbitrary manually authored Child Of."
+      ]
+    },
+    {
+      "id": "standard.twist.legacy",
+      "contractVersion": 1,
+      "semanticType": "TWIST",
+      "semanticVersion": 1,
+      "backendId": "Standard",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "EXPLICIT_OR_LEGACY_TWIST_GROUP",
+        "orderedMemberRoles": [
+          "rotation",
+          "stretch"
+        ],
+        "copyRotation": {
+          "parameters": {
+            "use_x": true,
+            "use_y": true,
+            "use_z": true,
+            "invert_x": false,
+            "invert_y": false,
+            "invert_z": false
+          },
+          "mixModes": [
+            "REPLACE"
+          ],
+          "spacePairs": [
+            [
+              "WORLD",
+              "WORLD"
+            ]
+          ]
+        },
+        "stretch": {
+          "ownerSpaces": [
+            "WORLD"
+          ],
+          "targetSpaces": [
+            "WORLD"
+          ],
+          "head_tail": 0,
+          "keep_axis": "SWING_Y",
+          "volume": "NO_VOLUME"
+        }
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "LEGACY",
+      "verification": {
+        "status": "LEGACY_EVIDENCE",
+        "scope": "EXISTING_LEGACY_PATH",
+        "evidence": [
+          "HoUnityTools/Editor/HoFbxImport/HoFbxImportProcessingWindow.cs"
+        ]
+      },
+      "artifacts": [
+        "UNITY_CONSTRAINT",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "legacy-aux-regression"
+      ],
+      "notes": [
+        "Preserves the existing Twist path. HoAux legacy Local and Owner Orientation behavior is shared and is not a general local Copy Rotation guarantee."
+      ]
+    },
+    {
+      "id": "standard.fan.legacy",
+      "contractVersion": 1,
+      "semanticType": "FAN",
+      "semanticVersion": 1,
+      "backendId": "Standard",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "EXPLICIT_OR_LEGACY_FAN_GROUP",
+        "auxTypes": [
+          "FAN",
+          "FAN_SINGLE",
+          "FAN_SIDE"
+        ],
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false
+        },
+        "mixModes": [
+          "REPLACE"
+        ],
+        "maintainOffset": true
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "LEGACY",
+      "verification": {
+        "status": "LEGACY_EVIDENCE",
+        "scope": "EXISTING_LEGACY_PATH",
+        "evidence": [
+          "HoUnityTools/Editor/HoFbxImport/HoFbxImportProcessingWindow.cs"
+        ]
+      },
+      "artifacts": [
+        "UNITY_CONSTRAINT",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "legacy-aux-regression"
+      ],
+      "notes": [
+        "Preserves the existing generated Fan behavior rather than reinterpreting raw zero-offset Copy Rotation."
+      ]
+    },
+    {
+      "id": "standard.aim.object_position",
+      "contractVersion": 1,
+      "semanticType": "AIM",
+      "semanticVersion": 1,
+      "backendId": "Standard",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_OR_LEGACY_AIM_GROUP",
+        "orderedMemberRoles": [
+          "aim",
+          "up"
+        ],
+        "adjacent": true,
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "influence": {
+          "values": [
+            1
+          ]
+        },
+        "head_tail": 0,
+        "use_bbone_shape": false,
+        "upMode": "OBJECT_POSITION",
+        "signedAxes": "DISTINCT_ORTHOGONAL",
+        "identities": "OWNER_TARGET_UP_DISTINCT",
+        "muted": "MATCH_BOTH_MEMBERS"
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "EXACT",
+      "verification": {
+        "status": "TESTED",
+        "scope": "EXISTING_ISOLATED_REGRESSION",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "UNITY_CONSTRAINT",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": []
+    },
+    {
+      "id": "hoaux.copy_location.world",
+      "contractVersion": 1,
+      "semanticType": "COPY_LOCATION",
+      "semanticVersion": 1,
+      "backendId": "HoAux",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE",
+          "connected": false
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false,
+          "head_tail": 0,
+          "use_bbone_shape": false,
+          "use_offset": false
+        },
+        "influence": {
+          "min": 0,
+          "max": 1
+        }
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "EXACT",
+      "verification": {
+        "status": "TESTED",
+        "scope": "EXISTING_ISOLATED_REGRESSION",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "HoAuxRig"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": []
+    },
+    {
+      "id": "hoaux.copy_rotation.world",
+      "contractVersion": 1,
+      "semanticType": "COPY_ROTATION",
+      "semanticVersion": 1,
+      "backendId": "HoAux",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false,
+          "head_tail": 0,
+          "use_bbone_shape": false,
+          "use_offset": false
+        },
+        "influence": {
+          "min": 0,
+          "max": 1
+        },
+        "mixModes": [
+          "REPLACE"
+        ],
+        "registration": "VALIDATED_EXPLICIT_OR_GENERATED_COPY_R_GROUP",
+        "acceptedEvidence": [
+          "GENERATED",
+          "EXPLICIT",
+          "LEGACY"
+        ]
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "EXACT",
+      "verification": {
+        "status": "TESTED",
+        "scope": "EXISTING_ISOLATED_REGRESSION",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "HoAuxRig"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": []
+    },
+    {
+      "id": "hoaux.armature.linear",
+      "contractVersion": 1,
+      "semanticType": "ARMATURE",
+      "semanticVersion": 1,
+      "backendId": "HoAux",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE",
+          "connected": false
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_deform_preserve_volume": false,
+          "use_bone_envelopes": false,
+          "use_current_location": false
+        },
+        "influence": {
+          "values": [
+            0,
+            1
+          ]
+        },
+        "sourceWeights": "FINITE_NONNEGATIVE_POSITIVE_TOTAL"
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "CONDITIONAL",
+      "verification": {
+        "status": "TESTED",
+        "scope": "EXISTING_ISOLATED_REGRESSION",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "HoAuxRig"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": [
+        "Affine blend is retained; runtime rejects non-representable TRS/shear, with consumer-proven position-only exception."
+      ]
+    },
+    {
+      "id": "hoaux.mch.parent",
+      "contractVersion": 1,
+      "semanticType": "MCH",
+      "semanticVersion": 1,
+      "backendId": "HoAux",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "EXPLICIT_OR_LEGACY_GENERATED_MCH",
+        "maintainOffset": true,
+        "parameters": {
+          "use_location_x": true,
+          "use_location_y": true,
+          "use_location_z": true,
+          "use_rotation_x": true,
+          "use_rotation_y": true,
+          "use_rotation_z": true,
+          "use_scale_x": false,
+          "use_scale_y": false,
+          "use_scale_z": false
+        }
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "CONDITIONAL",
+      "verification": {
+        "status": "LEGACY_EVIDENCE",
+        "scope": "EXISTING_LEGACY_PATH",
+        "evidence": [
+          "HoUnityTools/Editor/HoFbxImport/HoFbxImportProcessingWindow.cs"
+        ]
+      },
+      "artifacts": [
+        "HoAuxRig"
+      ],
+      "testSuites": [
+        "legacy-aux-regression"
+      ],
+      "notes": [
+        "Existing generated MCH rigid parent semantics; no claim for arbitrary manually authored Child Of."
+      ]
+    },
+    {
+      "id": "hoaux.twist.legacy",
+      "contractVersion": 1,
+      "semanticType": "TWIST",
+      "semanticVersion": 1,
+      "backendId": "HoAux",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "EXPLICIT_OR_LEGACY_TWIST_GROUP",
+        "orderedMemberRoles": [
+          "rotation",
+          "stretch"
+        ],
+        "copyRotation": {
+          "parameters": {
+            "use_x": true,
+            "use_y": true,
+            "use_z": true,
+            "invert_x": false,
+            "invert_y": false,
+            "invert_z": false
+          },
+          "mixModes": [
+            "REPLACE"
+          ],
+          "spacePairs": [
+            [
+              "WORLD",
+              "WORLD"
+            ],
+            [
+              "LOCAL",
+              "LOCAL"
+            ],
+            [
+              "LOCAL_OWNER_ORIENT",
+              "LOCAL"
+            ]
+          ]
+        },
+        "stretch": {
+          "ownerSpaces": [
+            "WORLD"
+          ],
+          "targetSpaces": [
+            "WORLD"
+          ],
+          "head_tail": 0,
+          "keep_axis": "SWING_Y",
+          "volume": "NO_VOLUME"
+        }
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "LEGACY",
+      "verification": {
+        "status": "LEGACY_EVIDENCE",
+        "scope": "EXISTING_LEGACY_PATH",
+        "evidence": [
+          "HoUnityTools/Editor/HoFbxImport/HoFbxImportProcessingWindow.cs"
+        ]
+      },
+      "artifacts": [
+        "HoAuxRig"
+      ],
+      "testSuites": [
+        "legacy-aux-regression"
+      ],
+      "notes": [
+        "Preserves the existing Twist path. HoAux legacy Local and Owner Orientation behavior is shared and is not a general local Copy Rotation guarantee."
+      ]
+    },
+    {
+      "id": "hoaux.fan.legacy",
+      "contractVersion": 1,
+      "semanticType": "FAN",
+      "semanticVersion": 1,
+      "backendId": "HoAux",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "EXPLICIT_OR_LEGACY_FAN_GROUP",
+        "auxTypes": [
+          "FAN",
+          "FAN_SINGLE",
+          "FAN_SIDE"
+        ],
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false
+        },
+        "mixModes": [
+          "REPLACE"
+        ],
+        "maintainOffset": true
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "LEGACY",
+      "verification": {
+        "status": "LEGACY_EVIDENCE",
+        "scope": "EXISTING_LEGACY_PATH",
+        "evidence": [
+          "HoUnityTools/Editor/HoFbxImport/HoFbxImportProcessingWindow.cs"
+        ]
+      },
+      "artifacts": [
+        "HoAuxRig"
+      ],
+      "testSuites": [
+        "legacy-aux-regression"
+      ],
+      "notes": [
+        "Preserves the existing generated Fan behavior rather than reinterpreting raw zero-offset Copy Rotation."
+      ]
+    },
+    {
+      "id": "hoaux.aim.object_position",
+      "contractVersion": 1,
+      "semanticType": "AIM",
+      "semanticVersion": 1,
+      "backendId": "HoAux",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_OR_LEGACY_AIM_GROUP",
+        "orderedMemberRoles": [
+          "aim",
+          "up"
+        ],
+        "adjacent": true,
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "influence": {
+          "values": [
+            1
+          ]
+        },
+        "head_tail": 0,
+        "use_bbone_shape": false,
+        "upMode": "OBJECT_POSITION",
+        "signedAxes": "DISTINCT_ORTHOGONAL",
+        "identities": "OWNER_TARGET_UP_DISTINCT",
+        "muted": "MATCH_BOTH_MEMBERS"
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "EXACT",
+      "verification": {
+        "status": "TESTED",
+        "scope": "EXISTING_ISOLATED_REGRESSION",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "HoAuxRig"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": []
+    },
+    {
+      "id": "vrc.copy_location.world",
+      "contractVersion": 1,
+      "semanticType": "COPY_LOCATION",
+      "semanticVersion": 1,
+      "backendId": "Vrc",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE",
+          "connected": false
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false,
+          "head_tail": 0,
+          "use_bbone_shape": false,
+          "use_offset": false
+        },
+        "influence": {
+          "min": 0,
+          "max": 1
+        }
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "EXACT",
+      "verification": {
+        "status": "SHIM_ONLY",
+        "scope": "ISOLATED_API_SERIALIZATION_ONLY",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "VRC_CONSTRAINT_HOST",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": [
+        "No real SDK/client numerical equivalence claim; shim evidence covers assembly and serialization only."
+      ]
+    },
+    {
+      "id": "vrc.copy_rotation.world",
+      "contractVersion": 1,
+      "semanticType": "COPY_ROTATION",
+      "semanticVersion": 1,
+      "backendId": "Vrc",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false,
+          "head_tail": 0,
+          "use_bbone_shape": false,
+          "use_offset": false
+        },
+        "influence": {
+          "min": 0,
+          "max": 1
+        },
+        "mixModes": [
+          "REPLACE"
+        ],
+        "registration": "VALIDATED_EXPLICIT_OR_GENERATED_COPY_R_GROUP",
+        "acceptedEvidence": [
+          "GENERATED",
+          "EXPLICIT",
+          "LEGACY"
+        ]
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "CONDITIONAL",
+      "verification": {
+        "status": "SHIM_ONLY",
+        "scope": "ISOLATED_API_SERIALIZATION_ONLY",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "VRC_CONSTRAINT_HOST",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": [
+        "Native rotational interpolation is not guaranteed equal to Blender Slerp; existing Standard comparison covers 0.3, endpoint and half-weight subsets.",
+        "No real SDK/client numerical equivalence claim; shim evidence covers assembly and serialization only."
+      ]
+    },
+    {
+      "id": "vrc.armature.linear",
+      "contractVersion": 1,
+      "semanticType": "ARMATURE",
+      "semanticVersion": 1,
+      "backendId": "Vrc",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE",
+          "connected": false
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_deform_preserve_volume": false,
+          "use_bone_envelopes": false,
+          "use_current_location": false
+        },
+        "influence": {
+          "values": [
+            0,
+            1
+          ]
+        },
+        "sourceWeights": "FINITE_NONNEGATIVE_POSITIVE_TOTAL"
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "APPROXIMATE",
+      "verification": {
+        "status": "SHIM_ONLY",
+        "scope": "ISOLATED_API_SERIALIZATION_ONLY",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "VRC_CONSTRAINT_HOST",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": [
+        "Rigid multi-source Parent mapping does not preserve full affine blend or dynamic pre-state.",
+        "No real SDK/client numerical equivalence claim; shim evidence covers assembly and serialization only."
+      ]
+    },
+    {
+      "id": "vrc.mch.parent",
+      "contractVersion": 1,
+      "semanticType": "MCH",
+      "semanticVersion": 1,
+      "backendId": "Vrc",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "EXPLICIT_OR_LEGACY_GENERATED_MCH",
+        "maintainOffset": true,
+        "parameters": {
+          "use_location_x": true,
+          "use_location_y": true,
+          "use_location_z": true,
+          "use_rotation_x": true,
+          "use_rotation_y": true,
+          "use_rotation_z": true,
+          "use_scale_x": false,
+          "use_scale_y": false,
+          "use_scale_z": false
+        }
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "CONDITIONAL",
+      "verification": {
+        "status": "SHIM_ONLY",
+        "scope": "ISOLATED_API_SERIALIZATION_ONLY",
+        "evidence": [
+          "HoUnityTools/Editor/HoFbxImport/HoFbxImportProcessingWindow.cs"
+        ]
+      },
+      "artifacts": [
+        "VRC_CONSTRAINT_HOST",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "legacy-aux-regression"
+      ],
+      "notes": [
+        "Existing generated MCH rigid parent semantics; no claim for arbitrary manually authored Child Of.",
+        "No real SDK/client numerical equivalence claim; shim evidence covers assembly and serialization only."
+      ]
+    },
+    {
+      "id": "vrc.twist.legacy",
+      "contractVersion": 1,
+      "semanticType": "TWIST",
+      "semanticVersion": 1,
+      "backendId": "Vrc",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "EXPLICIT_OR_LEGACY_TWIST_GROUP",
+        "orderedMemberRoles": [
+          "rotation",
+          "stretch"
+        ],
+        "copyRotation": {
+          "parameters": {
+            "use_x": true,
+            "use_y": true,
+            "use_z": true,
+            "invert_x": false,
+            "invert_y": false,
+            "invert_z": false
+          },
+          "mixModes": [
+            "REPLACE"
+          ],
+          "spacePairs": [
+            [
+              "WORLD",
+              "WORLD"
+            ]
+          ]
+        },
+        "stretch": {
+          "ownerSpaces": [
+            "WORLD"
+          ],
+          "targetSpaces": [
+            "WORLD"
+          ],
+          "head_tail": 0,
+          "keep_axis": "SWING_Y",
+          "volume": "NO_VOLUME"
+        }
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "LEGACY",
+      "verification": {
+        "status": "SHIM_ONLY",
+        "scope": "ISOLATED_API_SERIALIZATION_ONLY",
+        "evidence": [
+          "HoUnityTools/Editor/HoFbxImport/HoFbxImportProcessingWindow.cs"
+        ]
+      },
+      "artifacts": [
+        "VRC_CONSTRAINT_HOST",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "legacy-aux-regression"
+      ],
+      "notes": [
+        "Preserves the existing Twist path. HoAux legacy Local and Owner Orientation behavior is shared and is not a general local Copy Rotation guarantee.",
+        "No real SDK/client numerical equivalence claim; shim evidence covers assembly and serialization only."
+      ]
+    },
+    {
+      "id": "vrc.fan.legacy",
+      "contractVersion": 1,
+      "semanticType": "FAN",
+      "semanticVersion": 1,
+      "backendId": "Vrc",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "EXPLICIT_OR_LEGACY_FAN_GROUP",
+        "auxTypes": [
+          "FAN",
+          "FAN_SINGLE",
+          "FAN_SIDE"
+        ],
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false
+        },
+        "mixModes": [
+          "REPLACE"
+        ],
+        "maintainOffset": true
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "LEGACY",
+      "verification": {
+        "status": "SHIM_ONLY",
+        "scope": "ISOLATED_API_SERIALIZATION_ONLY",
+        "evidence": [
+          "HoUnityTools/Editor/HoFbxImport/HoFbxImportProcessingWindow.cs"
+        ]
+      },
+      "artifacts": [
+        "VRC_CONSTRAINT_HOST",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "legacy-aux-regression"
+      ],
+      "notes": [
+        "Preserves the existing generated Fan behavior rather than reinterpreting raw zero-offset Copy Rotation.",
+        "No real SDK/client numerical equivalence claim; shim evidence covers assembly and serialization only."
+      ]
+    },
+    {
+      "id": "vrc.aim.object_position",
+      "contractVersion": 1,
+      "semanticType": "AIM",
+      "semanticVersion": 1,
+      "backendId": "Vrc",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "registration": "VALIDATED_EXPLICIT_OR_LEGACY_AIM_GROUP",
+        "orderedMemberRoles": [
+          "aim",
+          "up"
+        ],
+        "adjacent": true,
+        "ownerSpaces": [
+          "WORLD"
+        ],
+        "targetSpaces": [
+          "WORLD"
+        ],
+        "influence": {
+          "values": [
+            1
+          ]
+        },
+        "head_tail": 0,
+        "use_bbone_shape": false,
+        "upMode": "OBJECT_POSITION",
+        "signedAxes": "DISTINCT_ORTHOGONAL",
+        "identities": "OWNER_TARGET_UP_DISTINCT",
+        "muted": "MATCH_BOTH_MEMBERS"
+      },
+      "availability": "IMPLEMENTED",
+      "fidelity": "EXACT",
+      "verification": {
+        "status": "SHIM_ONLY",
+        "scope": "ISOLATED_API_SERIALIZATION_ONLY",
+        "evidence": [
+          "HoUnityTools/Tests~/ConstraintIRV3/README.md"
+        ]
+      },
+      "artifacts": [
+        "VRC_CONSTRAINT_HOST",
+        "OWNED_STAGE_HELPERS"
+      ],
+      "testSuites": [
+        "constraint-ir-v3-regression"
+      ],
+      "notes": [
+        "No real SDK/client numerical equivalence claim; shim evidence covers assembly and serialization only."
+      ]
+    },
+    {
+      "id": "hoaux.copy_rotation.local",
+      "contractVersion": 1,
+      "semanticType": "COPY_ROTATION",
+      "semanticVersion": 1,
+      "backendId": "HoAux",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "LOCAL"
+        ],
+        "targetSpaces": [
+          "LOCAL"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false
+        },
+        "mixModes": [
+          "REPLACE"
+        ],
+        "influence": {
+          "min": 0,
+          "max": 1
+        },
+        "registration": "VALIDATED_EXPLICIT_OR_GENERATED_COPY_R_GROUP",
+        "acceptedEvidence": [
+          "GENERATED",
+          "EXPLICIT",
+          "LEGACY"
+        ]
+      },
+      "availability": "PLANNED",
+      "fidelity": "UNSPECIFIED",
+      "verification": {
+        "status": "UNTESTED",
+        "scope": "UNITY_END_TO_END_REQUIRED",
+        "evidence": []
+      },
+      "artifacts": [
+        "HoAuxRig"
+      ],
+      "testSuites": [
+        "copy-rotation-local-fbx-golden"
+      ],
+      "notes": [
+        "Not executable until Blender-to-FBX-to-Unity numerical acceptance passes."
+      ]
+    },
+    {
+      "id": "hoaux.copy_rotation.owner_orient",
+      "contractVersion": 1,
+      "semanticType": "COPY_ROTATION",
+      "semanticVersion": 1,
+      "backendId": "HoAux",
+      "conditions": {
+        "ownerKinds": [
+          "BONE"
+        ],
+        "targetScope": "SAME_ARMATURE",
+        "ownerInput": {
+          "poseBasis": "IDENTITY",
+          "inheritScale": "FULL",
+          "animation": "NONE"
+        },
+        "requiredBinding": "FINAL_FBX",
+        "stackPolicy": "PRESERVE_ORDER_NO_UNKNOWN_WRITE_BARRIER",
+        "dependencyPolicy": "ACYCLIC_NO_LEGACY_FEEDBACK",
+        "ownerSpaces": [
+          "LOCAL"
+        ],
+        "targetSpaces": [
+          "LOCAL_OWNER_ORIENT"
+        ],
+        "parameters": {
+          "use_x": true,
+          "use_y": true,
+          "use_z": true,
+          "invert_x": false,
+          "invert_y": false,
+          "invert_z": false
+        },
+        "mixModes": [
+          "REPLACE"
+        ],
+        "influence": {
+          "min": 0,
+          "max": 1
+        },
+        "registration": "VALIDATED_EXPLICIT_OR_GENERATED_COPY_R_GROUP",
+        "acceptedEvidence": [
+          "GENERATED",
+          "EXPLICIT",
+          "LEGACY"
+        ]
+      },
+      "availability": "PLANNED",
+      "fidelity": "UNSPECIFIED",
+      "verification": {
+        "status": "UNTESTED",
+        "scope": "UNITY_END_TO_END_REQUIRED",
+        "evidence": []
+      },
+      "artifacts": [
+        "HoAuxRig"
+      ],
+      "testSuites": [
+        "copy-rotation-local-fbx-golden"
+      ],
+      "notes": [
+        "Not executable until Blender-to-FBX-to-Unity numerical acceptance passes."
+      ]
+    }
+  ]
+}
