@@ -121,10 +121,10 @@ Unity 使用 `Runtime/RigConstraints/ConstraintIR/` 存放纯数据/codec/版本
 
 ### P2 普通辅助骨登记与清理
 
-- [ ] 新元数据组和统一生命周期 API，兼容旧 PropertyGroup/测试最小对象。
-- [ ] Twist/Fan/Aim/MCH 实际生成接入；更新和重复生成不重复登记。
-- [ ] 清除身份、移除生成物、一键删除清理闭环；旧数据不自动修复。
-- [ ] 普通辅助骨额外功能新增 `copyR`，直接作用于选中的既有 owner，创建 Copy Rotation 同时登记语义；入口、分组、启停与删除沿用普通辅助骨工作流。删除仅移除登记约束和语义，保留原骨、父级、静置姿态与权重。
+- [x] 新元数据组和统一生命周期 API，兼容旧 PropertyGroup/测试最小对象。
+- [ ] Twist/Fan/Aim/MCH 实际生成接入；更新和重复生成不重复登记（前三项已完成；MCH 导出 caller 在 P5 接线）。
+- [x] 清除身份、移除生成物、一键删除清理闭环；旧数据不自动修复。
+- [x] 普通辅助骨额外功能新增 `copyR`，直接作用于选中的既有 owner，创建 Copy Rotation 同时登记语义；入口、分组、启停与删除沿用普通辅助骨工作流。删除仅移除登记约束和语义，保留原骨、父级、静置姿态与权重。
 
 ### P3 手动审查面板
 
@@ -167,8 +167,9 @@ Unity 使用 `Runtime/RigConstraints/ConstraintIR/` 存放纯数据/codec/版本
 | 阶段 | 状态 | 提交/测试证据 |
 | --- | --- | --- |
 | P0 | 已提交，目标 active | 文档提交 `22f1234b`；Blender 基线 `7b17a08f`；Unity 基线 `b406882` |
-| P1 | 已完成（本阶段提交） | 29 类型、7 语义、23 实现契约；17 项 codec/registry 测试通过；coverage --check 通过；LF 固定避免摘要漂移 |
-| P2/P3 | 代码完成，分步验证/提交中 | Blender 4.5.8/5.2.0 metadata/copyR/review 均通过；记录在后续提交 |
+| P1 | 已提交 `d3ee3d41` | 29 类型、7 语义、23 实现契约；17 项 codec/registry 测试通过；coverage --check 通过；LF 固定避免摘要漂移 |
+| P2 | 作者态及 copyR 完成（本阶段提交）；MCH caller 待 P5 | Blender 4.5.8/5.2.0 `CONSTRAINT_METADATA_OK`、`COPY_R_OK`；旧 ownership/v3/e2e/bone_pose_operations 两版 8 项通过；精准启停/删除不动既有骨与手工约束；元数据成员定义复用 registry |
+| P3 | 代码完成，分步验证/提交中 | Blender 4.5.8/5.2.0 `CONSTRAINT_REVIEW_OK`；记录在后续提交 |
 | P4–P6 | 实施中 | Unity 无损 reader/适配与局部旋转数值验证并行推进；尚未切默认 v4 |
 
 失败后先读取实际状态再修复；不盲重试写入。不提交用户既有改动、私有模型、商业源码、临时测试产物或运行时缓存。

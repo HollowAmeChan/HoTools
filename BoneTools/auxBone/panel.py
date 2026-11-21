@@ -25,7 +25,7 @@ def draw_constraint_controls(layout):
 
 
 def draw_type_panels(layout, context):
-    from . import boneTwist, boneFan, boneFanSingle, boneFanSide
-    for module in (boneTwist, boneFan, boneFanSingle, boneFanSide):
+    from . import boneTwist, boneFan, boneFanSingle, boneFanSide, copyRotation
+    for module in (boneTwist, boneFan, boneFanSingle, boneFanSide, copyRotation):
         module.draw_panel(layout, context)
 

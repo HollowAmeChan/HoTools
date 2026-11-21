@@ -13,6 +13,8 @@ from bpy.props import (
 from Utils import bone_utils
 from .hoAux.properties import PG_HoAuxBoneInfo
 from Utils.bone_selection import select_bones, selected_pose_bones
+from RigConstraints.blender import metadata as _constraint_metadata
+from RigConstraints.blender.properties import PROPERTY_CLASSES as _CONSTRAINT_PROPERTY_CLASSES, PG_RigConstraintGroup
 
 
 # 辅助骨类型枚举：与命名体系中的 marker 一一对应。
@@ -25,6 +27,7 @@ AUX_BONE_TYPE_ITEMS = (
     ("TWIST", "Twist", "扭转辅助骨"),
     ("MCH", "MCH", "由主骨属性生成的中间绑定骨"),
     ("AIM", "Aim", "旋转瞄准语义；sourceBones 依次为瞄准目标、上方向参考；不包含位置绑定"),
+    ("COPY_R", "copyR", "现有骨上的复制旋转；移除关系时保留原骨与权重"),
 )
 
 
@@ -39,102 +42,21 @@ class PG_Hotools_BoneRef(PropertyGroup):
 
 
 def _register_aux_constraint(pose_bone, constraint):
-    """把生成约束登记到 owner 骨的 Aux 属性中。
-
-    Blender Constraint 不支持自定义属性，也没有可序列化的稳定指针，因此这里保存
-    约束名，并且只在同一根 PoseBone 的局部约束栈内解析，不做全骨架名称搜索。
-    """
-    if pose_bone is None or constraint is None:
-        return
-    armature = getattr(pose_bone, "id_data", None)
-    data = getattr(armature, "data", None)
-    bones = getattr(data, "bones", None)
-    getter = getattr(bones, "get", None)
-    data_bone = getter(pose_bone.name) if callable(getter) else None
-    props = getattr(data_bone, "hotools_boneprops", None)
-    aux = getattr(props, "auxBone", None) if props is not None else None
-    if aux is None:
-        return
-    constraint_name = str(getattr(constraint, "name", "") or "")
-    if not constraint_name:
-        return
-    for ref in aux.constraintNames:
-        if ref.name == constraint_name:
-            return
-    ref = aux.constraintNames.add()
-    ref.name = constraint_name
+    """Compatibility entry for the ordinary constraint name index."""
+    return _constraint_metadata._register_aux_constraint(pose_bone, constraint)
 
 
 def _find_registered_aux_constraint(pose_bone, constraint_type):
-    """Resolve one generated constraint from this owner's local registered names."""
-    if pose_bone is None:
-        return None
-    armature = getattr(pose_bone, "id_data", None)
-    data_bone = getattr(getattr(armature, "data", None), "bones", None)
-    getter = getattr(data_bone, "get", None)
-    bone = getter(pose_bone.name) if callable(getter) else None
-    props = getattr(bone, "hotools_boneprops", None)
-    aux = getattr(props, "auxBone", None) if props is not None else None
-    if aux is None:
-        return None
-    registered_names = {
-        str(getattr(ref, "name", ""))
-        for ref in aux.constraintNames
-        if getattr(ref, "name", "")
-    }
-    for constraint in pose_bone.constraints:
-        if constraint.name in registered_names and constraint.type == constraint_type:
-            return constraint
-    return None
+    return _constraint_metadata._find_registered_aux_constraint(pose_bone, constraint_type)
 
 
 def _ensure_aux_constraint_name_available(pose_bone, constraint_name, constraint_type):
-    """Reject an unowned preferred name instead of accepting Blender's ``.001``."""
-    if pose_bone is None:
-        return
-    armature = getattr(pose_bone, "id_data", None)
-    bones = getattr(getattr(armature, "data", None), "bones", None)
-    getter = getattr(bones, "get", None)
-    data_bone = getter(pose_bone.name) if callable(getter) else None
-    props = getattr(data_bone, "hotools_boneprops", None)
-    aux = getattr(props, "auxBone", None) if props is not None else None
-    registered_names = {
-        str(getattr(ref, "name", ""))
-        for ref in getattr(aux, "constraintNames", ())
-        if getattr(ref, "name", "")
-    }
-    for existing in getattr(pose_bone, "constraints", ()):
-        if getattr(existing, "name", "") != constraint_name:
-            continue
-        if constraint_name not in registered_names:
-            raise RuntimeError(
-                f"骨架 {getattr(armature, 'name', '<未知>')} 的骨骼 {pose_bone.name} "
-                f"已有未登记约束 {constraint_name}，无法创建 {constraint_type}；"
-                "请先改名或删除冲突约束。"
-            )
-        if getattr(existing, "type", "") != constraint_type:
-            raise RuntimeError(
-                f"骨架 {getattr(armature, 'name', '<未知>')} 的骨骼 {pose_bone.name} "
-                f"已登记约束 {constraint_name} 类型为 {getattr(existing, 'type', '<未知>')}，"
-                f"与需要的 {constraint_type} 不一致。"
-            )
+    return _constraint_metadata._ensure_aux_constraint_name_available(pose_bone, constraint_name, constraint_type)
 
 
 def _replace_aux_constraints(pose_bone, constraints):
-    """Replace this owner's local constraint-name index with actual current names."""
-    if pose_bone is None:
-        return
-    armature = getattr(pose_bone, "id_data", None)
-    bones = getattr(getattr(armature, "data", None), "bones", None)
-    getter = getattr(bones, "get", None)
-    bone = getter(pose_bone.name) if callable(getter) else None
-    props = getattr(bone, "hotools_boneprops", None)
-    aux = getattr(props, "auxBone", None) if props is not None else None
-    if aux is None:
-        return
-    aux.constraintNames.clear()
-    for constraint in constraints:
-        _register_aux_constraint(pose_bone, constraint)
+    """Compatibility entry for complete ordinary semantic-group registration."""
+    return _constraint_metadata._replace_aux_constraints(pose_bone, constraints)
 
 
 def inspect_existing_aim_pair(pose_bone):
@@ -284,6 +206,11 @@ class PG_Hotools_BoneProps(PropertyGroup):
         description="此骨作为 HoTools 辅助骨时的自描述信息",
         type=PG_Hotools_AuxBoneInfo,
     )  # type: ignore
+    constraintGroups: CollectionProperty(
+        name="约束语义组",
+        description="普通辅助骨生成器登记的约束用途、成员角色与局部引用",
+        type=PG_RigConstraintGroup,
+    )  # type: ignore
     hoAux: PointerProperty(
         name="HoAux 信息",
         description="此骨作为 HoAux 生成骨时的身份与归属",
@@ -313,10 +240,7 @@ class OT_Hotools_AuxBoneClear(Operator):
         aux = _active_aux(context)
         if aux is None:
             return {"CANCELLED"}
-        aux.sourceBones.clear()
-        aux.constraintNames.clear()
-        aux.auxType = "NONE"
-        aux.isAuxBone = False
+        _constraint_metadata.reset_aux_info(context.active_bone)
         return {"FINISHED"}
 
 
@@ -506,25 +430,41 @@ class OT_Hotools_AuxBoneSelect(Operator):
         return {"FINISHED"}
 
 
-def _aux_group_constraint_state(armature, bone_names):
-    """统计该组辅助骨上的约束总数与已禁用（mute）数。返回 (total, muted)。"""
-    total = 0
-    muted = 0
+def _aux_group_constraints(armature, bone_names, *, strict=False):
+    """Resolve exact adopted members without toggling unrelated user constraints."""
+    constraints = []
     for name in bone_names:
         pose_bone = armature.pose.bones.get(name)
         if pose_bone is None:
             continue
-        for constraint in pose_bone.constraints:
-            total += 1
-            if constraint.mute:
-                muted += 1
+        if _constraint_metadata.owns_aux_bone(pose_bone.bone, pose_bone=pose_bone):
+            constraints.extend(pose_bone.constraints)
+            continue
+        try:
+            group = _constraint_metadata.prepare_aux_detach(pose_bone)
+        except ValueError:
+            if strict:
+                raise
+            continue
+        constraints.extend(pose_bone.constraints[member["constraintName"]] for member in group["members"])
+    return constraints
+
+
+def _aux_group_constraint_state(armature, bone_names):
+    """统计该组辅助骨上的约束总数与已禁用（mute）数。返回 (total, muted)。"""
+    total = 0
+    muted = 0
+    for constraint in _aux_group_constraints(armature, bone_names):
+        total += 1
+        if constraint.mute:
+            muted += 1
     return total, muted
 
 
 class OT_Hotools_AuxGroupConstraintToggle(Operator):
     bl_idname = "hotools.aux_group_constraint_toggle"
     bl_label = "开关该组辅助骨约束"
-    bl_description = "启用/禁用该分组所有辅助骨上的约束（任一启用则全部禁用，否则全部启用）"
+    bl_description = "开关该组约束；copyR 与显式 Aim 仅作用于准确登记的成员，不修改手工约束"
     bl_options = {"REGISTER", "UNDO"}
 
     key: StringProperty(default="")  # type: ignore
@@ -545,21 +485,24 @@ class OT_Hotools_AuxGroupConstraintToggle(Operator):
             self.report({"WARNING"}, "没有找到该分组")
             return {"CANCELLED"}
 
-        total, muted = _aux_group_constraint_state(armature, target["bones"])
+        try:
+            constraints = _aux_group_constraints(armature, target["bones"], strict=True)
+        except ValueError as error:
+            self.report({"WARNING"}, str(error))
+            return {"CANCELLED"}
+        total = len(constraints)
+        muted = sum(bool(constraint.mute) for constraint in constraints)
         if total == 0:
             self.report({"WARNING"}, "该分组没有约束")
             return {"CANCELLED"}
         # 只要还有启用的约束，就整体禁用；全部已禁用时整体启用。
         mute = muted < total
         changed = 0
-        for name in target["bones"]:
-            pose_bone = armature.pose.bones.get(name)
-            if pose_bone is None:
-                continue
-            for constraint in pose_bone.constraints:
-                if constraint.mute != mute:
-                    constraint.mute = mute
-                    changed += 1
+        for constraint in constraints:
+            if constraint.mute != mute:
+                constraint.mute = mute
+                changed += 1
+        _constraint_metadata._invalidate(armature)
         self.report(
             {"INFO"},
             f"已{'禁用' if mute else '启用'}该组 {changed} 个约束",
@@ -756,11 +699,24 @@ class AuxBoneRemover:
         original_mode = armature.mode
         old_active = bpy.context.view_layer.objects.active
         was_hidden = armature.hide_viewport
-        mirror_state = bone_utils.set_temp_armature_mirror_off(armature)
 
-        # 阻断检查与目标解析都在数据层进行，避免无谓地切换模式。
-        target_to_aux, orphans = cls._resolve_targets(armature, removal_names)
-        cls._assert_safe(armature, removal_names, orphans)
+        # Separate tool-created bones from declarations adopted onto user bones.
+        # Validate every detached group before changing weights or any constraints.
+        owned_names = []
+        detach_plans = []
+        for name in removal_names:
+            pose_bone = armature.pose.bones.get(name)
+            data_bone = armature.data.bones.get(name)
+            if _constraint_metadata.owns_aux_bone(data_bone, pose_bone=pose_bone):
+                owned_names.append(name)
+            else:
+                try:
+                    detach_plans.append((name, _constraint_metadata.prepare_aux_detach(pose_bone)))
+                except ValueError as error:
+                    raise AuxRemovalBlockedError(str(error)) from error
+        target_to_aux, orphans = cls._resolve_targets(armature, owned_names)
+        cls._assert_safe(armature, owned_names, orphans)
+        mirror_state = bone_utils.set_temp_armature_mirror_off(armature)
 
         if was_hidden:
             armature.hide_set(False)
@@ -771,6 +727,7 @@ class AuxBoneRemover:
         restored_objects = 0
         removed_groups = 0
         removed = 0
+        removed_constraints = 0
 
         try:
             if process_vertex_groups and target_to_aux:
@@ -784,15 +741,20 @@ class AuxBoneRemover:
                     removed_groups += groups
 
             bpy.context.view_layer.objects.active = armature
-            bone_utils.set_object_mode(armature, "EDIT")
-            edit_bones = armature.data.edit_bones
-            for name in removal_names:
-                bone = edit_bones.get(name)
-                if bone is not None:
-                    edit_bones.remove(bone)
-                    removed += 1
             bone_utils.set_object_mode(armature, "OBJECT")
+            for name, plan in detach_plans:
+                removed_constraints += _constraint_metadata.detach_aux_group(armature.pose.bones[name], plan)
+            if owned_names:
+                bone_utils.set_object_mode(armature, "EDIT")
+                edit_bones = armature.data.edit_bones
+                for name in owned_names:
+                    bone = edit_bones.get(name)
+                    if bone is not None:
+                        edit_bones.remove(bone)
+                        removed += 1
+                bone_utils.set_object_mode(armature, "OBJECT")
         finally:
+            _constraint_metadata._invalidate(armature)
             bone_utils.restore_armature_mirror_state(mirror_state)
             try:
                 if armature.mode != original_mode:
@@ -810,6 +772,8 @@ class AuxBoneRemover:
 
         return {
             "removed_bones": removed,
+            "preserved_bones": len(detach_plans),
+            "removed_constraints": removed_constraints,
             "restored_objects": restored_objects,
             "removed_groups": removed_groups,
         }
@@ -817,8 +781,8 @@ class AuxBoneRemover:
 
 class OT_Hotools_AuxGroupRemove(Operator):
     bl_idname = "hotools.aux_group_remove"
-    bl_label = "删除该组辅助骨"
-    bl_description = "安全删除该分组下的全部辅助骨，并把权重恢复回主骨"
+    bl_label = "移除该组辅助关系"
+    bl_description = "删除工具生成骨并恢复权重；copyR 与显式 Aim 只移除登记约束，保留原骨"
     bl_options = {"REGISTER", "UNDO"}
 
     key: StringProperty(default="")  # type: ignore
@@ -873,8 +837,8 @@ class OT_Hotools_AuxGroupRemove(Operator):
 
         self.report(
             {"INFO"},
-            f"已删除 {result['removed_bones']} 根辅助骨，"
-            f"在 {result['restored_objects']} 个物体上恢复了权重"
+            f"已删除 {result['removed_bones']} 根生成骨，保留 {result['preserved_bones']} 根原骨，"
+            f"移除 {result['removed_constraints']} 条登记约束；在 {result['restored_objects']} 个物体上恢复权重"
             f"（{result['removed_groups']} 个顶点组）",
         )
         return {"FINISHED"}
@@ -882,8 +846,8 @@ class OT_Hotools_AuxGroupRemove(Operator):
 
 class OT_Hotools_AuxRemoveAll(Operator):
     bl_idname = "hotools.aux_remove_all"
-    bl_label = "删除全部辅助骨"
-    bl_description = "安全删除骨架上所有 HoTools 辅助骨，并把权重恢复回主骨"
+    bl_label = "移除全部辅助关系"
+    bl_description = "删除工具生成骨并恢复权重；copyR 与显式 Aim 保留原骨，仅移除登记约束"
     bl_options = {"REGISTER", "UNDO"}
 
     process_vertex_groups: BoolProperty(
@@ -932,8 +896,8 @@ class OT_Hotools_AuxRemoveAll(Operator):
 
         self.report(
             {"INFO"},
-            f"已删除 {result['removed_bones']} 根辅助骨，"
-            f"在 {result['restored_objects']} 个物体上恢复了权重"
+            f"已删除 {result['removed_bones']} 根生成骨，保留 {result['preserved_bones']} 根原骨，"
+            f"移除 {result['removed_constraints']} 条登记约束；在 {result['restored_objects']} 个物体上恢复权重"
             f"（{result['removed_groups']} 个顶点组）",
         )
         return {"FINISHED"}
@@ -1062,6 +1026,7 @@ cls = [
     PG_Hotools_BoneRef,
     PG_Hotools_AuxGroupState,
     PG_Hotools_AuxBoneInfo,
+    *_CONSTRAINT_PROPERTY_CLASSES,
     PG_Hotools_BoneProps,
     OT_Hotools_AuxBoneClear,
     OT_Hotools_RegisterExistingAim,

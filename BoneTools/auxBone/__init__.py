@@ -2,10 +2,10 @@
 
 import bpy
 
-from . import boneTwist, boneFan, boneFanSingle, boneFanSide
+from . import boneTwist, boneFan, boneFanSingle, boneFanSide, copyRotation
 from .panel import draw_overview, draw_constraint_controls, draw_type_panels
 
-_MODULES = (boneTwist, boneFan, boneFanSingle, boneFanSide)
+_MODULES = (boneTwist, boneFan, boneFanSingle, boneFanSide, copyRotation)
 
 
 def draw_panel(layout, context):

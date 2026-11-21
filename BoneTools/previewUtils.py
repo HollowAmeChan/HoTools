@@ -58,6 +58,8 @@ class AuxPreviewUtils:
             aux.auxType = aux_type
             aux.sourceBones.clear()
             if not same_identity:
+                from RigConstraints.blender.metadata import clear_groups
+                clear_groups(bone)
                 aux.constraintNames.clear()
             for source_name in normalized_sources:
                 ref = aux.sourceBones.add()
