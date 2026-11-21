@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from BoneTools.boneProperty import PG_Hotools_AuxBoneInfo, PG_Hotools_BoneRef
 from BoneTools.auxBone.copyRotation import CopyRotationCore
 from Exporter.FbxExporter import FBXExporter
+from Exporter.FbxExporter import OP_FinalFBXExport
 from Exporter.ConstraintIRExporter import ConstraintIRExporter
 from RigConstraints import codec
 from RigConstraints.binding import build_export_document
@@ -39,6 +40,7 @@ for cls in (PG_Hotools_BoneRef, PG_Hotools_AuxBoneInfo, *PROPERTY_CLASSES, Fixtu
 bpy.types.Bone.hotools_boneprops = PointerProperty(type=FixtureBoneProps)
 out = Path(sys.argv[sys.argv.index("--") + 1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
+operator_mode = "--operator-object-transform" in sys.argv
 
 
 def flat(matrix):
@@ -116,6 +118,12 @@ def build():
 
 
 rig, inputs, owners = build()
+if operator_mode:
+    rig.location = (.7, -.3, .2)
+    rig.rotation_euler = (.3, -.4, .7)
+    rig.scale = (1.3, 1.3, 1.3)
+    bpy.context.view_layer.update()
+author_rest_world = {bone.name: rig.matrix_world @ bone.matrix_local for bone in rig.data.bones}
 rng = random.Random(20261121)
 samples = [("rest", {})]
 for index in range(32):
@@ -142,8 +150,12 @@ def apply(motions, rest_basis=None):
     bpy.context.view_layer.update()
 
 
+def pose_matrix(name):
+    return rig.matrix_world @ rig.pose.bones[name].matrix if operator_mode else rig.pose.bones[name].matrix
+
+
 def sample_current():
-    return [{"name": bone.name, "matrix": flat(bone.matrix)} for bone in rig.pose.bones]
+    return [{"name": bone.name, "matrix": flat(pose_matrix(bone.name))} for bone in rig.pose.bones]
 
 
 authoring = capture_armature(rig)
@@ -185,7 +197,77 @@ translated = explicit_test_stacks(translate(authoring))
 before = []
 for label, motions in samples:
     apply(motions)
-    before.append({"name": label, "inputs": [{"name": name, "matrix": flat(rig.pose.bones[name].matrix)} for name in inputs], "expected": sample_current()})
+    before.append({"name": label, "inputs": [{"name": name, "matrix": flat(pose_matrix(name))} for name in inputs], "expected": sample_current()})
+
+
+def export_operator_variants():
+    """Export both FBXs through the actual production HoFBX operator.
+
+    Only static final bind matrices are observed at getParams immediately before
+    the FBX writer. Dynamic expected poses always come from the earlier actual
+    Blender constraint evaluation, never the Unity algorithm or fit transform.
+    """
+    captured = {}
+    original_get_params = OP_FinalFBXExport.getParams
+
+    def observe_final(self, context, report_errors=True):
+        current = next(obj for obj in context.selected_objects if obj.type == "ARMATURE")
+        captured[Path(self.filepath).stem] = {
+            "bones": {bone.name: current.matrix_world @ bone.matrix_local for bone in current.data.bones},
+            "context": ConstraintIRExporter._binding_context(current, list(current.data.bones)),
+        }
+        return original_get_params(self, context, report_errors)
+
+    OP_FinalFBXExport.getParams = observe_final
+    bpy.utils.register_class(OP_FinalFBXExport)
+    try:
+        for label, mch in (("Raw", False), ("Mch", True)):
+            current = bpy.data.objects["CopyRLocal"]
+            for bone in current.pose.bones:
+                bone.matrix_basis = Matrix.Identity(4)
+            for name in ("MchInput_L", "MchInput_R"):
+                current.data.bones[name].hotools_boneprops.generateMCH = mch
+            bpy.context.view_layer.objects.active = current
+            bpy.ops.object.select_all(action="DESELECT")
+            current.select_set(True)
+            bpy.context.view_layer.update()
+            target = out / (label+".fbx")
+            assert bpy.ops.ho.final_fbx_export("EXEC_DEFAULT", filepath=str(target),
+                rigConstraintIRVersion="4", exportUnityMetadata=False, exportBoneConstraint=True,
+                exportBoneCollection=False, exportHumanoidMapping=False, exportBsCorrective=False,
+                addLeafBones=False, generateMCHBones=mch, applyArmaturePose=False,
+                fixObjectTransform=True, applyExportConstraints=False) == {"FINISHED"}
+            sidecar = next((out/"HoFBX").glob(label+"_*_constraint.json"))
+            exported = codec.loads(sidecar.read_text(encoding="utf-8"))
+            exported = explicit_test_stacks(exported)
+            (out/(label+"_v4.json")).write_text(codec.dumps(exported),encoding="utf-8")
+            final = captured[label]
+            actual_context = final["context"]
+            serialized_context = exported["bindings"]["bindingContext"]
+            assert actual_context["objectMatrix"]==serialized_context["objectMatrix"], "final object matrix sampled before last correction"
+            actual_bones={row["boneName"]:row for row in actual_context["bones"]}
+            for row in serialized_context["bones"]:
+                assert row["restMatrix"]==actual_bones[row["boneName"]]["restMatrix"], "final rest sampled before last correction"
+                assert row["inheritRotation"]==actual_bones[row["boneName"]]["inheritRotation"] is True
+            rest_rows = [{"name":name,"matrix":flat(matrix)} for name,matrix in final["bones"].items()]
+            actual_samples=[]
+            final_map = {row["exportBone"]:row["sourceBone"] for row in exported["bindings"]["boneMap"]}
+            for sample in before:
+                source_pose = {row["name"]:Matrix([row["matrix"][i:i+4] for i in range(0,16,4)]) for row in sample["expected"]}
+                expected={}
+                for name, bind in final["bones"].items():
+                    source_name = name if name in author_rest_world else final_map[name]
+                    expected[name]=source_pose[source_name] @ author_rest_world[source_name].inverted() @ bind
+                actual_samples.append({"name":sample["name"],"inputs":[{"name":name,"matrix":flat(expected[name])} for name in inputs],
+                    "expected":[{"name":name,"matrix":flat(matrix)} for name,matrix in expected.items()]})
+            save(label+"_samples.json", {"variant":label,"blenderVersion":bpy.app.version_string,"bones":rest_rows,
+                "ownerNames":owners,"inputNames":inputs,"samples":actual_samples,"authoringPreprocessMaxMatrixError":0,
+                "exportRoute":"ACTUAL_HOFBX_OPERATOR_NONIDENTITY_OBJECT","sampleSpace":"BLENDER_WORLD",
+                "originalObjectMatrix":authoring["sourceContext"]["objectMatrix"]})
+            print("COPYR_OPERATOR_FINAL_BINDING_OK",label,len(exported["semantics"]))
+    finally:
+        bpy.utils.unregister_class(OP_FinalFBXExport)
+        OP_FinalFBXExport.getParams=original_get_params
 
 
 def export_variant(label, rest_basis=None, *, mch_map=None):
@@ -236,12 +318,16 @@ def export_variant(label, rest_basis=None, *, mch_map=None):
     bpy.context.view_layer.update()
 
 
-export_variant("Raw")
-apply({})
-for name in ("MchInput_L", "MchInput_R"):
-    rig.data.bones[name].hotools_boneprops.generateMCH = True
-old_locals = {name: rig.data.bones[name].matrix_local.copy() for name in ("MchInput_L", "MchInput_R")}
-mch_map = FBXExporter.clear_armatures_bone_rotation([rig], [rig], rig)[rig.name]
-rest_basis = {name: (old_locals[name], rig.data.bones[name].matrix_local.copy()) for name in mch_map}
-export_variant("Mch", rest_basis, mch_map=mch_map)
-print("COPY_R_V4_FIXTURE_OK", len(owners), len(samples), json.dumps(mch_map))
+if operator_mode:
+    export_operator_variants()
+    print("COPY_R_V4_OPERATOR_FIXTURE_OK",len(owners),len(samples))
+else:
+    export_variant("Raw")
+    apply({})
+    for name in ("MchInput_L", "MchInput_R"):
+        rig.data.bones[name].hotools_boneprops.generateMCH = True
+    old_locals = {name: rig.data.bones[name].matrix_local.copy() for name in ("MchInput_L", "MchInput_R")}
+    mch_map = FBXExporter.clear_armatures_bone_rotation([rig], [rig], rig)[rig.name]
+    rest_basis = {name: (old_locals[name], rig.data.bones[name].matrix_local.copy()) for name in mch_map}
+    export_variant("Mch", rest_basis, mch_map=mch_map)
+    print("COPY_R_V4_FIXTURE_OK", len(owners), len(samples), json.dumps(mch_map))
