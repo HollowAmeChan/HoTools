@@ -67,6 +67,8 @@
 - inputFingerprint 为对文档去掉 exportTime/inputFingerprint 后稳定排序 JSON 的 SHA-256；列表顺序保留，参数数值不随意舍入。哈希用于检测，不替代契约条件验证。
 - codec/model/registry 只依赖标准库，不依赖 bpy。骨骼登记、review 和 exporter 独立读取这些公共接口。
 - 不新增、修改、导出大型 BoneTools/hoAux 的 Source IR 或 Driver；扫描跳过其明确标记的 owner。
+- HoAux 通用 Copy Location／Copy Rotation／Armature／Aim 的 `conditions.rigSpace=FINITE_POSITIVE_UNIFORM_TRS` 要求运行时根矩阵有限、可分解且无剪切，缩放为正且均匀；祖先负缩放也拒绝。恢复有效根变换后重新计算。该运行时检查不等于 JSON 规划已经验证了当前场景。
+- 注册表 `testSuiteDefinitions` 定义测试入口和实际观察轴；实现的 `testSuites` 必须引用有效定义。`python -m RigConstraints.registry --matrix` 输出实现、条件、证据和测试定义的关联 JSON；不会执行注册表内命令，也不把轴集合冒充已测试的全部笛卡尔积。
 
 ## 骨骼登记公共 API
 

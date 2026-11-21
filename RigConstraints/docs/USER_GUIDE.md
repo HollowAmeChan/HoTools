@@ -16,6 +16,8 @@ copyR 不创建额外骨，不改变原骨的父级、静置方向或权重。�
 
 新局部契约要求作者 owner 为中立静置输入且无独立动画，owner／target 都开启旋转继承、使用 FULL 缩放继承；来源和父级可以动画。若应用姿态或 owner 的 MCH 预处理改变了原始局部参考，Unity 会报告不支持的重放条件。开启“应用约束”将结果固化到 FBX 时，也不能再次把同一约束导入运行，否则会重复作用。
 
+Unity HoAux 通用约束的骨架根及其祖先需保持正均匀缩放和有效 TRS。零缩放、负缩放、非均匀或剪切会暂停该求值并报告原因；恢复有效变换后可继续。
+
 copyR 的移除和普通辅助骨总览中的分组／全部移除，会保留用户原骨和权重，只删除准确登记的生成约束及对应登记。启停只作用登记成员，不静音同骨上的手工约束。遇到登记损坏会拒绝批量删除，请先检查原因。
 
 需要新 Copy Rotation 时请使用 copyR 入口。手工创建的 Copy Rotation 仍作为原始事实保留，但在新作者流程中不会自动被接管或补登记为 copyR。旧 v2/v3 文件保持原解释。
@@ -53,5 +55,6 @@ Standard／VRC 的某些映射只能近似 Blender。默认不自动采用近似
 - 自动生成的全类型／实现／进度表：[COVERAGE.md](COVERAGE.md)
 - 更新覆盖表：`python -m RigConstraints.registry --write`
 - 检查表漂移：`python -m RigConstraints.registry --check`
+- 输出实现／条件／测试入口和观察轴的机器可读矩阵：`python -m RigConstraints.registry --matrix`
 
 注册表是唯一权威源，Unity 按字节分发同一文件。增加实现时需要登记参数域、上下文条件和测试证据；单纯增加类型行不计作功能已完成。

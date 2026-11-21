@@ -184,6 +184,23 @@ class CodecTests(unittest.TestCase):
 
 
 class RegistryTests(unittest.TestCase):
+    def test_test_matrix_has_no_unresolved_suite_references(self):
+        data = registry.load_registry()
+        matrix = registry.generate_test_matrix(data)
+        self.assertEqual(23, len(matrix))
+        self.assertTrue(all(row["testSuites"] for row in matrix))
+        for suite in data["testSuiteDefinitions"]:
+            for runner in suite["runners"]:
+                if runner["repository"] == "HoTools":
+                    self.assertTrue((ADDON_ROOT / runner["path"]).is_file(), runner)
+        data["implementations"][0]["testSuites"] = ["missing"]
+        with self.assertRaisesRegex(ValueError, "unknown test suite"):
+            registry.generate_test_matrix(data)
+        data = registry.load_registry()
+        data["testSuiteDefinitions"].append(deepcopy(data["testSuiteDefinitions"][0]))
+        with self.assertRaisesRegex(ValueError, "duplicate test suite"):
+            registry.generate_test_matrix(data)
+
     def test_ordered_member_specs_are_authoritative_for_all_semantics(self):
         semantics = {row["type"]: row for row in registry.load_registry()["semanticDefinitions"]}
         for row in semantics.values():

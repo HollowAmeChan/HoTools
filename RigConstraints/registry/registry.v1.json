@@ -1110,7 +1110,8 @@
         "influence": {
           "min": 0,
           "max": 1
-        }
+        },
+        "rigSpace": "FINITE_POSITIVE_UNIFORM_TRS"
       },
       "availability": "IMPLEMENTED",
       "fidelity": "EXACT",
@@ -1177,7 +1178,8 @@
           "GENERATED",
           "EXPLICIT",
           "LEGACY"
-        ]
+        ],
+        "rigSpace": "FINITE_POSITIVE_UNIFORM_TRS"
       },
       "availability": "IMPLEMENTED",
       "fidelity": "EXACT",
@@ -1233,7 +1235,8 @@
             1
           ]
         },
-        "sourceWeights": "FINITE_NONNEGATIVE_POSITIVE_TOTAL"
+        "sourceWeights": "FINITE_NONNEGATIVE_POSITIVE_TOTAL",
+        "rigSpace": "FINITE_POSITIVE_UNIFORM_TRS"
       },
       "availability": "IMPLEMENTED",
       "fidelity": "CONDITIONAL",
@@ -1492,7 +1495,8 @@
         "upMode": "OBJECT_POSITION",
         "signedAxes": "DISTINCT_ORTHOGONAL",
         "identities": "OWNER_TARGET_UP_DISTINCT",
-        "muted": "MATCH_BOTH_MEMBERS"
+        "muted": "MATCH_BOTH_MEMBERS",
+        "rigSpace": "FINITE_POSITIVE_UNIFORM_TRS"
       },
       "availability": "IMPLEMENTED",
       "fidelity": "EXACT",
@@ -2008,7 +2012,8 @@
           "GENERATED",
           "EXPLICIT",
           "LEGACY"
-        ]
+        ],
+        "rigSpace": "FINITE_POSITIVE_UNIFORM_TRS"
       },
       "availability": "IMPLEMENTED",
       "fidelity": "EXACT",
@@ -2027,7 +2032,10 @@
         "measurementsPerBlender": 15048,
         "maxPositionErrorM": 9.05e-07,
         "maxRotationErrorDeg": 0.05058,
-        "maxScaleError": 2.7e-06
+        "maxScaleError": 2.7e-06,
+        "rootSpaceRejectionCases": 30,
+        "rootSpaceRecoveryMeasurementsPerBlender": 1140,
+        "totalMeasurementsWithRootRecoveryPerBlender": 16188
       },
       "artifacts": [
         "HoAuxRig"
@@ -2087,7 +2095,8 @@
           "GENERATED",
           "EXPLICIT",
           "LEGACY"
-        ]
+        ],
+        "rigSpace": "FINITE_POSITIVE_UNIFORM_TRS"
       },
       "availability": "IMPLEMENTED",
       "fidelity": "EXACT",
@@ -2106,7 +2115,10 @@
         "measurementsPerBlender": 15048,
         "maxPositionErrorM": 9.05e-07,
         "maxRotationErrorDeg": 0.05058,
-        "maxScaleError": 2.7e-06
+        "maxScaleError": 2.7e-06,
+        "rootSpaceRejectionCases": 30,
+        "rootSpaceRecoveryMeasurementsPerBlender": 1140,
+        "totalMeasurementsWithRootRecoveryPerBlender": 16188
       },
       "artifacts": [
         "HoAuxRig"
@@ -2119,6 +2131,161 @@
         "Authoring and final source/owner rest frames must preserve their world binding meaning. Applied poses that rebase these inputs are rejected.",
         "Singular or sheared inputs are diagnosed; this does not claim arbitrary affine-scale equivalence."
       ]
+    }
+  ],
+  "testSuiteDefinitions": [
+    {
+      "id": "constraint-ir-v3-regression",
+      "runners": [
+        {
+          "repository": "HoTools",
+          "path": "tests/export_wtd_ir_v3_fixture.py",
+          "input": "read-only private blend; external fixture, never committed"
+        },
+        {
+          "repository": "HoUnityTools",
+          "path": "Tests~/ConstraintIRV3/Run.ps1",
+          "input": "-Fixture <Blender fixture> -TestVrcApiShim"
+        }
+      ],
+      "axes": {
+        "backend": [
+          "HoAux",
+          "Standard",
+          "Vrc shim"
+        ],
+        "channels": [
+          "Copy Location",
+          "Copy Rotation",
+          "Armature",
+          "Aim"
+        ],
+        "lifecycle": [
+          "runtime",
+          "repeat evaluation",
+          "prefab",
+          "merge"
+        ],
+        "limits": [
+          "VRC real SDK/client untested; native approximations retain per-contract limits"
+        ]
+      }
+    },
+    {
+      "id": "legacy-aux-regression",
+      "runners": [
+        {
+          "repository": "HoTools",
+          "path": "tests/test_blender_aux_constraint_ownership.py"
+        },
+        {
+          "repository": "HoTools",
+          "path": "tests/test_blender_fbx_mch_local_rotation.py"
+        },
+        {
+          "repository": "HoTools",
+          "path": "tests/test_blender_hofbx_v4.py"
+        },
+        {
+          "repository": "HoUnityTools",
+          "path": "Tests~/ConstraintIRV3/Run.ps1",
+          "input": "-Fixture <Blender fixture> -TestVrcApiShim"
+        },
+        {
+          "repository": "HoUnityTools",
+          "path": "Tests~/ConstraintIRV4/RunImport.ps1",
+          "input": "-Fixture <v4 JSON> -OperatorFixture <HoFBX directory>"
+        }
+      ],
+      "axes": {
+        "blender": [
+          "4.5.8",
+          "5.2.0"
+        ],
+        "semantics": [
+          "MCH",
+          "Twist",
+          "Fan"
+        ],
+        "lifecycle": [
+          "ownership",
+          "source preservation",
+          "v3 compatibility",
+          "v4 assembly",
+          "reimport",
+          "undo"
+        ],
+        "limits": [
+          "legacy behavior is not full-domain numerical equivalence"
+        ]
+      }
+    },
+    {
+      "id": "copy-rotation-local-fbx-golden",
+      "runners": [
+        {
+          "repository": "HoTools",
+          "path": "tests/export_copyr_v4_fixture.py",
+          "input": "-- <output directory> --operator-object-transform"
+        },
+        {
+          "repository": "HoUnityTools",
+          "path": "Tests~/ConstraintIRV4/Run-local.ps1",
+          "input": "-Fixture <Blender fixture> -UseV4"
+        }
+      ],
+      "axes": {
+        "blender": [
+          "4.5.8",
+          "5.2.0"
+        ],
+        "spaces": [
+          "WORLD to WORLD",
+          "LOCAL to LOCAL",
+          "LOCAL_OWNER_ORIENT to LOCAL"
+        ],
+        "influence": [
+          0,
+          0.3,
+          0.5,
+          1
+        ],
+        "bones": [
+          "different rest axes",
+          "left/right",
+          "dynamic owner and target parents",
+          "reflected per-bone bases",
+          "ordered stacks"
+        ],
+        "routes": [
+          "Raw",
+          "MCH",
+          "serialized prefab",
+          "missing-reference recovery",
+          "merge"
+        ],
+        "frames": [
+          "first",
+          "repeat"
+        ],
+        "rigRoot": [
+          "positive uniform TRS",
+          "zero rejected",
+          "odd negative rejected",
+          "even negative rejected",
+          "nonuniform rejected",
+          "ancestor shear rejected",
+          "valid recovery"
+        ],
+        "tolerance": [
+          "position 1e-4 m",
+          "rotation 0.1 deg",
+          "scale 1e-4"
+        ],
+        "limits": [
+          "single-owner UI creates one copyR; explicit stack fixtures test IR/runtime separately"
+        ]
+      }
     }
   ]
 }

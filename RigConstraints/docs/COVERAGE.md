@@ -91,6 +91,18 @@ Exact/conditional/approximate is a contract declaration. Verification evidence i
 | `hoaux.copy_rotation.local@1` | COPY_ROTATION@1 | HoAux | IMPLEMENTED | EXACT | TESTED | copy-rotation-local-fbx-golden |
 | `hoaux.copy_rotation.owner_orient@1` | COPY_ROTATION@1 | HoAux | IMPLEMENTED | EXACT | TESTED | copy-rotation-local-fbx-golden |
 
+## Registered test matrix
+
+Export the machine-readable contract/suite join with `python -m RigConstraints.registry --matrix`.
+
+Axes describe existing suites, not an automatically proven Cartesian product. Contract-specific verification and VRC SHIM_ONLY limits remain authoritative.
+
+| Suite | Runners | Observed axes |
+| --- | --- | --- |
+| constraint-ir-v3-regression | HoTools: `tests/export_wtd_ir_v3_fixture.py`<br>HoUnityTools: `Tests~/ConstraintIRV3/Run.ps1` | backend: HoAux, Standard, Vrc shim<br>channels: Copy Location, Copy Rotation, Armature, Aim<br>lifecycle: runtime, repeat evaluation, prefab, merge<br>limits: VRC real SDK/client untested; native approximations retain per-contract limits |
+| legacy-aux-regression | HoTools: `tests/test_blender_aux_constraint_ownership.py`<br>HoTools: `tests/test_blender_fbx_mch_local_rotation.py`<br>HoTools: `tests/test_blender_hofbx_v4.py`<br>HoUnityTools: `Tests~/ConstraintIRV3/Run.ps1`<br>HoUnityTools: `Tests~/ConstraintIRV4/RunImport.ps1` | blender: 4.5.8, 5.2.0<br>semantics: MCH, Twist, Fan<br>lifecycle: ownership, source preservation, v3 compatibility, v4 assembly, reimport, undo<br>limits: legacy behavior is not full-domain numerical equivalence |
+| copy-rotation-local-fbx-golden | HoTools: `tests/export_copyr_v4_fixture.py`<br>HoUnityTools: `Tests~/ConstraintIRV4/Run-local.ps1` | blender: 4.5.8, 5.2.0<br>spaces: WORLD to WORLD, LOCAL to LOCAL, LOCAL_OWNER_ORIENT to LOCAL<br>influence: 0, 0.3, 0.5, 1<br>bones: different rest axes, left/right, dynamic owner and target parents, reflected per-bone bases, ordered stacks<br>routes: Raw, MCH, serialized prefab, missing-reference recovery, merge<br>frames: first, repeat<br>rigRoot: positive uniform TRS, zero rejected, odd negative rejected, even negative rejected, nonuniform rejected, ancestor shear rejected, valid recovery<br>tolerance: position 1e-4 m, rotation 0.1 deg, scale 1e-4<br>limits: single-owner UI creates one copyR; explicit stack fixtures test IR/runtime separately |
+
 ## Evidence and boundaries
 
 - Blender 4.5.8/5.2.0 RNA Constraint.type enums and object/pose constraint_add operators; 2026-11-21.

@@ -1,9 +1,10 @@
 """Generate/check readable coverage without Blender or Unity installed."""
 
 import argparse
+import json
 from pathlib import Path
 
-from . import generate_coverage
+from . import generate_coverage, generate_test_matrix
 
 
 def main():
@@ -11,7 +12,11 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--write", action="store_true", help="write the generated coverage table")
     mode.add_argument("--check", action="store_true", help="fail when the checked-in table has drifted")
+    mode.add_argument("--matrix", action="store_true", help="print the registered contract/test matrix as JSON")
     arguments = parser.parse_args()
+    if arguments.matrix:
+        print(json.dumps(generate_test_matrix(), ensure_ascii=False, indent=2))
+        return
     destination = Path(__file__).resolve().parents[1] / "docs" / "COVERAGE.md"
     expected = generate_coverage()
     if arguments.write:

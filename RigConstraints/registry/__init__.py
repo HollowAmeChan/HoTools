@@ -24,10 +24,22 @@ def _validate_registry(data):
         raise ValueError("invalid ordinary-rig registry identity")
     if data["version"] < 1:
         raise ValueError("invalid registry version")
-    for key in ("constraintTypes", "semanticDefinitions", "implementations"):
+    for key in ("constraintTypes", "semanticDefinitions", "implementations", "testSuiteDefinitions"):
         if not isinstance(data.get(key), list):
             raise ValueError("registry requires an array: " + key)
-    types, semantics, identities = set(), set(), set()
+    types, semantics, identities, suites = set(), set(), set(), set()
+    for row in data["testSuiteDefinitions"]:
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"] or row["id"] in suites:
+            raise ValueError("invalid or duplicate test suite identity")
+        suites.add(row["id"])
+        if not isinstance(row.get("runners"), list) or not row["runners"] or not isinstance(row.get("axes"), dict):
+            raise ValueError("test suite requires runners and axes")
+        for runner in row["runners"]:
+            if not isinstance(runner, dict) or runner.get("repository") not in ("HoTools", "HoUnityTools") or not isinstance(runner.get("path"), str) or not runner["path"]:
+                raise ValueError("invalid test suite runner")
+        for values in row["axes"].values():
+            if not isinstance(values, list) or not values:
+                raise ValueError("test suite axis requires explicit values")
     for row in data["constraintTypes"]:
         if not isinstance(row, dict) or not isinstance(row.get("type"), str) or not row["type"]:
             raise ValueError("invalid constraint type record")
@@ -91,6 +103,8 @@ def _validate_registry(data):
         for key in ("artifacts", "testSuites"):
             if not isinstance(row[key], list) or any(not isinstance(value, str) for value in row[key]):
                 raise ValueError("implementation list is invalid: " + key)
+        if not row["testSuites"] or any(value not in suites for value in row["testSuites"]):
+            raise ValueError("implementation references an unknown test suite")
 
 
 def load_registry():
@@ -115,6 +129,19 @@ def implementations_for(semantic_type, backend=None):
     """List catalog candidates, including planned entries, without selection."""
     return [row for row in load_registry()["implementations"]
             if row["semanticType"] == semantic_type and (backend is None or row["backendId"] == backend)]
+
+
+def generate_test_matrix(registry=None):
+    """Join contracts to registered suites; describe coverage without running code."""
+    data = load_registry() if registry is None else registry
+    _validate_registry(data)
+    suites = {row["id"]: row for row in data["testSuiteDefinitions"]}
+    return [{"implementationId": row["id"], "contractVersion": row["contractVersion"],
+             "semanticType": row["semanticType"], "backendId": row["backendId"],
+             "availability": row["availability"], "conditions": deepcopy(row["conditions"]),
+             "verification": deepcopy(row["verification"]),
+             "testSuites": [deepcopy(suites[value]) for value in row["testSuites"]]}
+            for row in data["implementations"]]
 
 
 def generate_coverage(registry=None):
@@ -166,6 +193,15 @@ def generate_coverage(registry=None):
         lines.append("| `{}@{}` | {}@{} | {} | {} | {} | {} | {} |".format(
             row["id"], row["contractVersion"], row["semanticType"], row["semanticVersion"], row["backendId"],
             row["availability"], row["fidelity"], row["verification"]["status"], ", ".join(row["testSuites"])))
+    lines += ["", "## Registered test matrix", "",
+              "Export the machine-readable contract/suite join with `python -m RigConstraints.registry --matrix`.", "",
+              "Axes describe existing suites, not an automatically proven Cartesian product. Contract-specific verification and VRC SHIM_ONLY limits remain authoritative.", "",
+              "| Suite | Runners | Observed axes |",
+              "| --- | --- | --- |"]
+    for row in data["testSuiteDefinitions"]:
+        runners = "<br>".join("{}: `{}`".format(item["repository"], item["path"]) for item in row["runners"])
+        axes = "<br>".join("{}: {}".format(key, ", ".join(str(value) for value in values)) for key, values in row["axes"].items())
+        lines.append("| {} | {} | {} |".format(row["id"], runners, axes))
     lines += ["", "## Evidence and boundaries", "",
               "- " + data["catalogEvidence"]["baseline"],
               "- " + data["catalogEvidence"]["ownerKindsMeaning"],
@@ -193,4 +229,4 @@ def generate_coverage(registry=None):
     return "\n".join(lines) + "\n"
 
 
-__all__ = ["REGISTRY_PATH", "load_registry", "registry_manifest", "find_implementation", "implementations_for", "generate_coverage"]
+__all__ = ["REGISTRY_PATH", "load_registry", "registry_manifest", "find_implementation", "implementations_for", "generate_coverage", "generate_test_matrix"]
