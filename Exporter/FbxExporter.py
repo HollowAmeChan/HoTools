@@ -117,7 +117,7 @@ from datetime import datetime, timezone
 from bpy.types import PropertyGroup, UIList, Operator, Panel, Menu
 from mathutils import Vector
 from bpy_extras.io_utils import ExportHelper
-from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty
+from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, EnumProperty
 from bl_operators.presets import AddPresetBase
 from Utils import bone_utils
 from .HumanoidMappingExporter import HumanoidMappingExporter
@@ -156,6 +156,8 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
         "op.ignoreGeometryNodes",
         "op.ignoreOutlineModifiers",
         "op.exportBoneConstraint",
+        "op.rigConstraintIRVersion",
+        "op.allowNativeConstraintApproximation",
         "op.exportBoneCollection",
         "op.exportHumanoidMapping",
         "op.exportUnityMetadata",
@@ -2160,6 +2162,9 @@ class FBXExporter:
             constraint.use_scale_y = False
             constraint.use_scale_z = False
             _register_aux_constraint(mch, constraint)
+            # Commit the complete semantic only after the generated member is configured.
+            from BoneTools.boneProperty import _replace_aux_constraints
+            _replace_aux_constraints(mch, [constraint])
 
             pending_inverse.append((mch_name, constraint.name))
             count += 1
@@ -2237,16 +2242,36 @@ class FBXExporter:
         )
 
     @staticmethod
-    def export_armature_constraint_ir(ob, fbx_filepath):
+    def export_armature_constraint_ir(ob, fbx_filepath, *, schema_version=3,
+                                     authoring_document=None, mch_map=None,
+                                     allow_native_approximation=False):
         """Write the armature's neutral rig constraint IR next to the FBX."""
         from .ConstraintIRExporter import ConstraintIRExporter
 
-        constraint_ir = ConstraintIRExporter.build_ir(ob)
+        if schema_version == 4:
+            from RigConstraints.binding import build_export_document
+            from RigConstraints.source import capture_armature
+            from RigConstraints.codec import dumps
+            source = authoring_document if authoring_document is not None else capture_armature(ob)
+            document = build_export_document(source, ob, mch_map=mch_map or {})
+            document["importPolicy"] = {"allowNativeApproximation": bool(allow_native_approximation)}
+            if allow_native_approximation:
+                # Explicit authoring policy is part of the fingerprint; it never
+                # lets an importer silently swap the pinned implementation ID.
+                for binding in document["implementationBindings"]:
+                    if binding["backendId"] in {"Standard", "Vrc"} and binding["fallbackPolicy"] == "EXACT_ONLY":
+                        binding["fallbackPolicy"] = "ALLOW_APPROXIMATE"
+            payload = dumps(document)
+        elif schema_version == 3:
+            constraint_ir = ConstraintIRExporter.build_ir(ob)
+            constraint_ir.binding_context["fbxBoneAxes"] = "Y_X"
+            if constraint_ir.is_empty():
+                return None
+            payload = json.dumps(constraint_ir.to_dict(), indent=2, ensure_ascii=False, allow_nan=False)
+        else:
+            raise ValueError("Unsupported Rig Constraint export version: " + str(schema_version))
         # Facts about this companion FBX, whose bone axes are fixed by getParams.
         # Standalone neutral IR snapshots do not assert a particular FBX preset.
-        constraint_ir.binding_context["fbxBoneAxes"] = "Y_X"
-        if constraint_ir.is_empty():
-            return None
 
         base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
         json_path = FBXExporter.unity_metadata_path(
@@ -2254,13 +2279,7 @@ class FBXExporter:
             f"{base_name}_{ob.name}_constraint.json",
         )
         with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(
-                constraint_ir.to_dict(),
-                f,
-                indent=2,
-                ensure_ascii=False,
-                allow_nan=False,
-            )
+            f.write(payload)
             f.write("\n")
         return json_path
     @staticmethod
@@ -2820,6 +2839,15 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
     exportBoneConstraint:BoolProperty(name="导出Rig约束IR(JSON)",description="导出Aux骨、原始Blender约束参数和MCH绑定的中立IR；最终运行时方案由导入端决定",default=False) # type: ignore
+    rigConstraintIRVersion:EnumProperty(
+        name="约束 IR 版本", items=(('3', 'v3（兼容）', '兼容现有导入器'),
+                                     ('4', 'v4（三层契约）', '需要支持 v4 的 HoUnityTools；保留作者事实和最终绑定')),
+        default='3',
+    ) # type: ignore
+    allowNativeConstraintApproximation:BoolProperty(
+        name="允许原生约束近似", default=False,
+        description="v4 明确允许 Standard/VRC 使用已登记的近似契约；保留原始事实并在 Unity 显示差异，不影响 HoAux",
+    ) # type: ignore
     exportBoneCollection:BoolProperty(name="导出骨骼集合(JSON)",description="导出各骨架的骨骼集合(Bone Collections)为JSON,统一写入FBX旁的HoFBX文件夹",default=False) # type: ignore
     exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
     exportBsCorrective:BoolProperty(name="导出BS修型(JSON)",description="从 HoTools BS 修型中控导出源骨骼局部旋转规则；导出预处理仅在需要时应用 MCH 转换",default=True) # type: ignore
@@ -2924,6 +2952,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         )
         humanoid_mapping_data = None
         humanoid_reference_data = {}
+        ordinary_constraint_snapshots = {}
         failed_data_transfer_count = 0
         failed_material_sort_count = 0
         failed_triangulate_count = 0
@@ -2936,6 +2965,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         FBXExporter.unhide_objects()
 
         try:
+            if (self.exportUnityMetadata or self.exportBoneConstraint) and self.rigConstraintIRVersion == '4':
+                from RigConstraints.source import capture_armature
+                ordinary_constraint_snapshots = {ob.name: capture_armature(ob) for ob in selected_armature_objects}
             pose_position_state = FBXExporter.capture_armatures_pose_position(
                 armature_objects
             )
@@ -3233,7 +3265,11 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     if ob.name not in bpy.context.view_layer.objects:
                         continue
                     json_path = FBXExporter.export_armature_constraint_ir(
-                        ob, self.filepath
+                        ob, self.filepath,
+                        schema_version=int(self.rigConstraintIRVersion),
+                        authoring_document=ordinary_constraint_snapshots.get(ob.name),
+                        mch_map=mch_name_maps.get(ob.name, {}),
+                        allow_native_approximation=self.allowNativeConstraintApproximation,
                     )
                     if json_path:
                         exported_json.append(json_path)
@@ -3487,6 +3523,10 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         json_box.label(text="附加导出 (JSON)", icon='FILE_TEXT')
         json_col = json_box.column(align=True)
         json_col.prop(self, "exportUnityMetadata")
+        if self.exportUnityMetadata or self.exportBoneConstraint:
+            json_col.prop(self, "rigConstraintIRVersion")
+            if self.rigConstraintIRVersion == '4':
+                json_col.prop(self, "allowNativeConstraintApproximation")
         if self.exportUnityMetadata:
             info = json_col.row()
             info.enabled = False
