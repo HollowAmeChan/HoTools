@@ -11,6 +11,7 @@ import blf
 
 from Utils import bone_utils
 from ..previewUtils import AuxPreviewUtils
+from .weightSpace import bone_side, local_x_coordinates, side_mask
 
 
 EPS = 1e-6
@@ -1024,6 +1025,7 @@ class TwistBoneCore:
         soft_factor,
         keep_head_end_weight,
         source_vg,
+        split_sides=False,
     ):
         old_mode = obj.mode
         mirror_state = bone_utils.set_temp_mesh_mirror_off(obj)
@@ -1049,6 +1051,8 @@ class TwistBoneCore:
             source_bone = armature.data.bones.get(source_bone_name)
             if source_bone is None:
                 raise Exception(f"未找到源骨骼: {source_bone_name}")
+            allowed = (side_mask(local_x_coordinates(obj, armature), bone_side(source_bone))
+                       if split_sides else None)
 
             mesh_inv = obj.matrix_world.inverted()
             chain_start_world = armature.matrix_world @ source_bone.head_local
@@ -1114,6 +1118,12 @@ class TwistBoneCore:
                     continue
 
                 orig_w = weights_np[i]
+                # Symmetric generation must not redistribute residual weights
+                # across the armature-local mirror plane. Keep that exact source
+                # channel weight on the original bone, including midplane rows.
+                if allowed is not None and not allowed[i]:
+                    source_weights_np[i] += orig_w
+                    continue
                 seg = i_seg[i]
                 lf = local_factor[i]
 
@@ -1164,6 +1174,7 @@ class TwistBoneCore:
         soft_factor: float,
         keep_head_end_weight: bool,
         source_group_name: str,
+        split_sides: bool = False,
     ):
         source_group = obj.vertex_groups.get(source_group_name)
         TwistBoneCore.splitVertexGroup_withTmp_along_source(
@@ -1176,6 +1187,7 @@ class TwistBoneCore:
             soft_factor,
             keep_head_end_weight,
             source_group,
+            split_sides=split_sides,
         )
 
     @staticmethod
@@ -1188,6 +1200,7 @@ class TwistBoneCore:
         keep_head_end_weight: bool,
         objs,
         bone_collection_name: str = HoRig_Twist,
+        split_sides: bool = False,
     ) -> dict:
         """把选中的主骨权重转移到 Twist 子骨链上。"""
         chain_result = TwistBoneCore.create_twist_chain(
@@ -1227,6 +1240,7 @@ class TwistBoneCore:
                 soft_factor,
                 keep_head_end_weight,
                 bn,
+                split_sides=split_sides,
             )
 
         chain_result["source_bone"] = bn
@@ -1345,6 +1359,7 @@ class TwistBoneCore:
                         keep_head_end_weight,
                         objs_with_bone,
                         bone_collection_name,
+                        split_sides=process_symmetry,
                     )
                     results.append(result)
                     twist_bone_names.extend(result.get("created_names", []))
