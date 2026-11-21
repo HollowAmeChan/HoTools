@@ -425,6 +425,7 @@ class BoneFanSideCore(BoneFanSingleCore):
         only_selected,
         midline_threshold=0.0,
         midplane_threshold=0.0,
+        split_sides=False,
     ):
         """侧向 fan 的对称感知权重转移：与父类 apply_fan_weights_multi 同构，
 
@@ -456,6 +457,7 @@ class BoneFanSideCore(BoneFanSingleCore):
         for obj in mesh_objs:
             obj_result = cls._transfer_fan_weights_multi_for_object(
                 obj, armature, sites, radius_factor, blur_factor, midline_threshold, midplane_threshold,
+                split_sides,
             )
             result["processed_objects"] += obj_result["processed_objects"]
             result["processed_sources"] += obj_result["processed_sources"]
@@ -876,6 +878,7 @@ class OP_FanSideGenerate(Operator):
                     settings.only_selected,
                     settings.midline_threshold if settings.process_symmetry else 0.0,
                     settings.midplane_threshold if settings.process_symmetry else 0.0,
+                    split_sides=settings.process_symmetry,
                 )
                 total_weight_objects += weight_result["processed_objects"]
 

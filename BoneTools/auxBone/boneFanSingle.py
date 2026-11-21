@@ -6,6 +6,7 @@ from mathutils import Vector
 
 from Utils import bone_utils
 from ..previewUtils import AuxPreviewUtils
+from . import weightSpace
 from .boneFan import (
     BoneFanCore,
     _safe_normalized_vector,
@@ -520,6 +521,7 @@ class BoneFanSingleCore(BoneFanCore):
         only_selected,
         midline_threshold=0.0,
         midplane_threshold=0.0,
+        split_sides=False,
     ):
         """对称感知的权重转移：把多个 fan 站点（site）放在一起做一次分割。
 
@@ -559,6 +561,7 @@ class BoneFanSingleCore(BoneFanCore):
         for obj in mesh_objs:
             obj_result = cls._transfer_fan_weights_multi_for_object(
                 obj, armature, sites, radius_factor, blur_factor, midline_threshold, midplane_threshold,
+                split_sides,
             )
             result["processed_objects"] += obj_result["processed_objects"]
             result["processed_sources"] += obj_result["processed_sources"]
@@ -576,6 +579,7 @@ class BoneFanSingleCore(BoneFanCore):
         blur_factor,
         midline_threshold=0.0,
         midplane_threshold=0.0,
+        split_sides=False,
     ):
         """把多个 site 的权重放在一次快照里转移，保证共享父骨通道左右对称、守恒。
 
@@ -605,6 +609,7 @@ class BoneFanSingleCore(BoneFanCore):
                 "parent_dir_world": parent_dir_world,
                 "child_dir_world": child_dir_world,
                 "radius": radius,
+                "side": weightSpace.frame_side(frame) if split_sides else 0,
             })
 
         # --- 收集 fan 骨：方向投影到各自 site 的弯折平面，归属到真实顶点组通道 ---
@@ -657,6 +662,9 @@ class BoneFanSingleCore(BoneFanCore):
             return {"processed_sources": 0, "processed_fans": 0, "processed_vertices": 0, "processed_objects": 0}
 
         world_co = [obj.matrix_world @ v.co for v in obj.data.vertices]
+        local_x = weightSpace.local_x_coordinates(obj, armature) if split_sides else [0.0] * num_vertices
+        side_masks = {side: weightSpace.side_mask(local_x, side, include_midplane=True)
+                      for side in {info["side"] for info in site_infos}}
 
         # --- 快照所有相关源顶点组（每个组只读一次）----------------------
         source_names = []
@@ -717,6 +725,10 @@ class BoneFanSingleCore(BoneFanCore):
         for item in fan_items:
             if item["src"] in channel_fans:
                 channel_fans[item["src"]].append(item)
+        channel_sides = {}
+        for name, items in channel_fans.items():
+            sides = {site_infos[item["site_idx"]]["side"] for item in items}
+            channel_sides[name] = next(iter(sides)) if len(sides) == 1 else 0
 
         # --- 阶段 1：硬球分割（跨 site 合并）---------------------------
         # 每个顶点、每个通道：在“球覆盖该顶点的所有 fan”里选平面内方向最近的那根，
@@ -748,6 +760,8 @@ class BoneFanSingleCore(BoneFanCore):
                 best_score = -2.0
                 for item in channel_fans[source_name]:
                     info = site_infos[item["site_idx"]]
+                    if not side_masks[info["side"]][i]:
+                        continue
                     rel = world_co[i] - info["joint_world"]
                     if rel.length > info["radius"]:
                         continue
@@ -804,25 +818,12 @@ class BoneFanSingleCore(BoneFanCore):
             buffers = [main_weights[name] for name in present_sources]
             buffers += [fan_weights[item["name"]] for item in fan_items]
 
-            lam = cls._BLUR_LAMBDA
-            for _ in range(iterations):
-                updates = []
-                for i in region:
-                    nbs = adjacency[i]
-                    if not nbs:
-                        continue
-                    inv = 1.0 / len(nbs)
-                    row = []
-                    for buf in buffers:
-                        neighbor_avg = 0.0
-                        for nb in nbs:
-                            neighbor_avg += buf[nb]
-                        neighbor_avg *= inv
-                        row.append(buf[i] + lam * (neighbor_avg - buf[i]))
-                    updates.append((i, row))
-                for i, row in updates:
-                    for b, value in enumerate(row):
-                        buffers[b][i] = value
+            # Shared sources can span both halves. Each fan is confined to its
+            # own site throughout smoothing, even on connected midline meshes.
+            buffer_sides = [channel_sides[name] for name in present_sources]
+            buffer_sides += [site_infos[item["site_idx"]]["side"] for item in fan_items]
+            weightSpace.blur_buffers(buffers, buffer_sides, local_x, adjacency, region,
+                                     iterations, cls._BLUR_LAMBDA, include_midplane=True)
 
             # 按通道（真实源顶点组）重新归一化，保证总量守恒。
             for source_name in present_sources:
@@ -830,6 +831,11 @@ class BoneFanSingleCore(BoneFanCore):
                 chan_buffers = [main_weights[source_name]]
                 chan_buffers += [fan_weights[item["name"]] for item in channel_fans[source_name]]
                 for i in region:
+                    side = channel_sides[source_name]
+                    if side and not side_masks[side][i]:
+                        # No redistribution happened here. Preserve even tiny
+                        # residual source weights instead of thresholding them.
+                        continue
                     if orig_s[i] <= EPS:
                         for buf in chan_buffers:
                             buf[i] = 0.0
@@ -1359,6 +1365,7 @@ class OP_FanSingleGenerate(Operator):
                     settings.fan_weight_blur,
                     settings.only_selected,
                     settings.midline_threshold if settings.process_symmetry else 0.0,
+                    split_sides=settings.process_symmetry,
                 )
                 total_weight_objects += weight_result["processed_objects"]
 

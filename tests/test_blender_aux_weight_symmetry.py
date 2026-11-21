@@ -199,6 +199,27 @@ def regular_case(transform, blur, radius, split=True, operator=False):
         assert leaked > 1e-5, (label, "off switch no longer retains old sphere behavior", leaked)
 
 
+def central_case():
+    label = "Fan_center_site_unrestricted"
+    rig, obj, pairs, before = make_rig(label)
+    pair = list(pairs[0])
+    for name in pair:
+        rig.data.edit_bones[name].head.x = 0
+        rig.data.edit_bones[name].tail.x = 0
+    names = BoneFanCore._create_fan_bones(rig, pair, "out", 4, .2, .04)
+    sources = fan_sources(rig, names)
+    BoneFanCore.apply_fan_weights(bpy.context, rig, pair, names, .8, 1, False, split_sides=True)
+    error = 0.0
+    for source, original in before.items():
+        for index, wanted in enumerate(original):
+            actual = weight(obj, source, index) + sum(weight(obj, name, index) for name in names if sources[name] == source)
+            error = max(error, abs(actual - wanted))
+            assert abs(actual - wanted) < TOLERANCE, (label, source, index, actual, wanted)
+    for side in (1, -1):
+        assert sum(weight(obj, name, i) for name in names for i, point in enumerate(POINTS) if side * point[0] > EPS) > 1e-8, (label, "central site was cut", side)
+    RESULTS.append({"case": label, "channelError": error, "oppositeWeight": 0})
+
+
 def multi_case(kind, blur, transform):
     label = "{}_shared_{}_blur{}".format(kind, transform, blur)
     side = kind == "FanSide"
@@ -242,6 +263,7 @@ try:
     for blur in (0, 1):
         regular_case("identity", blur, .8, split=False)
     regular_case("rotated_nonuniform", 1, .8, operator=True)
+    central_case()
     for kind in ("FanSingle", "FanSide"):
         for blur in (0, 1):
             for transform in ("identity", "reflected"):

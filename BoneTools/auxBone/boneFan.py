@@ -6,6 +6,7 @@ from mathutils import Vector
 
 from Utils import bone_utils
 from ..previewUtils import AuxPreviewUtils
+from . import weightSpace
 import gpu
 from bpy_extras import view3d_utils
 import blf
@@ -811,6 +812,7 @@ class BoneFanCore:
         radius_factor: float,
         blur_factor: float,
         frame: dict,
+        split_sides: bool = False,
     ) -> dict:
         """把单个网格上、两根主骨的权重转移到 fan 骨上。
 
@@ -823,6 +825,8 @@ class BoneFanCore:
 
         关键不变量是"按通道守恒"——fan 骨刚性跟随其父级主骨，所以只要每个通道的
         权重总量不变，无约束时的形变就和原始一致。详见阶段 2 注释。
+        split_sides 开启时，硬分割与模糊邻接都限于骨架局部 X=0 的对应半空间；
+        逐对处理的中面顶点留在原骨，避免共享源通道被两侧重复处理。
         """
         edit_bones = armature.data.edit_bones
         bone_a = edit_bones.get(selected_names[0])
@@ -908,6 +912,9 @@ class BoneFanCore:
 
         joint_world = armature.matrix_world @ joint
         rel_vectors = [(obj.matrix_world @ v.co) - joint_world for v in obj.data.vertices]
+        local_x = weightSpace.local_x_coordinates(obj, armature) if split_sides else [0.0] * num_vertices
+        side = weightSpace.frame_side(frame) if split_sides else 0
+        eligible = weightSpace.side_mask(local_x, side)
 
         # 读取两根主骨当前的权重
         source_groups: dict[str, bpy.types.VertexGroup] = {}
@@ -983,6 +990,8 @@ class BoneFanCore:
         touched_vertices = 0
         core_vertices: list[int] = []
         for i in range(num_vertices):
+            if not eligible[i]:
+                continue
             if orig_total[i] <= 0.0:
                 continue
             if rel_vectors[i].length > radius:
@@ -1027,6 +1036,8 @@ class BoneFanCore:
         iterations = int(round(_clamp(blur_factor, 0.0, 1.0) * cls._MAX_BLUR_ITERATIONS))
         if iterations > 0 and core_vertices:
             adjacency = cls._build_vertex_adjacency(obj, num_vertices)
+            if side:
+                adjacency = weightSpace.restrict_adjacency(adjacency, eligible)
 
             # 把区域向外扩张，让权重能越过球边界回流到主骨上（每次迭代扩一圈）。
             in_region = [False] * num_vertices
@@ -1125,6 +1136,7 @@ class BoneFanCore:
         radius_factor: float,
         blur_factor: float,
         only_selected: bool,
+        split_sides: bool = False,
     ) -> dict:
         frame, error = cls._resolve_joint_geometry(
             armature.data.edit_bones.get(selected_names[0]),
@@ -1156,6 +1168,7 @@ class BoneFanCore:
                 radius_factor,
                 blur_factor,
                 frame,
+                split_sides,
             )
             result["processed_objects"] += obj_result["processed_objects"]
             result["processed_sources"] += obj_result["processed_sources"]
@@ -1489,6 +1502,7 @@ class OP_FanGenerate(Operator):
                         settings.fan_weight_radius,
                         settings.fan_weight_blur,
                         settings.only_selected,
+                        split_sides=settings.process_symmetry,
                     )
                     total_weight_objects += weight_result["processed_objects"]
 
