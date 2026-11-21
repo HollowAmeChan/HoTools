@@ -1,8 +1,8 @@
 # Ho 手工加权附着框架：约束导出契约草案
 
-状态：2026-10-25 的可行性验证与历史提案。当前生产契约见 [IR v3](IR_V3.md)，保留 v2 读取含义。本文的早期验证边界不自动代表后续所有后端已实测。
+状态：2026-10-25 的可行性验证与历史提案。当前生产契约见 [IR v4](../RigConstraints/docs/FORMAT_V4.md)，两端只支持 v4。本文的早期验证边界不自动代表后续所有后端已实测。
 
-后续决策：常用类型先直通，详见 [常用约束直通 IR 与三后端方案](DIRECT_CONSTRAINT_IMPORT_CONTRACT.md)。COPY_LOCATION、COPY_ROTATION、ARMATURE 拟独立成为已知直通类型；未标记的 Damped Track／Locked Track 继续 unknown。本文关于完整 frame profile 的建议保留为未来生成工具方向，不再作为前三类已知认领的前置条件。
+后续决策：常用类型先直通，详见 [当前 IR v4 契约](../RigConstraints/docs/FORMAT_V4.md)。COPY_LOCATION、COPY_ROTATION、ARMATURE 拟独立成为已知直通类型；未标记的 Damped Track／Locked Track 继续 unknown。本文关于完整 frame profile 的建议保留为未来生成工具方向，不再作为前三类已知认领的前置条件。
 
 ## 目标与术语
 
@@ -79,7 +79,7 @@ Unity 原生 Aim 的 WorldUpObject 需要显式加入依赖。在本次 Unity 6 
 
 ## 与现有 IR 的边界
 
-当前 `ConstraintIRExporter` 会把本样例 13 条手工约束列入 `unknownConstraints`，保留原始参数以及 `references.targets`。这符合现有保守规则。
+当时的旧协议将本样例 13 条手工约束列为未知。当前 v4 保留 sources 原始参数和 references.targets，未登记组合仍为 UnknownSemantic；本文的数值实验不自动赋予执行能力。
 
 Unity 的 `BlenderConstraintInfo` 目前没有 references 字段，其 parameters 也未覆盖 Armature／跟踪轴参数。因此“Blender JSON 有信息”不代表当前 Unity 导入器已经能消费它们。现有解析器仍只认领 Parent/MCH、Twist、Fan 等已知关系。
 

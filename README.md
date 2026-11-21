@@ -31,9 +31,9 @@ https://hollowamechan.github.io/HotoolsDoc-Quartz/
 根 README 主要面向用户。开发、架构和 native 构建细节请看：
 
 - `OmniNode/ARCHITECTURE.md`
-- `Exporter/IR_V3.md`（当前约束 IR v3、独立 Aim 旋转语义与 Unity 三后端边界）
-- `Exporter/WEIGHTED_ATTACHMENT_CONSTRAINT_CONTRACT.md`（手工加权附着框架：约束契约草案与 Blender／Unity 验证边界）
-- `Exporter/DIRECT_CONSTRAINT_IMPORT_CONTRACT.md`（复制位置／复制旋转／Armature 直通 IR 与 Standard／HoAux／VRC 三后端方案）
+- [普通辅助骨与 copyR](RigConstraints/docs/USER_GUIDE.md)
+- [约束 IR v4 契约](RigConstraints/docs/FORMAT_V4.md)
+- [全类型／语义／实现覆盖矩阵](RigConstraints/docs/COVERAGE.md)
 - `_native/README.md`
 - `.releaseignore`
 - `tools/build_release_zip.py`

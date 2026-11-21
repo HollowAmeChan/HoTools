@@ -20,7 +20,7 @@ Unity HoAux 通用约束的骨架根及其祖先需保持正均匀缩放和有�
 
 copyR 的移除和普通辅助骨总览中的分组／全部移除，会保留用户原骨和权重，只删除准确登记的生成约束及对应登记。启停只作用登记成员，不静音同骨上的手工约束。遇到登记损坏会拒绝批量删除，请先检查原因。
 
-需要新 Copy Rotation 时请使用 copyR 入口。手工创建的 Copy Rotation 仍作为原始事实保留，但在新作者流程中不会自动被接管或补登记为 copyR。旧 v2/v3 文件保持原解释。
+需要新 Copy Rotation 时请使用 copyR 入口。手工创建的 Copy Rotation 仍作为原始事实保留，但在新作者流程中不会自动被接管或补登记为 copyR。两端只支持 v4，旧版文件不导入。
 
 ## 骨架级检查
 
@@ -36,7 +36,7 @@ copyR 的移除和普通辅助骨总览中的分组／全部移除，会保留�
 
 ## 导出和导入结果
 
-HoFBX 的 JSON 选项默认导出 v4，也可明确选择 v3 兼容旧导入器。已保存的 v3 导出预设仍按其显式设置工作；新局部 copyR 应使用 v4 与配套 Unity 导入器。v4 保存三层关联信息：
+HoFBX 只导出 v4，Unity 也只接收 v4。版本选择与旧版导入路径已删除。v4 保存三层关联信息：
 
 1. **sources**：作者实际约束及参数、目标与顺序；未知类型也保留。
 2. **semantics**：已登记的 Twist、Fan、Aim、MCH、copyR 组合／操作，以及可直接翻译的基本约束，均引用原始 source。
@@ -50,7 +50,8 @@ Standard／VRC 的某些映射只能近似 Blender。默认不自动采用近似
 
 ## 维护者入口
 
-- 执行与验收：[EXECUTION_PLAN.md](EXECUTION_PLAN.md)
+- 当前退役与验收：[RETIRE_V3.md](RETIRE_V3.md)
+- 三层架构建立记录：[EXECUTION_PLAN.md](EXECUTION_PLAN.md)
 - v4 字段、版本与指纹：[FORMAT_V4.md](FORMAT_V4.md)
 - 自动生成的全类型／实现／进度表：[COVERAGE.md](COVERAGE.md)
 - 更新覆盖表：`python -m RigConstraints.registry --write`

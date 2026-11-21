@@ -2,6 +2,8 @@
 
 日期：2026-11-21（Asia/Shanghai）
 
+历史记录：本文保留建立三层架构时的决策和验收；其中 v2/v3 兼容决定已由 [RETIRE_V3.md](RETIRE_V3.md) 覆盖，当前两端只支持 v4。
+
 状态：已完成。P0–P6 已按下列证据验收，HoFBX 默认 v4 已启用；保留 v2/v3 读取与显式 v3 导出。
 
 范围仓库：HoTools（Blender）与 HoUnityTools（Unity）。本文是本轮执行和验收的主记录。
