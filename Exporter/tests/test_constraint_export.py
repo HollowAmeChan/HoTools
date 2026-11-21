@@ -59,7 +59,7 @@ def bone(name, *, mch=False, aux_type=None, sources=(), constraint_names=()):
     )
     return SimpleNamespace(
         name=name,
-        hotools_boneprops=SimpleNamespace(generateMCH=mch, auxBone=aux, constraintGroups=[]),
+        hotools_boneprops=SimpleNamespace(generateMCH=mch, auxBone=aux),
     )
 
 
