@@ -171,7 +171,7 @@ def generate_coverage(registry=None):
               "- " + data["catalogEvidence"]["ownerKindsMeaning"],
               "- Source facts and unknown fields remain intact even when no semantic or implementation exists.",
               "- Candidate contracts are not permission to execute. Validate conditions, binding context and host capabilities first.",
-              "- Local and Owner Orientation Copy Rotation contracts remain PLANNED until Unity numerical acceptance passes.",
+              "- Local and Owner Orientation Copy Rotation availability follows each registered numerical acceptance record; only its stated input domain is certified.",
               "- VRC SHIM_ONLY evidence covers API/serialization paths, not real SDK/client numerical equivalence.",
               "- LEGACY/LEGACY_EVIDENCE preserves existing behavior and does not certify all Blender parameter combinations.",
               "- Standard non-half rotation influence and native Armature mapping retain their explicit interpolation/rigid-approximation limits."]

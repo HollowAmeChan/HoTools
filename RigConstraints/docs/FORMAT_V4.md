@@ -61,6 +61,9 @@
 - bindings.constraintMap 是最终导出引用覆盖，只覆写明确提供的键；references 若提供则代表最终引用集合。source constraint 始终保持原值。
 - 导出预处理新增的 MCH 约束以 captureStage=`EXPORT_GENERATED` 追加 source；实际作者约束不重复追加。root captureStage 仍说明作者采集阶段。
 - sourceContext 存作者态骨架上下文；bindings.bindingContext 使用现有最终 FBX BindingContext 字段约定。独立作者快照可没有最终 bindings，不可据此装配 Unity。
+- 骨架上下文的每骨新增 `inheritRotation` 布尔，原值来自 Blender `use_inherit_rotation`。新 v4 局部复制旋转要求作者／最终 owner 和 target 都显式为 true、inheritScale=FULL，并保持父身份及父的世界静置参考；缺证据不能自动升级为精确实现。旧 v2/v3 仍保持原解释。
+- 最终 bindingContext 在清除约束与 fixObjectTransform 后、FBX 写出前采集。保留清约束前的保守消费者分析，不能因消费者暂被删除便丢弃完整矩阵输出需求。
+- 根 `exportOptions` 记录 `appliedConstraints`、`appliedArmaturePose`、`fixedObjectTransform`。约束已固化时不自动重放；作者 owner poseBasis 不因最终 applyPose 清零而被伪装成中立输入。
 - inputFingerprint 为对文档去掉 exportTime/inputFingerprint 后稳定排序 JSON 的 SHA-256；列表顺序保留，参数数值不随意舍入。哈希用于检测，不替代契约条件验证。
 - codec/model/registry 只依赖标准库，不依赖 bpy。骨骼登记、review 和 exporter 独立读取这些公共接口。
 - 不新增、修改、导出大型 BoneTools/hoAux 的 Source IR 或 Driver；扫描跳过其明确标记的 owner。
