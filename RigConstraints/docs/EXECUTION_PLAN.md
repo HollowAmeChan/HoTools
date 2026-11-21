@@ -2,7 +2,7 @@
 
 日期：2026-11-21（Asia/Shanghai）
 
-状态：执行中；P1–P6 主实现及数值验收已提交，正在验证 v4 默认切换与最终注册表产物。
+状态：已完成。P0–P6 已按下列证据验收，HoFBX 默认 v4 已启用；保留 v2/v3 读取与显式 v3 导出。
 
 范围仓库：HoTools（Blender）与 HoUnityTools（Unity）。本文是本轮执行和验收的主记录。
 
@@ -150,7 +150,7 @@ Unity 使用 `Runtime/RigConstraints/ConstraintIR/` 存放纯数据/codec/版本
 - [x] HoAux 通用 Copy Rotation 分别实现 LOCAL→LOCAL 和 LOCAL_OWNER_ORIENT→LOCAL；保留原 WORLD 契约。
 - [x] 不同静置骨轴、左右、动态父级、0/.3/.5/1 influence、连续栈、MCH/FBX 骨轴、序列化和首帧/稳定帧数值验证。
 - [x] Standard/VRC 未实现的新空间继续明确 Unsupported；不为整类约束虚标 Exact。
-- [ ] 更新使用文档、覆盖矩阵、迁移说明和阶段证据；全部必需回归通过才标记目标完成。
+- [x] 更新使用文档、覆盖矩阵、迁移说明和阶段证据；全部必需回归通过才标记目标完成。
 
 ## 8. 验证方法
 
@@ -166,13 +166,13 @@ Unity 使用 `Runtime/RigConstraints/ConstraintIR/` 存放纯数据/codec/版本
 
 | 阶段 | 状态 | 提交/测试证据 |
 | --- | --- | --- |
-| P0 | 已提交，目标 active | 文档提交 `22f1234b`；Blender 基线 `7b17a08f`；Unity 基线 `b406882` |
-| P1 | 已提交 `d3ee3d41` | 29 类型、7 语义、23 实现契约；17 项 codec/registry 测试通过；coverage --check 通过；LF 固定避免摘要漂移 |
+| P0 | 计划先提交；最终目标完成 | 文档提交 `22f1234b`；Blender 基线 `7b17a08f`；Unity 基线 `b406882` |
+| P1 | 已提交 `d3ee3d41` | 29 类型、7 语义、23 实现契约；最终 18 项 codec/registry 测试及 8 项排除依赖测试通过；coverage --check 通过；LF 固定避免摘要漂移 |
 | P2 | 已完成；`b877946d`、`8ac98102` | Blender 4.5.8/5.2.0 `CONSTRAINT_METADATA_OK`、`COPY_R_OK`；旧 ownership/v3/e2e/bone_pose_operations 两版 8 项通过；精准启停/删除不动既有骨与手工约束；元数据成员定义复用 registry |
 | P3 | 已完成；`e0a80e41`、`9a78ebde` | Blender 4.5.8/5.2.0 `CONSTRAINT_REVIEW_OK` 及 17 项 `CONSTRAINT_REVIEW_EDGES_OK`；全插件注册/注销烟测通过。只读、共享Data缓存失效、重复认领/组ID、改名/重排/缺目标及copyR登记gate均验证。UI为RNA/布局与注册验证，未宣称视觉截图通过 |
-| P4 | 已完成；Unity `219baae`、`ebccbd1`、`49e4488`、`b201121` | 无损 DOM、唯一 loader、fresh plan、固定契约与回滚、ProjectSettings 持久报告；89 reader 检查（含 Python 实际产物）、36 隔离 Unity 导入检查，真实 HoFBX 7 语义与三后端装配；VRC 仅 shim |
-| P5 | 已实现；Blender `b4c8909c`、`429a5297`、`8ac98102`、`9c4a95b6`、`85ff2dc3` | 4.5.8/5.2.0 实际操作器各 6 例通过；最终矩阵与 FBX writer 前实际采样误差为 0；作者事实和 Undo 保留。省略版本参数的默认 v4 路径两版各 6 例通过，两套 Unity 新项目各 36 检查通过 |
-| P6 | 数值通过；Unity `f565edd`、`1f524f3`、`c77c13b`、`5baefb6`；Blender `e28b6f75`、`a07aaa43`、`fd159b56` | 正式 v4/实际 HoFBX/非恒等物体变换，各 Blender 版本 16,188 测量/0 失败；30 个非法根场景及恢复，旧 v3 8,160/0。最大位置 1.477e-6 m、旋转 0.05059°、缩放 3.046e-6。待最终默认产物重导和文档闭环 |
+| P4 | 已完成；Unity `219baae`、`ebccbd1`、`49e4488`、`b201121`、`020da26` | 无损 DOM、唯一 loader、fresh plan、固定契约与回滚、ProjectSettings 持久报告；89 reader 检查（含 Python 实际产物）、36 隔离 Unity 导入检查，真实 HoFBX 7 语义与三后端装配；VRC 仅 shim |
+| P5 | 已完成；Blender `b4c8909c`、`429a5297`、`8ac98102`、`9c4a95b6`、`85ff2dc3`、`9f741936` | 4.5.8/5.2.0 实际操作器各 6 例通过；最终矩阵与 FBX writer 前实际采样误差为 0；作者事实和 Undo 保留。省略版本参数的默认 v4 路径两版各 6 例通过，两套 Unity 新项目各 36 检查通过 |
+| P6 | 已完成；Unity `f565edd`、`1f524f3`、`c77c13b`、`5baefb6`；Blender `e28b6f75`、`a07aaa43`、`fd159b56` | 正式 v4/实际 HoFBX/非恒等物体变换，各 Blender 版本 16,188 测量/0 失败；30 个非法根场景及恢复，旧 v3 8,160/0。最大位置 1.477e-6 m、旋转 0.05059°、缩放 3.046e-6。最终 authority 下的两版新产物已重导，正式无 override 复验通过；文档闭环完成 |
 
 失败后先读取实际状态再修复；不盲重试写入。不提交用户既有改动、私有模型、商业源码、临时测试产物或运行时缓存。
 
@@ -198,3 +198,19 @@ Unity 使用 `Runtime/RigConstraints/ConstraintIR/` 存放纯数据/codec/版本
 新 HoFBX 操作器默认 v4；`test_blender_hofbx_v4.py` 不再对普通路径显式指定版本，同时断言 RNA 默认值；两版各六例（ordinary、muted、applyPose、approximation、显式 v3、empty）均通过，Undo 恢复作者状态。Blender4.5 的既有 `test_blender_fbx_constraints.py` 通过；旧纯 Python v3 export/classification API 回归通过。
 
 最终 authority SHA256：`46c54dff620bbc6d2239c11f55c6bd66a13fc0f18fb29b270513544fff1553be`，Unity 分发副本逐字节一致。新产物：Unity `.research/hofbx-v4-default-45`、`hofbx-v4-default-52`。两套全新 Unity 隔离项目 `IRv4Import-default-final-45`／`-52` 均 exit0、36 checks、failures=[]；报告保留于项目目录 `v4-import-results.json`。这些 ignored 产物不提交到仓库。
+
+### 最终完成审计
+
+| 要求 | 最终结果与复核证据 |
+| --- | --- |
+| 三层公共契约、分目录、无损未知数据 | `RigConstraints/`、Unity `ConstraintIR/`；89 项 reader（含 Python fixture）、26 项纯 Python 校验通过 |
+| 全类型／语义／版本化实现与测试矩阵 | 29 类型、7 语义、23 实现、3 suites、9 runners；生成 `COVERAGE.md`、`--matrix`；权威摘要逐字节同步 |
+| 普通生成、删除及 copyR 作者入口 | Twist/Fan/Aim/MCH 即时组登记；精确清理和原骨所有权分开；copyR 直接作用已有骨，无额外匹配骨；两版 metadata/copyR/ownership 回归 |
+| 手动审查与边界 | 对象级缓存、显式刷新；两版 17 项边界、全插件注册/注销；排除依赖补丁 Blender `9946a795` / Unity `020da26` |
+| HoFBX 与 Unity 兼容迁移 | 作者事实先采、最终 overlay 后采；操作器默认 v4 `9f741936`；两版六例及各 36 Unity 导入检查，报告／回滚／Undo／Prefab／v3 均验证 |
+| 裙子局部旋转与原有行为 | 两版正式 registry 无 override 各 16,188/0；旧 v3 8,160/0；Standard/VRC 新局部空间 Unsupported；近似与 legacy 策略显式 |
+| 资产及范围保护 | 工具合成 fixture／隔离 Unity 项目；未保存用户源模型或 BreakWarudo 场景；大型 HoAux、其 Source IR、Driver 和未来导出保持排除 |
+
+最终局部数值报告位于 Unity ignored `.research/CopyRLocal-final-45/local-rotation-results.json` 和 `CopyRLocal-final-52/local-rotation-results.json`，两者独立读回均为 16,188 条测量／failures=[]，最大误差一致。最终默认影响回归还包括 Blender5.2 `test_blender_fbx_multiple_armatures.py` 五例全部通过。Unity 使用说明与验收记录提交 `daac913`。
+
+完成的证据边界：VRC 使用 shim，只证明装配/API/序列化，不声明真实 SDK 或客户端数值等价；Blender UI 完成注册、RNA、布局逻辑检查，未进行视觉截图验收。完整类型目录不代表全部参数域已经实现，Unknown 与 Unsupported 保留并由覆盖矩阵明确展示。后续扩展须新增契约、对应测试证据并更新同一权威，不放宽既有精确声明。
