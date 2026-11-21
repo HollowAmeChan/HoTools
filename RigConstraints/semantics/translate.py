@@ -81,4 +81,4 @@ def _add(doc, kind, owner, source_ids, rule, evidence, parameters):
     for implementation in implementations_for(kind):
         doc["implementationBindings"].append({"semanticId": sid, "backendId": implementation["backendId"],
             "implementationId": implementation["id"], "contractVersion": implementation["contractVersion"],
-            "selection": "CANDIDATE", "fallbackPolicy": "EXACT_ONLY"})
+            "selection": "CANDIDATE", "fallbackPolicy": "ALLOW_LEGACY" if implementation["fidelity"] == "LEGACY" else "EXACT_ONLY"})

@@ -54,6 +54,7 @@
 - backendId 使用现有 `Standard`、`HoAux`、`Vrc`。实现 ID 的 backend 前缀使用 lowercase；id 不含 @version，版本单独存整数。
 - 首批契约 ID：每后端的 `.copy_location.world`、`.copy_rotation.world`、`.armature.linear`、`.mch.parent`、`.twist.legacy`、`.fan.legacy`、`.aim.object_position`；HoAux 额外有 `hoaux.copy_rotation.local`、`hoaux.copy_rotation.owner_orient`。登记不等于已实现或已验证。
 - implementationBindings 为导出候选或已锁定的选择；selection=`CANDIDATE`/`LOCKED`。同语义同后端可多个候选，LOCKED 至多一项。陌生契约/版本不得自动改选。
+- 已有 Twist/Fan 的特定 legacy 实现候选显式写 `fallbackPolicy=ALLOW_LEGACY` 以保留其契约；这不允许 Exact 失败后自动换近似实现。Armature 的原生近似仍需显式 `ALLOW_APPROXIMATE`，默认 `EXACT_ONLY`。
 - registry 独立管理 constraintTypes、semanticDefinitions、implementations。每实现包含 id、contractVersion、semanticType、semanticVersion、backendId、conditions（结构化受控条件）、availability、fidelity、verification、artifacts、testSuites。
 - 已有 world Direct 的条件保留当前全 XYZ/Replace、owner 输入等边界；新 local 两项在通过 Unity 数值验收前 availability=`PLANNED`，不能提前可执行。
 - bindings.constraintMap 是最终导出引用覆盖，只覆写明确提供的键；references 若提供则代表最终引用集合。source constraint 始终保持原值。
