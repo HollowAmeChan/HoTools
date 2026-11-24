@@ -275,6 +275,17 @@ def updateArmatureModePieState(self, context):
     HoPie.set_pie_enabled('armature_mode', self.hoTools_enableArmatureModePie)
 
 
+def updateObjectModePieState(self, context):
+    HoPie.set_pie_enabled('object_mode', self.hoTools_enableObjectModePie)
+
+
+def updateQuickModifiersState(self, context):
+    for window in context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'PROPERTIES':
+                area.tag_redraw()
+
+
 def builtin_asset_library_path():
     return os.path.normpath(os.path.join(os.path.dirname(__file__), "HoAssets"))
 
@@ -424,6 +435,8 @@ class AddonPreference(bpy.types.AddonPreferences):
     hoTools_enableDeleteMergePie: BoolProperty(name="删除与合并饼菜单", default=True, update=updateDeleteMergePieState)  # type: ignore
     hoTools_enableHoMainPie: BoolProperty(name="Ho大饼", default=True, update=updateMainPieState)  # type: ignore
     hoTools_enableArmatureModePie: BoolProperty(name="骨架模式饼", default=True, update=updateArmatureModePieState)  # type: ignore
+    hoTools_enableObjectModePie: BoolProperty(name="物体模式饼", description="使用 Tab 打开物体模式饼，支持网格选择模式、雕刻/绘制模式和 UV 编辑", default=False, update=updateObjectModePieState)  # type: ignore
+    hoTools_enableQuickModifiers: BoolProperty(name="快速修改器", description="在修改器面板顶部显示快速添加修改器框", default=True, update=updateQuickModifiersState)  # type: ignore
     hoTools_ui_exicon_expanded: BoolProperty(name='展开 ExIcon', default=False)  # type: ignore
     hoTools_ui_omninode_expanded: BoolProperty(name='展开 OmniNode', default=False)  # type: ignore
     hoTools_ui_hotab_expanded: BoolProperty(name='展开 HoTab', default=False)  # type: ignore
@@ -529,6 +542,7 @@ class AddonPreference(bpy.types.AddonPreferences):
             draw_toggle('hoTools_enableDeleteMergePie', '删除/合并饼')
             draw_toggle('hoTools_enableHoMainPie', 'Ho大饼')
             draw_toggle('hoTools_enableArmatureModePie', '骨架模式饼')
+            draw_toggle('hoTools_enableObjectModePie', '物体模式饼')
 
             if details is not None:
                 settings_column = details
@@ -612,6 +626,7 @@ class AddonPreference(bpy.types.AddonPreferences):
         _draw_module_box(left, self, 'hoTools_ui_omninode_expanded', 'OmniNode', 'hoTools_OmniNodeFeatures_enable', draw_omninode)
         _draw_module_box(left, self, 'hoTools_ui_hotab_expanded', 'HoTab', 'hoTools_enableHoTab')
         _draw_module_box(left, self, 'hoTools_ui_hopie_expanded', 'HoPie', draw_content=draw_hopie)
+        left.box().prop(self, 'hoTools_enableQuickModifiers')
 
         user_keymaps = _preference_user_keymaps(context)
 
@@ -665,6 +680,7 @@ def register():
     HoPie.set_pie_enabled('delete_merge', prefs.hoTools_enableDeleteMergePie)
     HoPie.set_pie_enabled('main', prefs.hoTools_enableHoMainPie)
     HoPie.set_pie_enabled('armature_mode', prefs.hoTools_enableArmatureModePie)
+    HoPie.set_pie_enabled('object_mode', prefs.hoTools_enableObjectModePie)
     # OmniNode（含其扩展，例如物理世界）的注册走统一入口：总开关 + 扩展禁用列表。
     _sync_omninode_registration(bpy.context, prefs.hoTools_OmniNodeFeatures_enable)
     if prefs.hoTools_enableHoTab:

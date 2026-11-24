@@ -326,7 +326,9 @@ def _draw_modifier_tools(layout, context):
     layout.use_property_decorate = False
     col = layout.column(align=True)
 
-    _draw_quick_modifier_buttons(col)
+    addon = context.preferences.addons.get(__package__.rsplit('.', 1)[0])
+    if addon is None or addon.preferences.hoTools_enableQuickModifiers:
+        _draw_quick_modifier_buttons(col)
 
     if obj is None:
         return

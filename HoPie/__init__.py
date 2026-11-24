@@ -6,6 +6,7 @@ from . import (
     CursorPie,
     DeleteMergePie,
     HoMainPie,
+    ObjectModePie,
     SelectionModePie,
 )
 from . import _Register as _register_module
@@ -31,6 +32,7 @@ from ._Register import (
     cursor_pie_keymaps,
     delete_merge_pie_keymaps,
     main_pie_keymaps,
+    object_mode_pie_keymaps,
     preference_keymaps,
     selection_mode_pie_keymaps,
     set_pie_enabled,
@@ -47,6 +49,7 @@ def __getattr__(name):
         '_delete_merge_pie_enabled',
         '_main_pie_enabled',
         '_armature_mode_pie_enabled',
+        '_object_mode_pie_enabled',
         '_armature_mod_pie_enabled',
         '_core_registered',
     }:
@@ -60,6 +63,7 @@ __all__ = [
     'CursorPie',
     'DeleteMergePie',
     'HoMainPie',
+    'ObjectModePie',
     'SelectionModePie',
     'DialogSettings',
     'HO_PIE_CORE_CLASSES',
@@ -80,6 +84,7 @@ __all__ = [
     'cursor_pie_keymaps',
     'delete_merge_pie_keymaps',
     'main_pie_keymaps',
+    'object_mode_pie_keymaps',
     'selection_mode_pie_keymaps',
     'preference_keymaps',
     'set_pie_enabled',

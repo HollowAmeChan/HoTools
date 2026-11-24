@@ -14,6 +14,7 @@ from . import (
     CursorPie,
     DeleteMergePie,
     HoMainPie,
+    ObjectModePie,
     SelectionModePie,
 )
 from ._Core import HO_PIE_CORE_CLASSES
@@ -92,6 +93,7 @@ def remove_keymaps(items: list, menu_names: Any = ()) -> None:
                     "wm.call_menu_pie",
                     "ho.hopie_nested_pie",
                     "ho.armature_mode_pie",
+                    "ho.object_mode_pie",
             }:
                 continue
             item_name = getattr(item.properties, "name", "")
@@ -111,6 +113,7 @@ selection_mode_pie_keymaps = []
 delete_merge_pie_keymaps = []
 main_pie_keymaps = []
 armature_mode_pie_keymaps = []
+object_mode_pie_keymaps = []
 # Short-name alias kept for callers that use the module's ArmatureModPie name.
 armature_mod_pie_keymaps = armature_mode_pie_keymaps
 
@@ -120,6 +123,7 @@ _selection_mode_pie_enabled = False
 _delete_merge_pie_enabled = False
 _main_pie_enabled = False
 _armature_mode_pie_enabled = False
+_object_mode_pie_enabled = False
 # Alias for the ArmatureModPie feature name.
 _armature_mod_pie_enabled = False
 _core_registered = False
@@ -189,6 +193,17 @@ def _register_main_keymaps(store):
     )
 
 
+def _register_object_mode_keymaps(store):
+    for keymap_name, space_type in (
+            ('Object Non-modal', 'EMPTY'), ('Image', 'IMAGE_EDITOR')):
+        register_keymap(
+            keymap_name, space_type, 'TAB',
+            menu_name='HO_MT_object_mode_pie', keymap_store=store,
+            operator_idname='ho.object_mode_pie',
+            property_name='pie_menu_name',
+        )
+
+
 def _register_armature_mode_keymaps(store):
     for keymap_name in ('Object Mode', 'Armature', 'Pose'):
         register_keymap(
@@ -201,6 +216,13 @@ def _register_armature_mode_keymaps(store):
 
 
 _PIE_SPECS = {
+    'object_mode': _PieSpec(
+        '_object_mode_pie_enabled',
+        ObjectModePie.OBJECT_MODE_PIE_CLASSES,
+        object_mode_pie_keymaps,
+        ('HO_MT_object_mode_pie',),
+        _register_object_mode_keymaps,
+    ),
     'align': _PieSpec(
         '_align_pie_enabled',
         AlignPie.ALIGN_PIE_CLASSES,
@@ -271,6 +293,7 @@ def disable_all_pies() -> None:
     for name in (
         'main', 'delete_merge', 'selection_mode', 'cursor', 'align',
         'armature_mode',
+        'object_mode',
     ):
         set_pie_enabled(name, False)
 
@@ -283,6 +306,7 @@ def preference_keymaps():
         *delete_merge_pie_keymaps,
         *main_pie_keymaps,
         *armature_mode_pie_keymaps,
+        *object_mode_pie_keymaps,
     ]
 
 
@@ -310,6 +334,7 @@ __all__ = [
     'delete_merge_pie_keymaps',
     'main_pie_keymaps',
     'armature_mode_pie_keymaps',
+    'object_mode_pie_keymaps',
     'armature_mod_pie_keymaps',
     'set_pie_enabled',
     'disable_all_pies',
