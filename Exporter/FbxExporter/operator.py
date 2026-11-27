@@ -2758,7 +2758,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     applyArmaturePose:BoolProperty(name="应用骨架姿态",description="导出前调用 HoTools 强制应用姿态与网格，逐键保留形态键，并将当前 Pose 应用为静置姿态。失败时中止导出并回滚。不留痕",default=False) # type: ignore
     # 保留 RNA 属性名以兼容已保存的预设；界面名称已扩展为同时处理曲线和共享网格对象。
     meshifyCurves:BoolProperty(name="网格化对象",description="导出前把选中的曲线临时转换为网格，并为共享 Mesh 数据的对象（包括 Alt+D）创建独立数据，让 HoFBX 能正确导出。不留痕",default=True) # type: ignore
-    triangulateMeshes:BoolProperty(name="三角化",description="导出前使用 Blender Triangulate 修改器固定四边形为 FIXED、多边形为 BEAUTY、最少顶点为4，并开启保持法向。不留痕",default=False) # type: ignore
+    triangulateMeshes:BoolProperty(name="三角化",description="导出前使用 Blender Triangulate 修改器固定四边形为 FIXED、多边形为 BEAUTY、最少顶点为4，并开启保持法向。不留痕。关闭时，含五边面及以上的网格可能无法导出切线",default=True) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。不留痕",default=False) # type: ignore
     cleanEmptyMaterialSlots:BoolProperty(name="清理未使用材质槽",description="导出前删除选中网格中没有被任何面使用的材质槽（无论槽中是否已有材质）。不留痕",default=True) # type: ignore
@@ -2795,7 +2795,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             "prioritize_active_color": False,
             "use_subsurf": False,
             "use_mesh_edges": False,
-            "use_tspace": False,
+            # 隐式操作：按最终法线与 UV 生成并导出切线，不提供单独开关。
+            "use_tspace": True,
             "use_triangles": False,
             "use_custom_props": False,
             # 骨架
@@ -3432,6 +3433,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 text="blender预览时遇到三角化不一致时，可添加同样设置的 Triangulate 修改器对齐",
                 icon='INFO',
             )
+        else:
+            info = option_col.row()
+            info.label(text="关闭三角化可能导致切线导出不完整", icon='INFO')
         option_col.prop(self, "cleanWeights")
         option_col.prop(self, "meshifyCurves")
         option_col.prop(self, "applyArmaturePose")
